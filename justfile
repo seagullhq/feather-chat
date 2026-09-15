@@ -34,12 +34,16 @@ test-server:
 # Format everything that has a formatter.
 fmt:
     gofmt -w server
+    clang-format -i client/src/*.cpp
 
 # Format, vet, test and build. Run before pushing.
 check: fmt-check vet test build
 
+fmt-check: fmt-check-go
+    clang-format --style=file --dry-run -Werror client/src/*.cpp
+
 [working-directory: 'server']
-fmt-check:
+fmt-check-go:
     gofmt -l . | (! grep .)
 
 [working-directory: 'server']

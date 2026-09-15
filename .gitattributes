@@ -1,0 +1,18 @@
+# Normalize line endings: LF in the repository, native in the working tree.
+* text=auto
+
+# Always LF, even checked out on Windows: shells and build tools choke on CRLF.
+*.sh      text eol=lf
+justfile  text eol=lf
+
+# Always CRLF for Windows-only scripts.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Never touched, never diffed as text.
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.icns binary
+*.opus binary
+*.wav  binary

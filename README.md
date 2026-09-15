@@ -128,6 +128,12 @@ local path stays out of the repository. A distribution Qt needs no path at all.
 `just server :5000` picks another port. `just build-debug` produces an
 unoptimized build with symbols in `build-debug/`.
 
+`just fmt` and `just check` run [clang-format](https://clang.llvm.org/docs/ClangFormat.html)
+over the C++ as well as `gofmt` over the Go. Install it with
+`dnf install clang-tools-extra`, `brew install clang-format`, or
+`pip install clang-format`. Style lives in `.clang-format`, so nobody has to
+argue about braces.
+
 ## Roadmap
 
 In rough order:
