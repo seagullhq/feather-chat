@@ -23,7 +23,7 @@ client: build
 server port=":4444":
     go run . -addr {{port}}
 
-# Run every test in the repository.
+# Run every test in the repository (none yet).
 test:
     @just test-server
 
@@ -35,7 +35,7 @@ test-server:
 fmt:
     gofmt -w server
 
-# What CI runs. Do this before opening a pull request.
+# Format, vet, test and build. Run before pushing.
 check: fmt-check vet test build
 
 [working-directory: 'server']
