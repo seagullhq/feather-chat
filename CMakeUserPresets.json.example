@@ -1,0 +1,12 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "local",
+      "inherits": "default",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "/absolute/path/to/Qt/6.8.0/gcc_64"
+      }
+    }
+  ]
+}
