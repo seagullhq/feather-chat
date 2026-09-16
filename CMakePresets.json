@@ -30,7 +30,6 @@
         "VCPKG_TARGET_TRIPLET": "x64-windows-static-release",
         "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>",
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets"
       },
       "condition": {
