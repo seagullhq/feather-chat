@@ -1,3 +1,0 @@
-#include <windows.h>
-// Embed our correct manifest as RT_MANIFEST (id=1, the application manifest slot)
-1 RT_MANIFEST "app.manifest"

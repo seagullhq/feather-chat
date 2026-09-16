@@ -6,18 +6,28 @@ qt_add_executable(feather-chat
     src/main.cpp
 )
 
-# Qt/vcpkg generates a broken <requestedExecutionLevel /> tag (missing the
-# required "level" attribute) causing a Windows SxS launch failure.
-# Fix: embed our correct app.manifest via app.rc, then pass /MANIFEST:NO to
-# prevent the linker from generating a second conflicting manifest on top.
-# QT_NO_WIN32_MANIFEST suppresses Qt's own .manifest.res generation.
-# QT_NO_DEPLOY skips windeployqt (qtpaths missing in static vcpkg builds).
+# QT_NO_DEPLOY skips windeployqt (qtpaths is missing in static vcpkg builds).
+#
+# Windows manifest: with this toolchain (Clang + lld-link) and Qt's own
+# auto-generated manifest, the linked exe ends up with a broken RT_MANIFEST
+# whose <requestedExecutionLevel /> lacks the mandatory "level" attribute,
+# so Windows refuses to start it (SxS error). Qt's generator is not reliable
+# here, and adding our own .rc collides with Qt's manifest (duplicate
+# resource). So we overwrite the embedded manifest post-link with mt.exe,
+# referenced by its CMake-discovered absolute path (mt.exe is not on PATH).
 if(WIN32)
-    target_sources(feather-chat PRIVATE app.rc)
-    target_link_options(feather-chat PRIVATE /MANIFEST:NO)
-    set_target_properties(feather-chat PROPERTIES
-        QT_NO_DEPLOY ON
-        QT_NO_WIN32_MANIFEST ON
+    if(NOT CMAKE_MT)
+        message(FATAL_ERROR "cmake could not locate mt.exe; install the Windows SDK")
+    endif()
+
+    set_target_properties(feather-chat PROPERTIES QT_NO_DEPLOY ON)
+
+    add_custom_command(TARGET feather-chat POST_BUILD
+        COMMAND "${CMAKE_MT}" -nologo
+            -manifest "${CMAKE_CURRENT_SOURCE_DIR}/app.manifest"
+            -outputresource:$<TARGET_FILE:feather-chat>\;\#1
+        COMMENT "Re-emitting corrected Windows application manifest (workaround for broken linker default)"
+        VERBATIM
     )
 endif()
 
