@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "feather-chat",
+  "version": "0.1.0",
+  "description": "Dependencies for the Windows build. Linux and macOS take Qt from the system.",
+  "dependencies": [
+    {
+      "name": "qtbase",
+      "default-features": false,
+      "features": ["gui", "widgets"],
+      "platform": "windows"
+    }
+  ]
+}
