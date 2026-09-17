@@ -47,7 +47,7 @@ vcpkg, see [Windows notes](#windows-notes).
 |---|---|
 | `client/` | Qt6 + C++20 desktop client (Linux, Windows, macOS) |
 | `server/` | Go backend, standard library only |
-| `docs/` | [wire format](docs/wire-format.md), and design notes as they appear |
+| `docs/` | [docs index](docs/README.md) — protocol, wire format, audio path, server design, security model, ADR |
 | `triplets/` | vcpkg triplet used by the Windows build |
 
 ## Installing Qt — Linux and macOS
@@ -211,12 +211,14 @@ In rough order:
 
 - **Audio path.** Opus capture and playback over the UDP protocol in
   [`docs/wire-format.md`](docs/wire-format.md), and a server that forwards
-  frames per room. Opus and libsodium will come in through CMake's
-  `FetchContent` — small C libraries that build in seconds, so they need no
-  installer.
-- **Encryption.** Nothing ships to the public internet before this lands.
+  frames per room. Opus will come in through CMake's `FetchContent` — a
+  small C library that builds in seconds, so it needs no installer.
 - **Jitter buffer**, so packet reordering stops turning into clicks.
 - Accounts, persistent rooms, a device picker, push to talk.
+- **Encryption — the last item.** The wire format is shaped for it already
+  (`docs/wire-format.md` reserves the layout), so everything above lands on
+  plaintext first; encryption goes in right before the first public-internet
+  deployment. Nothing ship-ready goes public until this is done.
 
 ## Security
 
