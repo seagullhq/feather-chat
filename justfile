@@ -35,16 +35,17 @@ client: build
 
 # Run the server.
 [working-directory: 'server']
-server port=":4444":
+server port=":7700":
     go run . -addr {{port}}
 
-# Run every test in the repository (none yet).
+# Run every test in the repository.
 test:
     @just test-server
 
+# Run the server's Go tests: race detector, verbose, no result cache.
 [working-directory: 'server']
 test-server:
-    go test -race ./...
+    go test -race -v ./...
 
 # Format everything that has a formatter.
 [unix]
