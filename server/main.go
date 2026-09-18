@@ -4,7 +4,10 @@ import (
 	"flag"
 	"log"
 	"net"
+	"time"
 )
+
+var timeout = time.Duration(60 * time.Second)
 
 func main() {
 	// Define tcp and udp address
@@ -33,14 +36,28 @@ func main() {
 
 // serve runs the control and media loops until the listeners stop.
 func serve(ltcp net.Listener, pc *net.UDPConn) {
-	roomManagaer := NewRoomManager()
-	go readUDP(pc, roomManagaer)
+	roomManager := NewRoomManager()
+	go readUDP(pc, roomManager)
+	go handle_sessions(roomManager)
 	for {
 		conn, err := ltcp.Accept()
 		if err != nil {
 			log.Println(err)
 			return
 		}
-		go handleControl(conn, roomManagaer)
+		go handleControl(conn, roomManager)
+	}
+}
+
+func handle_sessions(roomManager *RoomManager) {
+	for {
+		for _, r := range roomManager.rooms {
+			for _, s := range r {
+				if time.Since(s.lastSeen) > timeout {
+					// Handle of the session removal from map.
+				}
+			}
+		}
+		time.Sleep(timeout / 2)
 	}
 }
