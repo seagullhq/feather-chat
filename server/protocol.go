@@ -20,14 +20,14 @@ type Header struct {
 	SSRC       uint32
 }
 
-func EncodeHeader(h Header) []byte {
+func EncodeHeader(header Header) []byte {
 	b := make([]byte, HeaderLen)
 	var t byte
-	if h.Terminator {
+	if header.Terminator {
 		t = 0x20
 	}
-	b[0] = h.Version<<6 | t | h.Kind&0x1f
-	binary.BigEndian.PutUint32(b[1:], h.SSRC)
+	b[0] = header.Version<<6 | t | header.Kind&0x1f
+	binary.BigEndian.PutUint32(b[1:], header.SSRC)
 	return b
 }
 

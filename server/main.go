@@ -14,33 +14,33 @@ func main() {
 
 	// Starting listening to the tcp and udp buffers
 
-	ltcp, err := net.Listen("tcp", *tcpAddr)
+	listenerTCP, err := net.Listen("tcp", *tcpAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer ltcp.Close()
+	defer listenerTCP.Close()
 
-	ludp, err := net.ListenPacket("udp", *udpAddr)
+	listenerUDP, err := net.ListenPacket("udp", *udpAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer ludp.Close()
+	defer listenerUDP.Close()
 
 	// Server starting
 	log.Printf("feather-chat server: control=%s media=%s", *tcpAddr, *udpAddr)
-	serve(ltcp, ludp.(*net.UDPConn))
+	serve(listenerTCP, listenerUDP.(*net.UDPConn))
 }
 
 // serve runs the control and media loops until the listeners stop.
 func serve(ltcp net.Listener, pc *net.UDPConn) {
-	rm := NewRoomManager()
-	go readUDP(pc, rm)
+	roomManagaer := NewRoomManager()
+	go readUDP(pc, roomManagaer)
 	for {
-		c, err := ltcp.Accept()
+		conn, err := ltcp.Accept()
 		if err != nil {
 			log.Println(err)
 			return
 		}
-		go handleControl(c, rm)
+		go handleControl(conn, roomManagaer)
 	}
 }

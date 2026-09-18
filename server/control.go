@@ -12,65 +12,65 @@ import (
 const maxControl = 1 << 20
 
 // writeFrame emits §7 control framing: u32 big-endian length + JSON payload.
-func writeFrame(w io.Writer, payload []byte) error {
+func writeFrame(writer io.Writer, payload []byte) error {
 	var hdr [4]byte
 	binary.BigEndian.PutUint32(hdr[:], uint32(len(payload)))
-	_, err := w.Write(append(hdr[:], payload...))
+	_, err := writer.Write(append(hdr[:], payload...))
 	return err
 }
 
-func readFrame(r io.Reader) ([]byte, error) {
+func readFrame(reader io.Reader) ([]byte, error) {
 	var hdr [4]byte
-	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+	if _, err := io.ReadFull(reader, hdr[:]); err != nil {
 		return nil, err
 	}
 	n := binary.BigEndian.Uint32(hdr[:])
 	if n == 0 || n >= maxControl {
 		return nil, io.ErrUnexpectedEOF
 	}
-	b := make([]byte, n)
-	_, err := io.ReadFull(r, b)
-	return b, err
+	bytes := make([]byte, n)
+	_, err := io.ReadFull(reader, bytes)
+	return bytes, err
 }
 
 // handleControl runs the per-client TCP control session (HELLO/JOIN/LEAVE).
-func handleControl(c net.Conn, rm *RoomManager) {
-	defer c.Close()
-	s := &Session{tcp: c, lastSeen: time.Now()}
+func handleControl(conn net.Conn, roomManager *RoomManager) {
+	defer conn.Close()
+	session := &Session{tcp: conn, lastSeen: time.Now()}
 
 	for {
-		b, err := readFrame(c)
+		bytes, err := readFrame(conn)
 		if err != nil {
 			return
 		}
-		var msg Control
-		if json.Unmarshal(b, &msg) != nil {
+		var message Control
+		if json.Unmarshal(bytes, &message) != nil {
 			continue // tolerate unknown types (§7 interop rule)
 		}
-		switch msg.Type {
+		switch message.Type {
 		case "HELLO":
-			if msg.SSRC == 0 || rm.Taken(msg.SSRC) {
-				s.send(Control{Type: "ACK"})
+			if message.SSRC == 0 || roomManager.Taken(message.SSRC) {
+				session.send(Control{Type: "ACK"})
 				continue
 			}
-			s.SSRC, s.name = msg.SSRC, msg.Name
-			s.send(Control{Type: "ACK", SSRC: s.SSRC})
+			session.SSRC, session.name = message.SSRC, message.Name
+			session.send(Control{Type: "ACK", SSRC: session.SSRC})
 		case "JOIN":
-			s.Room = msg.Room
-			rm.Join(s)
-			s.send(Control{Type: "ACK", Room: s.Room})
+			session.Room = message.Room
+			roomManager.Join(session)
+			session.send(Control{Type: "ACK", Room: session.Room})
 		case "LEAVE":
-			rm.Leave(s)
+			roomManager.Leave(session)
 		}
 	}
 }
 
 // readUDP parses the 5-byte header, resolves the session by SSRC and
 // forwards the datagram verbatim to room peers.
-func readUDP(pc *net.UDPConn, rm *RoomManager) {
+func readUDP(pc *net.UDPConn, roomManager *RoomManager) {
 	buf := make([]byte, 1024)
 	for {
-		n, addr, err := pc.ReadFromUDP(buf)
+		n, udpAddr, err := pc.ReadFromUDP(buf)
 		if err != nil {
 			log.Println(err)
 			return
@@ -79,14 +79,14 @@ func readUDP(pc *net.UDPConn, rm *RoomManager) {
 		if err != nil || h.Version != 0 {
 			continue
 		}
-		s := rm.BySSRC(h.SSRC)
-		if s == nil {
+		session := roomManager.BySSRC(h.SSRC)
+		if session == nil {
 			continue
 		}
-		if s.UDPAddr == nil {
-			s.UDPAddr = addr
+		if session.UDPAddr == nil {
+			session.UDPAddr = udpAddr
 		}
-		pkt := make([]byte, n)
-		rm.forward(pc, s, pkt[:copy(pkt, buf[:n])])
+		packet := make([]byte, n)
+		roomManager.forward(pc, session, packet[:copy(packet, buf[:n])])
 	}
 }

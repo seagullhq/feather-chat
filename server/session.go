@@ -27,14 +27,14 @@ type Session struct {
 	lastSeen time.Time
 }
 
-func (s *Session) touch() { s.lastSeen = time.Now() }
+func (session *Session) touch() { session.lastSeen = time.Now() }
 
-func (s *Session) send(c Control) error {
-	b, err := json.Marshal(c)
+func (session *Session) send(control Control) error {
+	b, err := json.Marshal(control)
 	if err != nil {
 		return err
 	}
-	s.wmu.Lock()
-	defer s.wmu.Unlock()
-	return writeFrame(s.tcp, b)
+	session.wmu.Lock()
+	defer session.wmu.Unlock()
+	return writeFrame(session.tcp, b)
 }
