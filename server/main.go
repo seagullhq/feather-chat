@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-var timeout = time.Duration(60 * time.Second)
+var timeout = 60 * time.Second
 
 func main() {
 	// Define tcp and udp address
