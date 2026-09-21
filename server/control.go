@@ -79,6 +79,12 @@ func readUDP(pc *net.UDPConn, roomManager *RoomManager) {
 		if err != nil || h.Version != 0 {
 			continue
 		}
+
+		if n <= HeaderLen {
+			log.Printf("[ROOM] received a packet with the wrong header! %d invece che %d", n, HeaderLen)
+			continue
+		}
+
 		session := roomManager.BySSRC(h.SSRC)
 		if session == nil {
 			continue
