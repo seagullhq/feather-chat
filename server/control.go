@@ -75,6 +75,8 @@ func readUDP(pc *net.UDPConn, roomManager *RoomManager) {
 			log.Println(err)
 			return
 		}
+
+		// The server has recived a datagram greater than 1024 so oversize, the server skips it.
 		if n > 1024 {
 			log.Printf("[CONTROL] received a datagram greater than 1024 (size: %d), skipping...", n)
 			continue
@@ -85,11 +87,13 @@ func readUDP(pc *net.UDPConn, roomManager *RoomManager) {
 			continue
 		}
 
+		// The server has recived a packet with the wrong header lenght.
 		if n <= HeaderLen {
 			log.Printf("[CONTROL] received a packet with the wrong header! %d instead of %d", n, HeaderLen)
 			continue
 		}
 
+		// The server has recived a packet of unknown type.
 		if h.Kind != KindAudio && h.Kind != KindPing {
 			log.Printf("[CONTROL] received a packet with kind not handled by the server! skipping...")
 			continue
