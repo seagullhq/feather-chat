@@ -95,6 +95,14 @@ func readUDP(pc *net.UDPConn, roomManager *RoomManager) {
 			continue
 		}
 
+		if h.Terminator && h.Kind != KindAudio {
+			continue
+		}
+
+		if h.Kind == KindAudio && h.SSRC == 0 {
+			continue
+		}
+
 		session := roomManager.BySSRC(h.SSRC)
 		if session == nil {
 			continue
