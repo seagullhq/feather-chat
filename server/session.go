@@ -25,6 +25,7 @@ type Session struct {
 	wmu      sync.Mutex
 	name     string
 	lastSeen time.Time
+	pinged   bool // Prima ping ricevuta?
 	lastMu   sync.Mutex
 }
 

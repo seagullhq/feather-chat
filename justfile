@@ -36,7 +36,7 @@ client: build
 # Run the server.
 [working-directory: 'server']
 server port=":7700":
-    go run . -addr {{port}}
+    go run . -tcp {{port}}
 
 # Run every test in the repository.
 test:

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -74,8 +75,15 @@ func (roomManager *RoomManager) forward(pc *net.UDPConn, session *Session, buf [
 	session.touch()
 	if header.Kind == KindPing {
 		pc.WriteToUDP(buf, session.UDPAddr)
+		session.pinged = true
 		return
 	}
+
+	if !session.pinged {
+		log.Printf("[ROOM] received a packet before first ping! from %s", session.name)
+		return // AUDIO prima del primo echo: drop, pacchetto da non inoltrare
+	}
+
 	for _, p := range roomManager.Peers(session) {
 		pc.WriteToUDP(buf, p.UDPAddr)
 	}
