@@ -60,7 +60,7 @@ func handleControl(conn net.Conn, roomManager *RoomManager) {
 			roomManager.Join(session)
 			session.send(Control{Type: "ACK", Room: session.Room})
 		case "LEAVE":
-			roomManager.Leave(session)
+			defer roomManager.Leave(session)
 		}
 	}
 }
