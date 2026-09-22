@@ -57,10 +57,10 @@ func handleControl(conn net.Conn, roomManager *RoomManager) {
 			session.send(Control{Type: "ACK", SSRC: session.SSRC})
 		case "JOIN":
 			session.Room = message.Room
-			roomManager.Join(session)
+			roomManager.Join(session, message.Name)
 			session.send(Control{Type: "ACK", Room: session.Room})
 		case "LEAVE":
-			roomManager.Leave(session)
+			defer roomManager.Leave(session)
 		}
 	}
 }
@@ -68,17 +68,45 @@ func handleControl(conn net.Conn, roomManager *RoomManager) {
 // readUDP parses the 5-byte header, resolves the session by SSRC and
 // forwards the datagram verbatim to room peers.
 func readUDP(pc *net.UDPConn, roomManager *RoomManager) {
-	buf := make([]byte, 1024)
+	buf := make([]byte, 2048)
 	for {
 		n, udpAddr, err := pc.ReadFromUDP(buf)
 		if err != nil {
 			log.Println(err)
 			return
 		}
+
+		// The datagram received is greater than 1024, so the server skips it.
+		if n > 1024 {
+			log.Printf("[CONTROL] received a datagram greater than 1024 (size: %d), skipping...", n)
+			continue
+		}
+
 		h, err := DecodeHeader(buf[:n])
 		if err != nil || h.Version != 0 {
 			continue
 		}
+
+		// A packet with the wrong header length has been received, skipping...
+		if n <= HeaderLen {
+			log.Printf("[CONTROL] received a packet with the wrong header! %d instead of %d", n, HeaderLen)
+			continue
+		}
+
+		// A packet with the wrong kind has been received, skipping...
+		if h.Kind != KindAudio && h.Kind != KindPing {
+			log.Printf("[CONTROL] received a packet with kind not handled by the server! skipping...")
+			continue
+		}
+
+		if h.Terminator && h.Kind != KindAudio {
+			continue
+		}
+
+		if h.Kind == KindAudio && h.SSRC == 0 {
+			continue
+		}
+
 		session := roomManager.BySSRC(h.SSRC)
 		if session == nil {
 			continue

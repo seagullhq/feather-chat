@@ -1,8 +1,10 @@
 package main
 
 import (
+	"log"
 	"net"
 	"sync"
+	"time"
 )
 
 // RoomManager holds map[room]map[ssrc]*Session.
@@ -15,13 +17,20 @@ func NewRoomManager() *RoomManager {
 	return &RoomManager{rooms: map[string]map[uint32]*Session{}}
 }
 
-func (roomManager *RoomManager) Join(s *Session) {
+func (roomManager *RoomManager) Claim(s *Session, ssrc uint32, name string) {
 	roomManager.mu.Lock()
 	defer roomManager.mu.Unlock()
-	r := roomManager.rooms[s.Room]
+	s.SSRC, s.name = ssrc, name
+}
+
+func (roomManager *RoomManager) Join(s *Session, room string) {
+	roomManager.mu.Lock()
+	defer roomManager.mu.Unlock()
+	s.Room = room
+	r := roomManager.rooms[room]
 	if r == nil {
 		r = map[uint32]*Session{}
-		roomManager.rooms[s.Room] = r
+		roomManager.rooms[room] = r
 	}
 	r[s.SSRC] = s
 }
@@ -42,8 +51,9 @@ func (roomManager *RoomManager) Leave(s *Session) {
 func (roomManager *RoomManager) Taken(ssrc uint32) bool {
 	roomManager.mu.RLock()
 	defer roomManager.mu.RUnlock()
+	now := time.Now()
 	for _, r := range roomManager.rooms {
-		if _, ok := r[ssrc]; ok {
+		if s, ok := r[ssrc]; ok && !s.stale(now) {
 			return true
 		}
 	}
@@ -53,8 +63,9 @@ func (roomManager *RoomManager) Taken(ssrc uint32) bool {
 func (roomManager *RoomManager) BySSRC(ssrc uint32) *Session {
 	roomManager.mu.RLock()
 	defer roomManager.mu.RUnlock()
+	now := time.Now()
 	for _, r := range roomManager.rooms {
-		if s := r[ssrc]; s != nil {
+		if s := r[ssrc]; s != nil && !s.stale(now) {
 			return s
 		}
 	}
@@ -68,11 +79,18 @@ func (roomManager *RoomManager) forward(pc *net.UDPConn, session *Session, buf [
 	if err != nil {
 		return
 	}
+	session.touch()
 	if header.Kind == KindPing {
 		pc.WriteToUDP(buf, session.UDPAddr)
+		session.pinged = true
 		return
 	}
-	session.touch()
+
+	if !session.pinged {
+		log.Printf("[ROOM] received a packet before first ping! from %s", session.name)
+		return // AUDIO prima del primo echo: drop, pacchetto da non inoltrare
+	}
+
 	for _, p := range roomManager.Peers(session) {
 		pc.WriteToUDP(buf, p.UDPAddr)
 	}
@@ -82,9 +100,10 @@ func (roomManager *RoomManager) forward(pc *net.UDPConn, session *Session, buf [
 func (roomManager *RoomManager) Peers(session *Session) []*Session {
 	roomManager.mu.RLock()
 	defer roomManager.mu.RUnlock()
+	now := time.Now()
 	var out []*Session
 	for id, p := range roomManager.rooms[session.Room] {
-		if id != session.SSRC {
+		if id != session.SSRC && !p.stale(now) {
 			out = append(out, p)
 		}
 	}

@@ -33,14 +33,14 @@ func main() {
 
 // serve runs the control and media loops until the listeners stop.
 func serve(ltcp net.Listener, pc *net.UDPConn) {
-	roomManagaer := NewRoomManager()
-	go readUDP(pc, roomManagaer)
+	roomManager := NewRoomManager()
+	go readUDP(pc, roomManager)
 	for {
 		conn, err := ltcp.Accept()
 		if err != nil {
 			log.Println(err)
 			return
 		}
-		go handleControl(conn, roomManagaer)
+		go handleControl(conn, roomManager)
 	}
 }

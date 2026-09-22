@@ -44,17 +44,24 @@ func TestIntegrationTwoClients(t *testing.T) {
 	t.Log("both clients joined room")
 	time.Sleep(50 * time.Millisecond) // let JOINs register before media
 
-	// B binds its UDP socket by sending a PING, so the server learns its addr.
-	budp, _ := net.Dial("udp", udpAddr)
-	defer budp.Close()
-	budp.Write(EncodeHeader(Header{Kind: KindPing, SSRC: 0x2222}))
-	budp.SetReadDeadline(time.Now().Add(time.Second))
-	echo := make([]byte, 1024)
-	budp.Read(echo) // drain the PING echo that opened the NAT mapping
-
-	// A sends an AUDIO frame; server forwards verbatim to B.
+	// A and B bind their UDP sockets by sending a PING, so the server learns
+	// their addr and both clear the audio gate (§5: no AUDIO before the first
+	// PING echo). The sockets stay open: the server forwards to these addrs.
 	audp, _ := net.Dial("udp", udpAddr)
 	defer audp.Close()
+	audp.Write(append(EncodeHeader(Header{Kind: KindPing, SSRC: 0x1111}), make([]byte, 8)...))
+
+	budp, _ := net.Dial("udp", udpAddr)
+	defer budp.Close()
+	budp.Write(append(EncodeHeader(Header{Kind: KindPing, SSRC: 0x2222}), make([]byte, 8)...))
+
+	for _, u := range []net.Conn{audp, budp} {
+		u.SetReadDeadline(time.Now().Add(time.Second))
+		echo := make([]byte, 1024)
+		u.Read(echo) // drain each PING echo that opened that NAT mapping
+	}
+
+	// A sends an AUDIO frame; server forwards verbatim to B.
 	audp.Write(append(EncodeHeader(Header{Kind: KindAudio, SSRC: 0x1111}), []byte("opusframe")...))
 
 	budp.SetReadDeadline(time.Now().Add(time.Second))

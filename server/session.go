@@ -25,9 +25,21 @@ type Session struct {
 	wmu      sync.Mutex
 	name     string
 	lastSeen time.Time
+	pinged   bool // Prima ping ricevuta?
+	lastMu   sync.Mutex
 }
 
-func (session *Session) touch() { session.lastSeen = time.Now() }
+func (session *Session) stale(now time.Time) bool {
+	session.lastMu.Lock()
+	defer session.lastMu.Unlock()
+	return now.Sub(session.lastSeen) > 60*time.Second
+}
+
+func (session *Session) touch() {
+	session.lastMu.Lock()
+	session.lastSeen = time.Now()
+	session.lastMu.Unlock()
+}
 
 func (session *Session) send(control Control) error {
 	b, err := json.Marshal(control)
