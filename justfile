@@ -12,39 +12,64 @@ default:
 [unix]
 build:
     cmake --preset default
-    cmake --build build
+    cmake --build --preset default
 
 [windows]
 build:
     cmake --preset windows
-    cmake --build build
+    cmake --build --preset windows
 
-# Build the client with symbols, into build-debug/.
+# Build the client with symbols, into dist/client/feather-chat-debug/.
 build-debug:
     cmake --preset debug
-    cmake --build build-debug
+    cmake --build --preset debug
 
 # Build and run the client.
 [unix]
 client: build
-    ./build/client/feather-chat
+    ./dist/client/feather-chat
 
 [windows]
 client: build
-    .\build\client\feather-chat.exe
+    .\dist\client\feather-chat.exe
 
-# Run the server.
+# Build the server binary into dist/server/.
+[unix]
 [working-directory: 'server']
-server port=":4444":
-    go run . -addr {{port}}
+build-server:
+    mkdir -p ../dist/server
+    go build -o ../dist/server/feather-chat-server .
 
-# Run every test in the repository (none yet).
+[windows]
+[working-directory: 'server']
+build-server:
+    if (!(Test-Path ../dist/server)) { New-Item -ItemType Directory -Path ../dist/server }
+    go build -o ../dist/server/feather-chat-server.exe .
+
+# Build and run the server.
+[unix]
+server port=":7700": build-server
+    ./dist/server/feather-chat-server -tcp {{port}}
+
+[windows]
+server port=":7700": build-server
+    .\dist\server\feather-chat-server.exe -tcp {{port}}
+
+# Run every test in the repository.
 test:
     @just test-server
 
+# Run the server's Go tests: verbose, no result cache.
+# The -race flag needs cgo and a C compiler, which we don't require on Windows.
+[unix]
 [working-directory: 'server']
 test-server:
-    go test -race ./...
+    go test -race -v ./...
+
+[windows]
+[working-directory: 'server']
+test-server:
+    go test -v ./...
 
 # Format everything that has a formatter.
 [unix]
@@ -87,4 +112,4 @@ check: fmt-check vet test build
 
 # Delete build output.
 clean:
-    cmake -E rm -rf build build-debug
+    cmake -E rm -rf dist/client dist/client-debug dist/server

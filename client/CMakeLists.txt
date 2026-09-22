@@ -12,6 +12,10 @@ qt_add_executable(feather-chat
     ${_feather_win_manifest}
 )
 
+set_target_properties(feather-chat PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/dist/client"
+)
+
 # QT_NO_DEPLOY skips windeployqt (qtpaths is missing in static vcpkg builds).
 #
 # Windows manifest: Qt 6 auto-generates one from app.exe.manifest.in, but that

@@ -1,5 +1,4 @@
-build/
-build-debug/
+dist/
 vcpkg_installed/
 .cache/
 CMakeUserPresets.json

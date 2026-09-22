@@ -5,7 +5,7 @@
       "name": "default",
       "displayName": "System Qt (Linux, macOS)",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build",
+      "binaryDir": "${sourceDir}/dist/client",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
@@ -15,7 +15,7 @@
       "name": "debug",
       "inherits": "default",
       "displayName": "System Qt, unoptimized",
-      "binaryDir": "${sourceDir}/build-debug",
+      "binaryDir": "${sourceDir}/dist/client-debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
       }
@@ -24,7 +24,7 @@
       "name": "windows",
       "displayName": "MSVC + vcpkg, statically linked",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build",
+      "binaryDir": "${sourceDir}/dist/client",
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
         "VCPKG_TARGET_TRIPLET": "x64-windows-static-release",

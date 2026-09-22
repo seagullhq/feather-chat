@@ -107,8 +107,8 @@ Roughly 1.5 GB and a few minutes.
 
 ```bash
 cmake --preset default -DCMAKE_PREFIX_PATH=~/Qt/6.8.0/gcc_64
-cmake --build build
-./build/client/feather-chat
+cmake --build --preset default
+./dist/client/feather-chat
 ```
 
 Tired of passing the path? Copy `CMakeUserPresets.json.example` to
@@ -189,12 +189,12 @@ that path works but nobody here builds it regularly.
 
 | | | plain equivalent |
 |---|---|---|
-| `just build` | configure and build the client | `cmake --preset default && cmake --build build` |
-| `just client` | build it, then run it | the above, then `./build/client/feather-chat` |
-| `just server` | run the server on `:4444` | `cd server && go run . -addr :4444` |
+| `just build` | configure and build the client | `cmake --preset default && cmake --build --preset default` |
+| `just client` | build it, then run it | the above, then `./dist/client/feather-chat` |
+| `just server` | build and run the server on `:7700` | `cd server && go build -o ../dist/server/feather-chat-server . && ../dist/server/feather-chat-server -tcp :7700` |
 | `just test` | run the Go tests (none written yet) | `cd server && go test -race ./...` |
 | `just check` | format, vet, test and build | all of the above |
-| `just clean` | delete build output | `rm -rf build build-debug` |
+| `just clean` | delete build output | `rm -rf dist/client dist/client-debug dist/server` |
 
 `just server :5000` picks another port. `just build-debug` produces an
 unoptimized build with symbols in `build-debug/`.
