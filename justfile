@@ -42,10 +42,17 @@ server port=":7700":
 test:
     @just test-server
 
-# Run the server's Go tests: race detector, verbose, no result cache.
+# Run the server's Go tests: verbose, no result cache.
+# The -race flag needs cgo and a C compiler, which we don't require on Windows.
+[unix]
 [working-directory: 'server']
 test-server:
     go test -race -v ./...
+
+[windows]
+[working-directory: 'server']
+test-server:
+    go test -v ./...
 
 # Format everything that has a formatter.
 [unix]
