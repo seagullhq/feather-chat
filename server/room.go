@@ -17,13 +17,20 @@ func NewRoomManager() *RoomManager {
 	return &RoomManager{rooms: map[string]map[uint32]*Session{}}
 }
 
-func (roomManager *RoomManager) Join(s *Session) {
+func (roomManager *RoomManager) Claim(s *Session, ssrc uint32, name string) {
 	roomManager.mu.Lock()
 	defer roomManager.mu.Unlock()
-	r := roomManager.rooms[s.Room]
+	s.SSRC, s.name = ssrc, name
+}
+
+func (roomManager *RoomManager) Join(s *Session, room string) {
+	roomManager.mu.Lock()
+	defer roomManager.mu.Unlock()
+	s.Room = room
+	r := roomManager.rooms[room]
 	if r == nil {
 		r = map[uint32]*Session{}
-		roomManager.rooms[s.Room] = r
+		roomManager.rooms[room] = r
 	}
 	r[s.SSRC] = s
 }

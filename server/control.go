@@ -57,7 +57,7 @@ func handleControl(conn net.Conn, roomManager *RoomManager) {
 			session.send(Control{Type: "ACK", SSRC: session.SSRC})
 		case "JOIN":
 			session.Room = message.Room
-			roomManager.Join(session)
+			roomManager.Join(session, message.Name)
 			session.send(Control{Type: "ACK", Room: session.Room})
 		case "LEAVE":
 			defer roomManager.Leave(session)
