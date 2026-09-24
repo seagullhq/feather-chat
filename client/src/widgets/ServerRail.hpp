@@ -7,7 +7,7 @@
 class ServerRail : public QVBoxLayout {
 
 public:
-    ServerRail() { }
+    ServerRail();
     void addServer(Server s);
     void getServerAt(int idx);
 
