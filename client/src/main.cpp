@@ -1,7 +1,9 @@
 #include "./widgets/Statusbar.hpp"
+#include "widgets/ServerRail.hpp"
 #include "widgets/Titlebar.hpp"
 #include <QApplication>
 #include <QFrame>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QMainWindow>
 #include <QPushButton>
@@ -39,7 +41,10 @@ public:
         connect(titleBar, &Titlebar::closeRequested, this, &QWidget::close);
         layout->addWidget(titleBar);
 
-        layout->addWidget(content, 1);
+        auto *pageLayout = new QHBoxLayout;
+        pageLayout->addLayout(new ServerRail);
+        pageLayout->addWidget(content, 1);
+        layout->addLayout(pageLayout, 1);
         layout->addLayout(statusbar);
         setCentralWidget(central);
 

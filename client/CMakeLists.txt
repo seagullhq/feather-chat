@@ -20,6 +20,19 @@ qt_add_executable(feather-chat
     ${_feather_win_manifest}
 )
 
+qt_add_resources(feather-chat "icons"
+    PREFIX "/icons"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons"
+    FILES
+        assets/icons/server.svg
+        assets/icons/microphone.svg
+        assets/icons/microphone-slash.svg
+        assets/icons/ear.svg
+        assets/icons/ear-slash.svg
+        assets/icons/home.svg
+        assets/icons/plus.svg
+)
+
 set_target_properties(feather-chat PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/dist/client"
 )
