@@ -7,9 +7,30 @@ if(WIN32)
     set(_feather_win_manifest app.manifest)
 endif()
 
+# CONFIGURE_DEPENDS makes the generator re-run this glob at build time, so
+# new/removed files under src/ are picked up without manual re-configure.
+# Headers are included for IDE / AUTOMOC purposes.
+file(GLOB_RECURSE FEATHER_CHAT_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp"
+)
+
 qt_add_executable(feather-chat
-    src/main.cpp
+    ${FEATHER_CHAT_SOURCES}
     ${_feather_win_manifest}
+)
+
+qt_add_resources(feather-chat "icons"
+    PREFIX "/icons"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons"
+    FILES
+        assets/icons/server.svg
+        assets/icons/microphone.svg
+        assets/icons/microphone-slash.svg
+        assets/icons/ear.svg
+        assets/icons/ear-slash.svg
+        assets/icons/home.svg
+        assets/icons/plus.svg
 )
 
 set_target_properties(feather-chat PROPERTIES

@@ -1,9 +1,8 @@
 CompileFlags:
-  CompilationDatabase: build
+  CompilationDatabase: dist/client
   Add:
     - -Wno-unknown-pragmas
-  QueryDriver:
-    # clangd must ask the configured compiler for MSVC/SDK include paths on
-    # Windows; it refuses to run unknown drivers otherwise.
-    - "F:/Program Files/LLVM/bin/clang++.exe"
-    - "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/*/bin/Hostx64/x64/cl.exe"
+  # Qt adds this GCC 16 option to the compilation database. It only affects
+  # code generation, and clangd's Clang frontend cannot parse it.
+  Remove:
+    - -mno-direct-extern-access
