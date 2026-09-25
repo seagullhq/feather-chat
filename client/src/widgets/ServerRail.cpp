@@ -1,9 +1,10 @@
 #include "ServerRail.hpp"
+#include <QFrame>
 #include <QIcon>
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
-#include <QSpacerItem>
+#include <qlayoutitem.h>
 
 namespace {
 QPixmap whiteIcon(const QString &resourcePath, int size)
@@ -27,6 +28,12 @@ ServerRail::ServerRail()
     homeButton->setIcon(QIcon(whiteIcon(":/icons/home.svg", 26)));
     homeButton->setIconSize(QSize(26, 26));
     addWidget(homeButton, 0, Qt::AlignHCenter);
+    addSpacing(8);
+
+    auto *separator = new QFrame;
+    separator->setFrameShape(QFrame::HLine);
+    separator->setFrameShadow(QFrame::Sunken);
+    addWidget(separator);
 
     // TODO: Add user list of server here!
 

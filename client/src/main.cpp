@@ -6,6 +6,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMainWindow>
+#include <QPalette>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -42,10 +43,45 @@ public:
         layout->addWidget(titleBar);
 
         auto *pageLayout = new QHBoxLayout;
-        pageLayout->addLayout(new ServerRail);
+
+        auto *serverRailFrame = new QFrame;
+        serverRailFrame->setFrameShape(QFrame::NoFrame);
+        serverRailFrame->setAutoFillBackground(true);
+        QPalette railPalette = serverRailFrame->palette();
+        railPalette.setColor(QPalette::Window,
+                            railPalette.color(QPalette::Window).darker(110));
+        serverRailFrame->setPalette(railPalette);
+
+        auto *serverRailLayout = new QHBoxLayout(serverRailFrame);
+        serverRailLayout->setContentsMargins(0, 0, 0, 0);
+        serverRailLayout->setSpacing(0);
+        serverRailLayout->addLayout(new ServerRail, 1);
+
+        auto *serverRailBorder = new QFrame;
+        serverRailBorder->setFixedWidth(1);
+        serverRailBorder->setStyleSheet(
+            "background-color: rgba(127, 127, 127, 100);");
+        serverRailLayout->addWidget(serverRailBorder);
+
+        pageLayout->addWidget(serverRailFrame);
         pageLayout->addWidget(content, 1);
         layout->addLayout(pageLayout, 1);
-        layout->addLayout(statusbar);
+
+        auto *statusbarFrame = new QFrame;
+        statusbarFrame->setObjectName("statusbarFrame");
+        statusbarFrame->setFrameShape(QFrame::NoFrame);
+        statusbarFrame->setStyleSheet(
+            "QFrame#statusbarFrame { border-top: 1px solid rgba(127, 127, 127, 100); }");
+        statusbarFrame->setAutoFillBackground(true);
+        QPalette statusPalette = statusbarFrame->palette();
+        statusPalette.setColor(QPalette::Window,
+                               statusPalette.color(QPalette::Window).darker(110));
+        statusbarFrame->setPalette(statusPalette);
+        auto *statusbarLayout = new QHBoxLayout(statusbarFrame);
+        statusbarLayout->setContentsMargins(0, 0, 0, 0);
+        statusbarLayout->addLayout(statusbar);
+        layout->addWidget(statusbarFrame);
+
         setCentralWidget(central);
 
         resize(800, 600);
