@@ -33,8 +33,12 @@ qt_add_resources(feather-chat "icons"
         assets/icons/plus.svg
 )
 
+# Debug goes to its own directory. Without the per-config property below both
+# configurations wrote to dist/client, so building the debug preset replaced the
+# release binary rather than sitting beside it.
 set_target_properties(feather-chat PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/dist/client"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_SOURCE_DIR}/dist/client-debug"
 )
 
 # QT_NO_DEPLOY skips windeployqt (qtpaths is missing in static vcpkg builds).

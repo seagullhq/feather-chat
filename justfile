@@ -1,6 +1,9 @@
 # Recipes marked [unix] and [windows] have a per-platform twin; just picks the
 # one matching the host. Unix recipes run under sh, Windows ones under
 # PowerShell, so neither platform needs the other's shell installed.
+#
+# `just` runs each recipe line in a separate shell process, so a Windows recipe
+# that needs state to carry between lines delegates to a script under scripts/.
 [windows]
 set shell := ["powershell.exe", "-NoLogo", "-Command"]
 
@@ -16,10 +19,9 @@ build:
 
 [windows]
 build:
-    cmake --preset windows
-    cmake --build --preset windows
+    ./scripts/windows-build.ps1
 
-# Build the client with symbols, into dist/client/feather-chat-debug/.
+# Build the client with symbols, into dist/client-debug/.
 build-debug:
     cmake --preset debug
     cmake --build --preset debug
@@ -110,6 +112,10 @@ vet:
 # Format, vet, test and build. Run before pushing.
 check: fmt-check vet test build
 
-# Delete build output.
+# Delete build output; the Qt binary cache keeps the next build fast anyway.
 clean:
-    cmake -E rm -rf dist/client dist/client-debug dist/server
+    cmake -E rm -rf dist/client dist/client-debug dist/client-windows dist/server
+
+# Delete build output and the vcpkg binary cache, forcing a full Qt rebuild (an hour).
+clean-deps: clean
+    cmake -E rm -rf .cache/vcpkg-binary
