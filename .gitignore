@@ -1,6 +1,5 @@
 dist/
 vcpkg_installed/
-.cache/
 CMakeUserPresets.json
 server/server
 client/target/

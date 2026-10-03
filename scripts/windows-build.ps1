@@ -22,10 +22,21 @@ $buildDir = Join-Path $repoRoot 'dist/client-windows'
 # it, and CMake warns the variable went unused. vcpkg then falls back to its own
 # per-machine cache, so a fresh clone pays the full Qt build every time.
 #
-# `clear` drops that per-machine default, which is the point: the cache the repo
-# ships in .cache is what a teammate or a CI runner can be pointed at.
-$binaryCache = (Join-Path $repoRoot '.cache/vcpkg-binary') -replace '\\', '/'
-$env:VCPKG_BINARY_SOURCES = "clear;files,$binaryCache,readwrite"
+# The cache lives outside the working tree, next to vcpkg itself. It used to sit
+# in .cache/vcpkg-binary, but a gitignored directory inside the repo is one
+# `git clean -xdf`, one disk cleanup or one fresh clone away from being deleted,
+# and refilling it costs an hour of Qt build. Nothing in the repo depends on
+# where it lives.
+#
+# `clear` drops that per-machine default, which is the point: this one cache is
+# what gets read and written. Set VCPKG_BINARY_SOURCES yourself before calling
+# this script to send the cache somewhere else (a shared drive, or azblob or s3
+# for CI) and your setting is left alone.
+if (-not $env:VCPKG_BINARY_SOURCES) {
+    $binaryCache = 'F:/tools/vcpkg-binary-cache'
+    New-Item -ItemType Directory -Force -Path $binaryCache | Out-Null
+    $env:VCPKG_BINARY_SOURCES = "clear;files,$binaryCache,readwrite"
+}
 
 # The windows preset has its own binary dir, so the default preset's system-Qt
 # build cannot poison this one. But CMake still remembers the compiler it chose
@@ -37,8 +48,8 @@ $env:VCPKG_BINARY_SOURCES = "clear;files,$binaryCache,readwrite"
 #
 # Only CMakeCache.txt and CMakeFiles/ are removed. vcpkg_installed/ holds the
 # installed dependencies, Qt above all. Dropping it makes the next configure
-# build them from source again, which costs an hour unless the binary cache in
-# .cache/vcpkg-binary still has Qt's zips in it.
+# build them from source again, which costs an hour unless the binary cache
+# still has Qt's zips in it.
 $cache = Join-Path $buildDir 'CMakeCache.txt'
 if (Test-Path -LiteralPath $cache) {
     $match = Select-String -LiteralPath $cache -Pattern '^CMAKE_CXX_COMPILER:FILEPATH=(.+)$'

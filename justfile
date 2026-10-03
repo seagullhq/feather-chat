@@ -117,5 +117,7 @@ clean:
     cmake -E rm -rf dist/client dist/client-debug dist/client-windows dist/server
 
 # Delete build output and the vcpkg binary cache, forcing a full Qt rebuild (an hour).
+# The cache lives outside the repo; this is the path scripts/windows-build.ps1
+# points VCPKG_BINARY_SOURCES at. Nothing to delete on Linux or macOS.
 clean-deps: clean
-    cmake -E rm -rf .cache/vcpkg-binary
+    cmake -E rm -rf F:/tools/vcpkg-binary-cache

@@ -177,27 +177,35 @@ client` finds it at the same path on every platform, and the debug build to
 `cmake --preset windows` compiles Qt from source. `scripts/windows-build.ps1`
 points vcpkg at a [binary
 cache](https://learn.microsoft.com/vcpkg/users/binarycaching) in
-`.cache/vcpkg-binary` (gitignored), so that hour is paid once: every later
-build, including one after `just clean` or a fresh clone of the repo, restores
-Qt from that cache in seconds. `just clean-deps` deletes the cache too, which
-forces the full rebuild again.
+`F:\tools\vcpkg-binary-cache`, so that hour is paid once: every later build,
+including one after `just clean` or a fresh clone of the repo, restores Qt from
+that cache in seconds. `just clean-deps` deletes the cache too, which forces the
+full rebuild again.
 
 The cache is configured in the script rather than in the preset on purpose.
 vcpkg reads its binary-cache list from the environment, and CMake hands a
 `VCPKG_BINARY_SOURCES` cache variable to the toolchain as an ordinary entry that
 vcpkg never reads — CMake even warns that it went unused. vcpkg then quietly
-falls back to its own per-machine cache, so the repo cache stays empty and every
-fresh clone pays the hour again.
+falls back to its own per-machine cache, so the configured cache stays empty and
+every fresh build pays the hour again.
+
+It also lives outside the working tree, next to vcpkg. It used to be
+`.cache/vcpkg-binary` inside the repo, but a gitignored directory there is one
+`git clean -xdf` or disk cleanup away from being deleted, and rebuilding it costs
+an hour. Nothing in the repo depends on where it is: point `VCPKG_BINARY_SOURCES`
+at any other directory, or at a shared drive or an `azblob`/`s3` URL for CI, and
+the script leaves your setting alone.
 
 The preset uses an overlay triplet, `triplets/x64-windows-static-release.cmake`,
 which drops the debug build of every dependency and roughly halves both the
 wait and the disk usage. You lose the ability to step inside Qt's own source,
 not the ability to debug feather-chat.
 
-Because the cache is a plain directory of zips, it can be published to a shared
-location for a team or a CI runner by changing the path the script points
-`VCPKG_BINARY_SOURCES` at. That is the difference between an afternoon and a
-minute, and it is what makes a Windows CI job practical, where qBittorrent
+Because the cache is a plain directory of zips, a team or a CI runner can share
+one by pointing `VCPKG_BINARY_SOURCES` at it, no code change involved. That is
+the difference between an hour and a minute: on a 16-core machine the full Qt
+build measures 58 minutes, and restoring the same 36 packages from the cache
+takes 42 seconds, which is what makes a Windows CI job practical. qBittorrent
 instead sidesteps vcpkg entirely and pulls a prebuilt Qt.
 
 ### Icons need Qt's SVG module
@@ -241,7 +249,7 @@ that path works but nobody here builds it regularly.
 | `just test` | run the Go tests (none written yet) | `cd server && go test -race ./...` |
 | `just check` | format, vet, test and build | all of the above |
 | `just clean` | delete build output | `rm -rf dist/client dist/client-debug dist/client-windows dist/server` |
-| `just clean-deps` | also drop the vcpkg binary cache, forcing a full Qt rebuild | `rm -rf .cache/vcpkg-binary` |
+| `just clean-deps` | also drop the vcpkg binary cache, forcing a full Qt rebuild | `rm -rf F:/tools/vcpkg-binary-cache` |
 
 `just server :5000` picks another port. `just build-debug` produces an
 unoptimized build with symbols in `dist/client-debug/`.
