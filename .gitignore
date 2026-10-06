@@ -4,3 +4,5 @@ CMakeUserPresets.json
 server/server
 client/target/
 compile_commands.json
+.env
+!.env.example

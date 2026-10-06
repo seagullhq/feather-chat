@@ -1,0 +1,36 @@
+# Local MongoDB (Atlas Local: mongod + Atlas Search) for development.
+#   Start: docker compose up -d
+#   Shell: docker compose exec mongodb mongosh
+#   Reset: docker compose down -v   (deletes all data)
+services:
+  mongodb:
+    # Track the 8.0 line, not latest: a future major bump must not silently
+    # corrupt an existing data volume.
+    image: mongodb/mongodb-atlas-local:8.0
+    hostname: mongodb
+    restart: unless-stopped
+    environment:
+      MONGODB_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?set MONGO_ROOT_USERNAME in .env}
+      MONGODB_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set MONGO_ROOT_PASSWORD in .env}
+      # Opt out of the image's anonymous telemetry.
+      DO_NOT_TRACK: "1"
+    ports:
+      # Local development only: don't expose the database to the LAN.
+      - "127.0.0.1:27017:27017"
+    volumes:
+      # Seed scripts (.sh/.js) run alphabetically, but only on first start
+      # against an empty db volume.
+      - ./init:/docker-entrypoint-initdb.d
+      - db:/data/db
+      - configdb:/data/configdb
+      - mongot:/data/mongot # Atlas Search index data
+# The image ships its own healthcheck (mongod + mongot + seeding done,
+# every 30s), so a dependent service can wait with:
+#   depends_on:
+#     mongodb:
+#       condition: service_healthy
+
+volumes:
+  db:
+  configdb:
+  mongot:
