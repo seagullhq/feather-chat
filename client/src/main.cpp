@@ -1,5 +1,6 @@
-#include "./widgets/Statusbar.hpp"
+#include "pages/MainPage.hpp"
 #include "widgets/ServerRail.hpp"
+#include "widgets/Statusbar.hpp"
 #include "widgets/Titlebar.hpp"
 #include <QApplication>
 #include <QFrame>
@@ -28,12 +29,11 @@ public:
 #endif
         setWindowTitle("Feather Chat");
 
-        Statusbar *statusbar = new Statusbar();
         auto *central = new QWidget;
         auto *layout = new QVBoxLayout(central);
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(0);
-        auto *content = new QWidget;
+        auto *mainPage = new MainPage(this);
 
         titleBar = new Titlebar(this);
 
@@ -44,43 +44,14 @@ public:
 
         auto *pageLayout = new QHBoxLayout;
 
-        auto *serverRailFrame = new QFrame;
-        serverRailFrame->setFrameShape(QFrame::NoFrame);
-        serverRailFrame->setAutoFillBackground(true);
-        QPalette railPalette = serverRailFrame->palette();
-        railPalette.setColor(QPalette::Window,
-                            railPalette.color(QPalette::Window).darker(110));
-        serverRailFrame->setPalette(railPalette);
+        auto *serverRail = new ServerRail(this);
 
-        auto *serverRailLayout = new QHBoxLayout(serverRailFrame);
-        serverRailLayout->setContentsMargins(0, 0, 0, 0);
-        serverRailLayout->setSpacing(0);
-        serverRailLayout->addLayout(new ServerRail, 1);
-
-        auto *serverRailBorder = new QFrame;
-        serverRailBorder->setFixedWidth(1);
-        serverRailBorder->setStyleSheet(
-            "background-color: rgba(127, 127, 127, 100);");
-        serverRailLayout->addWidget(serverRailBorder);
-
-        pageLayout->addWidget(serverRailFrame);
-        pageLayout->addWidget(content, 1);
+        pageLayout->addWidget(serverRail);
+        pageLayout->addWidget(mainPage, 1);
         layout->addLayout(pageLayout, 1);
 
-        auto *statusbarFrame = new QFrame;
-        statusbarFrame->setObjectName("statusbarFrame");
-        statusbarFrame->setFrameShape(QFrame::NoFrame);
-        statusbarFrame->setStyleSheet(
-            "QFrame#statusbarFrame { border-top: 1px solid rgba(127, 127, 127, 100); }");
-        statusbarFrame->setAutoFillBackground(true);
-        QPalette statusPalette = statusbarFrame->palette();
-        statusPalette.setColor(QPalette::Window,
-                               statusPalette.color(QPalette::Window).darker(110));
-        statusbarFrame->setPalette(statusPalette);
-        auto *statusbarLayout = new QHBoxLayout(statusbarFrame);
-        statusbarLayout->setContentsMargins(0, 0, 0, 0);
-        statusbarLayout->addLayout(statusbar);
-        layout->addWidget(statusbarFrame);
+        auto *statusbar = new Statusbar(this);
+        layout->addWidget(statusbar);
 
         setCentralWidget(central);
 

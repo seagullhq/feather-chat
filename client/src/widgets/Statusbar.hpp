@@ -1,14 +1,14 @@
 #pragma once
 
-#include <QHBoxLayout>
+#include <QFrame>
 #include <QString>
 
 class QLabel;
 class QPushButton;
 
-class Statusbar : public QHBoxLayout {
+class Statusbar : public QFrame {
 public:
-    explicit Statusbar();
+    explicit Statusbar(QWidget *parent);
 
     void setMicrophoneName(const QString &name);
     void setServerName(const QString &name);

@@ -20,17 +20,19 @@ qt_add_executable(feather-chat
     ${_feather_win_manifest}
 )
 
+# Glob the icons instead of listing them: FILES takes no wildcard, so expand it
+# here. CONFIGURE_DEPENDS makes the generator re-run the glob at build time, so
+# new/removed SVGs under assets/icons/ are picked up without a manual
+# re-configure (same rationale as the source glob above). Only *.svg matches,
+# so the LICENSE file in that directory stays out.
+file(GLOB _feather_icons CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/*.svg"
+)
+
 qt_add_resources(feather-chat "icons"
     PREFIX "/icons"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons"
-    FILES
-        assets/icons/server.svg
-        assets/icons/microphone.svg
-        assets/icons/microphone-slash.svg
-        assets/icons/ear.svg
-        assets/icons/ear-slash.svg
-        assets/icons/home.svg
-        assets/icons/plus.svg
+    FILES ${_feather_icons}
 )
 
 # Debug goes to its own directory. Without the per-config property below both

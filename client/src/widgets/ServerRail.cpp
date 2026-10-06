@@ -1,48 +1,67 @@
 #include "ServerRail.hpp"
+
 #include <QFrame>
 #include <QIcon>
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
-#include <qlayoutitem.h>
+#include <QVBoxLayout>
 
 namespace {
+
 QPixmap whiteIcon(const QString &resourcePath, int size)
 {
     QPixmap pixmap = QIcon(resourcePath).pixmap(size, size);
+
     QPainter painter(&pixmap);
     painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
     painter.fillRect(pixmap.rect(), Qt::white);
-    painter.end();
+
     return pixmap;
 }
+
 } // namespace
 
-ServerRail::ServerRail()
+ServerRail::ServerRail(QWidget *parent)
+    : QFrame(parent)
 {
-    setContentsMargins(8, 4, 8, 4);
+    // "border: none" first: Qt only enters the stylesheet box drawing when the
+    // top edge has a declared style, so a lone border-right is silently dropped
+    // (see QRenderRule::hasNativeBorder in qstylesheetstyle.cpp).
+    setObjectName("serverRail");
+    setStyleSheet("QFrame#serverRail {"
+                  "    border: none;"
+                  "    border-right: 1px solid rgba(127, 127, 127, 100);"
+                  "}");
+
+    auto *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(8, 4, 8, 4);
+    layout->setSpacing(0);
 
     auto *homeButton = new QPushButton;
     homeButton->setObjectName("homeButton");
     homeButton->setToolTip("Home");
     homeButton->setIcon(QIcon(whiteIcon(":/icons/home.svg", 26)));
     homeButton->setIconSize(QSize(26, 26));
-    addWidget(homeButton, 0, Qt::AlignHCenter);
-    addSpacing(8);
+
+    layout->addWidget(homeButton, 0, Qt::AlignHCenter);
+    layout->addSpacing(8);
 
     auto *separator = new QFrame;
     separator->setFrameShape(QFrame::HLine);
     separator->setFrameShadow(QFrame::Sunken);
-    addWidget(separator);
+
+    layout->addWidget(separator);
 
     // TODO: Add user list of server here!
 
-    addStretch();
+    layout->addStretch();
 
     auto *addServer = new QPushButton;
     addServer->setObjectName("addServer");
     addServer->setToolTip("Add server");
     addServer->setIcon(QIcon(whiteIcon(":/icons/plus.svg", 26)));
     addServer->setIconSize(QSize(26, 26));
-    addWidget(addServer, 0, Qt::AlignHCenter);
+
+    layout->addWidget(addServer, 0, Qt::AlignHCenter);
 }

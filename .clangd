@@ -2,7 +2,7 @@ CompileFlags:
   # The MSVC build writes its database to dist/client-windows, not dist/client.
   # Point this there on Windows; clangd has no per-platform config, so it can
   # only follow one of the two.
-  CompilationDatabase: dist/client
+  CompilationDatabase: dist/client-windows
   Add:
     - -Wno-unknown-pragmas
   # Qt adds this GCC 16 option to the compilation database. It only affects

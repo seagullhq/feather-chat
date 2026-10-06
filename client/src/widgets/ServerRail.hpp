@@ -3,11 +3,12 @@
 #include "../data/datastructures.hpp"
 #include <QVBoxLayout>
 #include <cstdint>
+#include <qframe.h>
 
-class ServerRail : public QVBoxLayout {
+class ServerRail : public QFrame {
 
 public:
-    ServerRail();
+    ServerRail(QWidget *parent);
     void addServer(Server s);
     void getServerAt(int idx);
 
