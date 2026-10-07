@@ -27,7 +27,8 @@ func main() {
 		}
 	}
 
-	mongoURI := flag.String("mongo", os.Getenv("MONGO_DOKPLOY"), "MongoDB connection URI")
+	// os.Getenv("MONGO_DOKPLOY")
+	mongoURI := flag.String("mongo", defaultMongoURI(), "MongoDB connection URI")
 	dbName := flag.String("db", os.Getenv("MONGO_DBNAME"), "MongoDB database name")
 
 	// Define tcp and udp address
