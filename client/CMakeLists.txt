@@ -7,13 +7,49 @@ if(WIN32)
     set(_feather_win_manifest app.manifest)
 endif()
 
+# CONFIGURE_DEPENDS makes the generator re-run this glob at build time, so
+# new/removed files under src/ are picked up without manual re-configure.
+# Headers are included for IDE / AUTOMOC purposes.
+file(GLOB_RECURSE FEATHER_CHAT_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp"
+)
+
 qt_add_executable(feather-chat
-    src/main.cpp
+    ${FEATHER_CHAT_SOURCES}
     ${_feather_win_manifest}
 )
 
+# Glob the icons instead of listing them: FILES takes no wildcard, so expand it
+# here. CONFIGURE_DEPENDS makes the generator re-run the glob at build time, so
+# new/removed SVGs under assets/icons/ are picked up without a manual
+# re-configure (same rationale as the source glob above). Only *.svg matches,
+# so the LICENSE file in that directory stays out.
+file(GLOB _feather_icons CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/*.svg"
+)
+
+qt_add_resources(feather-chat "icons"
+    PREFIX "/icons"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons"
+    FILES ${_feather_icons}
+)
+
+# The app/window icon lives beside the icons/ directory rather than inside it,
+# because it is the product mark, not one of the generic UI icons. Expose it as
+# :/feather.svg for QApplication::setWindowIcon.
+qt_add_resources(feather-chat "appicon"
+    PREFIX "/"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+    FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/feather.svg"
+)
+
+# Debug goes to its own directory. Without the per-config property below both
+# configurations wrote to dist/client, so building the debug preset replaced the
+# release binary rather than sitting beside it.
 set_target_properties(feather-chat PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/dist/client"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_SOURCE_DIR}/dist/client-debug"
 )
 
 # QT_NO_DEPLOY skips windeployqt (qtpaths is missing in static vcpkg builds).

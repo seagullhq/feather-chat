@@ -9,10 +9,15 @@ import (
 
 // Control is a TCP control message (§7): HELLO, JOIN, LEAVE, ACK, ROSTER.
 type Control struct {
-	Type string `json:"type"`
-	Name string `json:"name,omitempty"`
-	SSRC uint32 `json:"ssrc,omitempty"`
-	Room string `json:"room,omitempty"`
+	Type       string `json:"type"`
+	Name       string `json:"name,omitempty"`
+	SSRC       uint32 `json:"ssrc,omitempty"`
+	Room       string `json:"room,omitempty"`
+	Username   string `json:"username,omitempty"`
+	Email      string `json:"email,omitempty"`
+	Identifier string `json:"identifier,omitempty"`
+	Password   string `json:"password,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 // Session is one connected client (TCP control + UDP media).
@@ -27,7 +32,12 @@ type Session struct {
 	lastSeen time.Time
 	pinged   bool // Prima ping ricevuta?
 	lastMu   sync.Mutex
+
+	UserID   string
+	Username string
 }
+
+func (s *Session) authed() bool { return s.UserID != "" }
 
 func (session *Session) stale(now time.Time) bool {
 	session.lastMu.Lock()

@@ -1,13 +1,14 @@
+#include "pages/MainWindow.hpp"
 #include <QApplication>
-#include <QLabel>
+#include <QIcon>
 
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    app.setWindowIcon(QIcon(":/feather.svg"));
 
-    QLabel label("hello from feather-chat");
-    label.setWindowTitle("Feather");
-    label.show();
+    MainWindow window;
+    window.show();
 
     return app.exec();
 }
