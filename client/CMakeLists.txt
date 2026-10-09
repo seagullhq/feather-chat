@@ -35,6 +35,15 @@ qt_add_resources(feather-chat "icons"
     FILES ${_feather_icons}
 )
 
+# The app/window icon lives beside the icons/ directory rather than inside it,
+# because it is the product mark, not one of the generic UI icons. Expose it as
+# :/feather.svg for QApplication::setWindowIcon.
+qt_add_resources(feather-chat "appicon"
+    PREFIX "/"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+    FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/feather.svg"
+)
+
 # Debug goes to its own directory. Without the per-config property below both
 # configurations wrote to dist/client, so building the debug preset replaced the
 # release binary rather than sitting beside it.

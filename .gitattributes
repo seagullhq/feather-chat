@@ -5,6 +5,10 @@
 *.sh      text eol=lf
 justfile  text eol=lf
 
+# gofmt has no CRLF mode and reports every line of a CRLF file as unformatted,
+# so Go sources must never be checked out with native Windows endings.
+*.go      text eol=lf
+
 # Always CRLF for Windows-only scripts.
 *.bat text eol=crlf
 *.ps1 text eol=crlf

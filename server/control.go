@@ -1,12 +1,19 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net"
+	"regexp"
+	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/seagullhq/feather-chat/server/internal/accounts"
 )
 
 const maxControl = 1 << 20
@@ -34,7 +41,7 @@ func readFrame(reader io.Reader) ([]byte, error) {
 }
 
 // handleControl runs the per-client TCP control session (HELLO/JOIN/LEAVE).
-func handleControl(conn net.Conn, roomManager *RoomManager) {
+func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Store) {
 	defer conn.Close()
 	session := &Session{tcp: conn, lastSeen: time.Now()}
 
@@ -48,6 +55,39 @@ func handleControl(conn net.Conn, roomManager *RoomManager) {
 			continue // tolerate unknown types (§7 interop rule)
 		}
 		switch message.Type {
+		case "REGISTER":
+			if err := validateRegistration(message); err != nil {
+				session.send(Control{Type: "ERROR", Error: err.Error()})
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			err := users.Register(ctx, message.Username, message.Email, message.Password)
+			cancel()
+			if errors.Is(err, accounts.ErrTaken) {
+				session.send(Control{Type: "ERROR", Error: accounts.ErrTaken.Error()})
+				continue
+			}
+			if err != nil {
+				log.Printf("[AUTH] register failed: %v", err) // never log the password
+				session.send(Control{Type: "ERROR", Error: "registration failed"})
+				continue
+			}
+			session.send(Control{Type: "ACK"})
+		case "LOGIN":
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			user, err := users.Authenticate(ctx, message.Identifier, message.Password)
+			cancel()
+			if err != nil {
+				if !errors.Is(err, accounts.ErrBadCredentials) {
+					log.Printf("[AUTH] login failed: %v", err)
+				}
+				session.send(Control{Type: "ERROR", Error: accounts.ErrBadCredentials.Error()})
+				continue
+			}
+			session.UserID = user.ID.Hex()
+			session.Username = user.Username
+			session.send(Control{Type: "ACK", Name: user.Username})
+
 		case "HELLO":
 			if message.SSRC == 0 || roomManager.Taken(message.SSRC) {
 				session.send(Control{Type: "ACK"})
@@ -56,13 +96,32 @@ func handleControl(conn net.Conn, roomManager *RoomManager) {
 			session.SSRC, session.name = message.SSRC, message.Name
 			session.send(Control{Type: "ACK", SSRC: session.SSRC})
 		case "JOIN":
-			session.Room = message.Room
-			roomManager.Join(session, message.Name)
+			if !session.authed() {
+				session.send(Control{Type: "ERROR", Error: "authentication required"})
+				continue
+			}
+			roomManager.Join(session, message.Room)
 			session.send(Control{Type: "ACK", Room: session.Room})
 		case "LEAVE":
 			defer roomManager.Leave(session)
 		}
 	}
+}
+
+var emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+
+func validateRegistration(m Control) error {
+	if n := utf8.RuneCountInString(strings.TrimSpace(m.Username)); n < 3 || n > 32 {
+		return errors.New("username must be 3-32 characters")
+	}
+	// bcrypt limits input to 72 bytes, not runes.
+	if n := len([]byte(m.Password)); n < 8 || n > 72 {
+		return errors.New("password must be 8-72 bytes")
+	}
+	if !emailRe.MatchString(strings.TrimSpace(m.Email)) {
+		return errors.New("invalid email")
+	}
+	return nil
 }
 
 // readUDP parses the 5-byte header, resolves the session by SSRC and

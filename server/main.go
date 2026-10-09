@@ -11,23 +11,19 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/seagullhq/feather-chat/server/internal/accounts"
 	"github.com/seagullhq/feather-chat/server/internal/migrations"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 func main() {
-	// Go never reads .env files on its own, so load it explicitly. godotenv
-	// skips variables already present in the environment, so a real env var
-	// always wins over the file. The second path covers being started from
-	// server/ instead of the repository root.
 	if err := godotenv.Load(); err != nil {
 		if err2 := godotenv.Load("../.env"); err2 != nil {
 			log.Printf(".env not loaded (%v); using environment only", err)
 		}
 	}
 
-	// os.Getenv("MONGO_DOKPLOY")
 	mongoURI := flag.String("mongo", defaultMongoURI(), "MongoDB connection URI")
 	dbName := flag.String("db", os.Getenv("MONGO_DBNAME"), "MongoDB database name")
 
@@ -53,6 +49,8 @@ func main() {
 		log.Fatalf("migrations: %v", err)
 	}
 
+	store := accounts.NewStore(db.Database(*dbName))
+
 	// Starting listening to the tcp and udp buffers
 
 	listenerTCP, err := net.Listen("tcp", *tcpAddr)
@@ -67,13 +65,9 @@ func main() {
 	}
 	defer listenerUDP.Close()
 
-	// 2026/10/07 00:06:32 mongo ping: server selection error: context deadline exceeded, current topology:
-	// { Type: Single, Servers: [{ Addr: 127.0.0.1:27017, Type: Unknown, Last error: dial tcp 127.0.0.1:27017:
-	// connectex: Impossibile stabilire la connessione. Rifiuto persistente del computer di destinazione. }, ] }
-
 	// Server starting
 	log.Printf("feather-chat server: control=%s media=%s", *tcpAddr, *udpAddr)
-	serve(listenerTCP, listenerUDP.(*net.UDPConn))
+	serve(listenerTCP, listenerUDP.(*net.UDPConn), store)
 }
 
 func defaultMongoURI() string {
@@ -81,12 +75,12 @@ func defaultMongoURI() string {
 		"mongodb://%s:%s@%s:27017/?authSource=admin&directConnection=true",
 		url.QueryEscape(os.Getenv("MONGO_ROOT_USERNAME")),
 		url.QueryEscape(os.Getenv("MONGO_ROOT_PASSWORD")),
-		os.Getenv("MONGO_HOST"),
+		url.QueryEscape(os.Getenv("MONGO_HOST")),
 	)
 }
 
 // serve runs the control and media loops until the listeners stop.
-func serve(ltcp net.Listener, pc *net.UDPConn) {
+func serve(ltcp net.Listener, pc *net.UDPConn, users *accounts.Store) {
 	roomManager := NewRoomManager()
 	go readUDP(pc, roomManager)
 	for {
@@ -95,6 +89,6 @@ func serve(ltcp net.Listener, pc *net.UDPConn) {
 			log.Println(err)
 			return
 		}
-		go handleControl(conn, roomManager)
+		go handleControl(conn, roomManager, users)
 	}
 }
