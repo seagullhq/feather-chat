@@ -8,7 +8,7 @@
     {
       "name": "qtbase",
       "default-features": false,
-      "features": ["gui", "widgets"],
+      "features": ["gui", "widgets", "network"],
       "platform": "windows"
     },
     {

@@ -1,4 +1,4 @@
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
 qt_standard_project_setup()
 
@@ -65,4 +65,4 @@ if(WIN32)
     set_target_properties(feather-chat PROPERTIES QT_NO_DEPLOY ON)
 endif()
 
-target_link_libraries(feather-chat PRIVATE Qt6::Widgets)
+target_link_libraries(feather-chat PRIVATE Qt6::Widgets Qt6::Network)
