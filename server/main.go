@@ -13,6 +13,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/seagullhq/feather-chat/server/internal/accounts"
 	"github.com/seagullhq/feather-chat/server/internal/migrations"
+	"github.com/seagullhq/feather-chat/server/internal/servers"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
@@ -50,6 +51,7 @@ func main() {
 	}
 
 	store := accounts.NewStore(db.Database(*dbName))
+	serverStore := servers.NewStore(db.Database(*dbName))
 
 	// Starting listening to the tcp and udp buffers
 
@@ -67,7 +69,7 @@ func main() {
 
 	// Server starting
 	log.Printf("feather-chat server: control=%s media=%s", *tcpAddr, *udpAddr)
-	serve(listenerTCP, listenerUDP.(*net.UDPConn), store)
+	serve(listenerTCP, listenerUDP.(*net.UDPConn), store, serverStore)
 }
 
 func defaultMongoURI() string {
@@ -80,7 +82,7 @@ func defaultMongoURI() string {
 }
 
 // serve runs the control and media loops until the listeners stop.
-func serve(ltcp net.Listener, pc *net.UDPConn, users *accounts.Store) {
+func serve(ltcp net.Listener, pc *net.UDPConn, users *accounts.Store, serverStore *servers.ServerStore) {
 	roomManager := NewRoomManager()
 	go readUDP(pc, roomManager)
 	for {
@@ -89,6 +91,6 @@ func serve(ltcp net.Listener, pc *net.UDPConn, users *accounts.Store) {
 			log.Println(err)
 			return
 		}
-		go handleControl(conn, roomManager, users)
+		go handleControl(conn, roomManager, users, serverStore)
 	}
 }

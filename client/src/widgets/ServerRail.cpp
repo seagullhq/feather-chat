@@ -6,21 +6,7 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QVBoxLayout>
-
-namespace {
-
-QPixmap whiteIcon(const QString &resourcePath, int size)
-{
-    QPixmap pixmap = QIcon(resourcePath).pixmap(size, size);
-
-    QPainter painter(&pixmap);
-    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
-    painter.fillRect(pixmap.rect(), Qt::white);
-
-    return pixmap;
-}
-
-} // namespace
+#include <qpushbutton.h>
 
 ServerRail::ServerRail(QWidget *parent)
     : QFrame(parent)
@@ -41,7 +27,7 @@ ServerRail::ServerRail(QWidget *parent)
     auto *homeButton = new QPushButton;
     homeButton->setObjectName("homeButton");
     homeButton->setToolTip("Home");
-    homeButton->setIcon(QIcon(whiteIcon(":/icons/home.svg", 26)));
+    homeButton->setIcon(QIcon(ICONS::whiteIcon(":/icons/home.svg", 26)));
     homeButton->setIconSize(QSize(26, 26));
 
     layout->addWidget(homeButton, 0, Qt::AlignHCenter);
@@ -60,8 +46,9 @@ ServerRail::ServerRail(QWidget *parent)
     auto *addServer = new QPushButton;
     addServer->setObjectName("addServer");
     addServer->setToolTip("Add server");
-    addServer->setIcon(QIcon(whiteIcon(":/icons/plus.svg", 26)));
+    addServer->setIcon(QIcon(ICONS::whiteIcon(":/icons/plus.svg", 26)));
     addServer->setIconSize(QSize(26, 26));
+    connect(addServer, &QPushButton::clicked, this, &ServerRail::addServerRequested);
 
     layout->addWidget(addServer, 0, Qt::AlignHCenter);
 }

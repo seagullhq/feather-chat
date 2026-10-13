@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/seagullhq/feather-chat/server/internal/accounts"
+	"github.com/seagullhq/feather-chat/server/internal/servers"
 )
 
 const maxControl = 1 << 20
@@ -41,7 +42,7 @@ func readFrame(reader io.Reader) ([]byte, error) {
 }
 
 // handleControl runs the per-client TCP control session (HELLO/JOIN/LEAVE).
-func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Store) {
+func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Store, serverStore *servers.ServerStore) {
 	defer conn.Close()
 	session := &Session{tcp: conn, lastSeen: time.Now()}
 
@@ -73,6 +74,18 @@ func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Stor
 				continue
 			}
 			session.send(Control{Type: "ACK"})
+		case "CREATE_SERVER":
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			server, err := serverStore.CreateServer(ctx, message.OwnerID, message.ServerName)
+			cancel()
+			if err != nil {
+				if !errors.Is(err, servers.ErrTaken) {
+					log.Printf("[CREATION] failed to create server: %v", err)
+				}
+				session.send(Control{Type: "ERROR", Error: accounts.ErrTaken.Error()})
+				continue
+			}
+			session.send(Control{Type: "ACK", InviteCode: server.InviteCode})
 		case "LOGIN":
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			user, err := users.Authenticate(ctx, message.Identifier, message.Password)

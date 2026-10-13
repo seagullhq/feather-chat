@@ -5,19 +5,24 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 // Control is a TCP control message (§7): HELLO, JOIN, LEAVE, ACK, ROSTER.
 type Control struct {
-	Type       string `json:"type"`
-	Name       string `json:"name,omitempty"`
-	SSRC       uint32 `json:"ssrc,omitempty"`
-	Room       string `json:"room,omitempty"`
-	Username   string `json:"username,omitempty"`
-	Email      string `json:"email,omitempty"`
-	Identifier string `json:"identifier,omitempty"`
-	Password   string `json:"password,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Type       string        `json:"type"`
+	Name       string        `json:"name,omitempty"`
+	SSRC       uint32        `json:"ssrc,omitempty"`
+	Room       string        `json:"room,omitempty"`
+	Username   string        `json:"username,omitempty"`
+	OwnerID    bson.ObjectID `bson:"ownerId,omitempty"`
+	ServerName string        `json:"serverName,omitempty"`
+	InviteCode string        `json:"inviteCode,omitempty"`
+	Email      string        `json:"email,omitempty"`
+	Identifier string        `json:"identifier,omitempty"`
+	Password   string        `json:"password,omitempty"`
+	Error      string        `json:"error,omitempty"`
 }
 
 // Session is one connected client (TCP control + UDP media).

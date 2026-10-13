@@ -12,6 +12,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/seagullhq/feather-chat/server/internal/accounts"
 	"github.com/seagullhq/feather-chat/server/internal/migrations"
+	"github.com/seagullhq/feather-chat/server/internal/servers"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -116,7 +117,7 @@ func TestIntegrationTwoClients(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	go serve(ltcp, ludp.(*net.UDPConn), store)
+	go serve(ltcp, ludp.(*net.UDPConn), store, servers.NewStore(database))
 
 	udpAddr := ludp.LocalAddr().String()
 

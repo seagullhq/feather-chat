@@ -4,6 +4,7 @@
 #include "../widgets/Statusbar.hpp"
 #include "AuthPage.hpp"
 #include "MainPage.hpp"
+#include "ServerOptPage.hpp"
 #include <QHBoxLayout>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -44,6 +45,10 @@ MainWindow::MainWindow(QWidget *parent)
     stackedWidget->addWidget(authPage); // Index 0
     stackedWidget->addWidget(mainWidget); // Index 1
 
+    auto *serverOptPage = new ServerOptPage(this);
+
+    stackedWidget->addWidget(serverOptPage);
+
     setCentralWidget(stackedWidget);
 
     // La connessione TCP si apre alla prima richiesta (login/registrazione).
@@ -76,6 +81,10 @@ MainWindow::MainWindow(QWidget *parent)
     connect(client, &ControlClient::registrationSucceeded, authPage,
         &AuthPage::onRegistrationSucceeded);
     connect(client, &ControlClient::registrationFailed, authPage, &AuthPage::onRegistrationFailed);
+    connect(serverRail, &ServerRail::addServerRequested, this,
+        [stackedWidget, serverOptPage]() { stackedWidget->setCurrentWidget(serverOptPage); });
+    connect(serverOptPage, &ServerOptPage::returnHomeRequested, this,
+        [stackedWidget, mainWidget]() { stackedWidget->setCurrentWidget(mainWidget); });
 }
 
 bool MainWindow::applyServer(const QString &serverHost)
