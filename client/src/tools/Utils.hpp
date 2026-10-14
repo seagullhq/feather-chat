@@ -25,9 +25,9 @@ static void setButtonIcon(QPushButton *button, const QString &resourcePath)
 
 namespace QT_MANAGER {
 template<typename Sender, typename Receiver, typename... Pairs>
-void connectAll(Sender *s, Receiver *r, Pairs... p)
+void connectAll(Sender *sender, Receiver *reciver, Pairs... pair)
 {
-    (QObject::connect(s, p.first, r, p.second), ...);
+    (QObject::connect(sender, pair.first, reciver, pair.second), ...);
 }
 
 template<typename Sender, typename Signal, typename Slot>

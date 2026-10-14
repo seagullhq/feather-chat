@@ -54,14 +54,14 @@ MainWindow::MainWindow(QWidget *parent)
     // La connessione TCP si apre alla prima richiesta (login/registrazione).
     client = new ControlClient(this);
 
-    // Auth Handlers
+    // Events Handler
     QT_MANAGER::connectAll(client, authPage,
         std::pair { &ControlClient::authenticationSucceeded, &AuthPage::onAuthenticationSucceeded },
         std::pair { &ControlClient::authenticationFailed, &AuthPage::onAuthenticationFailed },
         std::pair { &ControlClient::registrationSucceeded, &AuthPage::onRegistrationSucceeded },
         std::pair { &ControlClient::registrationFailed, &AuthPage::onRegistrationFailed });
 
-    // Login Handlers
+    // Login/Register Handler
     QT_MANAGER::connectAll(authPage, this,
         std::pair { &AuthPage::loginRequested,
             [this, authPage](
