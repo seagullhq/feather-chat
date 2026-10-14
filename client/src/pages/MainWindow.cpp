@@ -54,39 +54,43 @@ MainWindow::MainWindow(QWidget *parent)
     // La connessione TCP si apre alla prima richiesta (login/registrazione).
     client = new ControlClient(this);
 
-    connect(authPage, &AuthPage::loginRequested, this,
-        [this, authPage](const QString &host, const QString &identifier, const QString &password) {
-            if (!applyServer(host)) {
-                authPage->onAuthenticationFailed("Host del server non valido.");
-                return;
-            }
-            client->login(identifier, password);
-        });
-    connect(authPage, &AuthPage::registerRequested, this,
-        [this, authPage](const QString &host, const QString &username, const QString &email,
-            const QString &password) {
-            if (!applyServer(host)) {
-                authPage->onRegistrationFailed("Host del server non valido.");
-                return;
-            }
-            client->registerUser(username, email, password);
-        });
+    // Auth Handlers
+    QT_MANAGER::connectAll(client, authPage,
+        std::pair { &ControlClient::authenticationSucceeded, &AuthPage::onAuthenticationSucceeded },
+        std::pair { &ControlClient::authenticationFailed, &AuthPage::onAuthenticationFailed },
+        std::pair { &ControlClient::registrationSucceeded, &AuthPage::onRegistrationSucceeded },
+        std::pair { &ControlClient::registrationFailed, &AuthPage::onRegistrationFailed });
 
-    connect(client, &ControlClient::authenticationSucceeded, authPage,
-        &AuthPage::onAuthenticationSucceeded);
-    connect(client, &ControlClient::authenticationSucceeded, this,
-        [stackedWidget]() { stackedWidget->setCurrentIndex(1); });
-    connect(
-        client, &ControlClient::authenticationFailed, authPage, &AuthPage::onAuthenticationFailed);
-    connect(client, &ControlClient::registrationSucceeded, authPage,
-        &AuthPage::onRegistrationSucceeded);
-    connect(client, &ControlClient::registrationFailed, authPage, &AuthPage::onRegistrationFailed);
-    connect(serverRail, &ServerRail::addServerRequested, this,
-        [stackedWidget, serverOptPage]() { stackedWidget->setCurrentWidget(serverOptPage); });
-    connect(serverOptPage, &ServerOptPage::returnHomeRequested, this,
-        [stackedWidget, mainWidget]() { stackedWidget->setCurrentWidget(mainWidget); });
+    // Login Handlers
+    QT_MANAGER::connectAll(authPage, this,
+        std::pair { &AuthPage::loginRequested,
+            [this, authPage](
+                const QString &host, const QString &identifier, const QString &password) {
+                if (!applyServer(host)) {
+                    authPage->onAuthenticationFailed("Host del server non valido.");
+                    return;
+                }
+                client->login(identifier, password);
+            } },
+        std::pair { &AuthPage::registerRequested,
+            [this, authPage](const QString &host, const QString &username, const QString &email,
+                const QString &password) {
+                if (!applyServer(host)) {
+                    authPage->onRegistrationFailed("Host del server non valido.");
+                    return;
+                }
+                client->registerUser(username, email, password);
+            } });
+
+    // Pages Handler
+    QT_MANAGER::connectWithContext(this,
+        QT_MANAGER::Conn { client, &ControlClient::authenticationSucceeded,
+            [stackedWidget]() { stackedWidget->setCurrentIndex(1); } },
+        QT_MANAGER::Conn { serverRail, &ServerRail::addServerRequested,
+            [stackedWidget, serverOptPage]() { stackedWidget->setCurrentWidget(serverOptPage); } },
+        QT_MANAGER::Conn { serverOptPage, &ServerOptPage::returnHomeRequested,
+            [stackedWidget, mainWidget]() { stackedWidget->setCurrentWidget(mainWidget); } });
 }
-
 bool MainWindow::applyServer(const QString &serverHost)
 {
     const QString host = serverHost.trimmed();

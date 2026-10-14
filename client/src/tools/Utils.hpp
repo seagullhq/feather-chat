@@ -22,3 +22,25 @@ static void setButtonIcon(QPushButton *button, const QString &resourcePath)
     button->setIconSize(QSize(18, 18));
 }
 }
+
+namespace QT_MANAGER {
+template<typename Sender, typename Receiver, typename... Pairs>
+void connectAll(Sender *s, Receiver *r, Pairs... p)
+{
+    (QObject::connect(s, p.first, r, p.second), ...);
+}
+
+template<typename Sender, typename Signal, typename Slot>
+struct Conn {
+    Sender *sender;
+    Signal signal;
+    Slot slot;
+};
+
+template<typename Context, typename... Conns>
+void connectWithContext(Context *ctx, Conns... c)
+{
+    (QObject::connect(c.sender, c.signal, ctx, c.slot), ...);
+}
+
+};
