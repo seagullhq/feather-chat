@@ -1,17 +1,14 @@
 #include "MainWindow.hpp"
 #include "../net/ControlClient.hpp"
+#include "../pages/AuthPage.hpp"
+#include "../pages/MainPage.hpp"
+#include "../pages/ServerOptPage.hpp"
+#include "../tools/Base.hpp"
 #include "../widgets/ServerRail.hpp"
 #include "../widgets/Statusbar.hpp"
-#include "AuthPage.hpp"
-#include "MainPage.hpp"
-#include "ServerOptPage.hpp"
 #include <QHBoxLayout>
 #include <QStackedWidget>
 #include <QVBoxLayout>
-
-namespace {
-constexpr quint16 kServerPort = 7700; // la porta e' sempre 7700
-}
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)

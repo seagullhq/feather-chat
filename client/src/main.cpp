@@ -1,4 +1,4 @@
-#include "pages/MainWindow.hpp"
+#include "window/MainWindow.hpp"
 #include <QApplication>
 #include <QIcon>
 

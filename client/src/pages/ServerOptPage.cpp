@@ -3,6 +3,7 @@
 #include <QFormLayout>
 #include <QLineEdit>
 #include <QPushButton>
+#include <qpushbutton.h>
 
 ServerOptPage::ServerOptPage(QWidget *parent)
 {
@@ -15,15 +16,18 @@ ServerOptPage::ServerOptPage(QWidget *parent)
     backBtn->setToolTip("Back");
     backBtn->setIcon(QIcon(ICONS::whiteIcon(":/icons/arrow-left.svg", 26)));
     backBtn->setIconSize(QSize(26, 26));
-    connect(backBtn, &QPushButton::clicked, this, &ServerOptPage::returnHomeRequested);
 
     serverOptLayout->addWidget(backBtn);
     serverOptLayout->addRow("Server Name:", serverNameEdit);
 
     auto *createOrModifyServerBtn = new QPushButton;
     createOrModifyServerBtn->setText("Create");
-    connect(createOrModifyServerBtn, &QPushButton::clicked, this, []() -> void {
 
-    });
+    QT_MANAGER::connectWithContext(this,
+        QT_MANAGER::Conn { backBtn, &QPushButton::clicked, &ServerOptPage::returnHomeRequested },
+        QT_MANAGER::Conn { createOrModifyServerBtn, &QPushButton::clicked, []() -> void {
+
+                          } });
+
     setLayout(serverOptLayout);
 }

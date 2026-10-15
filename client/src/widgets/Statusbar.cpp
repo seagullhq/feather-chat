@@ -7,6 +7,7 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
+#include <qpushbutton.h>
 
 Statusbar::Statusbar(QWidget *parent)
     : QFrame(parent)
@@ -34,14 +35,16 @@ Statusbar::Statusbar(QWidget *parent)
     ICONS::setButtonIcon(muteButton, ":/icons/microphone.svg");
     ICONS::setButtonIcon(deafenButton, ":/icons/ear.svg");
 
-    connect(muteButton, &QPushButton::toggled, this, [this](bool muted) {
-        ICONS::setButtonIcon(
-            muteButton, muted ? ":/icons/microphone-slash.svg" : ":/icons/microphone.svg");
-    });
-
-    connect(deafenButton, &QPushButton::toggled, this, [this](bool deafened) {
-        ICONS::setButtonIcon(deafenButton, deafened ? ":/icons/ear-slash.svg" : ":/icons/ear.svg");
-    });
+    QT_MANAGER::connectWithContext(this,
+        QT_MANAGER::Conn { muteButton, &QPushButton::toggled,
+            [this](bool muted) {
+                ICONS::setButtonIcon(
+                    muteButton, muted ? ":/icons/microphone-slash.svg" : ":/icons/microphone.svg");
+            } },
+        QT_MANAGER::Conn { deafenButton, &QPushButton::toggled, [this](bool deafened) {
+                              ICONS::setButtonIcon(deafenButton,
+                                  deafened ? ":/icons/ear-slash.svg" : ":/icons/ear.svg");
+                          } });
 
     muteButton->setStyleSheet("QPushButton:checked { background-color: red; }");
 
