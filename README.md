@@ -49,6 +49,7 @@ vcpkg, see [Windows notes](#windows-notes).
 | `server/` | Go backend, standard library only |
 | `docs/` | [docs index](docs/README.md) — protocol, wire format, audio path, server design, security model, ADR |
 | `triplets/` | vcpkg triplet used by the Windows build |
+| `scripts/` | `msvc-env.ps1`, which puts the MSVC toolchain on `PATH` for the Windows build, and `windows-build.ps1`, which `just build` calls |
 
 ## Installing Qt — Linux and macOS
 
@@ -135,36 +136,89 @@ on those.
    setx VCPKG_ROOT "$HOME\vcpkg"
    ```
 
-3. Build from a **Developer PowerShell for VS 2022**:
+3. Build with `just`, from any PowerShell:
+
+   ```powershell
+   just build
+   ```
+
+   `just` loads the MSVC toolchain for you first, via
+   `scripts/msvc-env.ps1`. This matters: CMake's Ninja generator picks
+   whichever C++ driver it finds first on `PATH`, and LLVM's `bin` usually
+   comes before MSVC's, so a bare `cmake --preset windows` in a normal shell
+   quietly builds the client with `clang++` against an MSVC-built Qt. The root
+   `CMakeLists.txt` now rejects a non-MSVC compiler with that explanation, so
+   it fails immediately instead of much later.
+
+   If you would rather drive CMake yourself, use a **Developer PowerShell for
+   Visual Studio** instead:
 
    ```powershell
    cmake --preset windows
-   cmake --build build
+   cmake --build --preset windows
    ```
 
-   `just build` picks that preset automatically on Windows.
+### One build directory per toolchain
 
-### The first build takes about an hour
+The `windows` preset builds in `dist/client-windows`, not `dist/client`, which
+is where the system-Qt presets build. The two cannot share: a build directory
+remembers the compiler CMake picked the first time it ran, so configuring one
+preset in it silently changes the toolchain every later run of the other uses,
+which on Windows means a `clang++` from LLVM's `bin` meeting a Qt built by MSVC.
+Each preset gets its own directory, as `dist/client-debug` already does.
 
-`cmake --preset windows` compiles Qt from source. It happens once per machine;
-later builds restore from vcpkg's cache in seconds. This is the same deal
-KeePassXC and qBittorrent ask of their Windows contributors.
+What the two builds still share is where the binary lands:
+`client/CMakeLists.txt` sends the release build to `dist/client`, so `just
+client` finds it at the same path on every platform, and the debug build to
+`dist/client-debug`, where it cannot overwrite the release one.
+
+### The first build takes about an hour, and only once
+
+`cmake --preset windows` compiles Qt from source. `scripts/windows-build.ps1`
+points vcpkg at a [binary
+cache](https://learn.microsoft.com/vcpkg/users/binarycaching) in
+`F:\tools\vcpkg-binary-cache`, so that hour is paid once: every later build,
+including one after `just clean` or a fresh clone of the repo, restores Qt from
+that cache in seconds. `just clean-deps` deletes the cache too, which forces the
+full rebuild again.
+
+The cache is configured in the script rather than in the preset on purpose.
+vcpkg reads its binary-cache list from the environment, and CMake hands a
+`VCPKG_BINARY_SOURCES` cache variable to the toolchain as an ordinary entry that
+vcpkg never reads — CMake even warns that it went unused. vcpkg then quietly
+falls back to its own per-machine cache, so the configured cache stays empty and
+every fresh build pays the hour again.
+
+It also lives outside the working tree, next to vcpkg. It used to be
+`.cache/vcpkg-binary` inside the repo, but a gitignored directory there is one
+`git clean -xdf` or disk cleanup away from being deleted, and rebuilding it costs
+an hour. Nothing in the repo depends on where it is: point `VCPKG_BINARY_SOURCES`
+at any other directory, or at a shared drive or an `azblob`/`s3` URL for CI, and
+the script leaves your setting alone.
 
 The preset uses an overlay triplet, `triplets/x64-windows-static-release.cmake`,
 which drops the debug build of every dependency and roughly halves both the
 wait and the disk usage. You lose the ability to step inside Qt's own source,
 not the ability to debug feather-chat.
 
-If more than one person builds on Windows, set up a
-[binary cache](https://learn.microsoft.com/vcpkg/users/binarycaching) so that
-build is paid once and everyone else downloads the result. It is the difference
-between an afternoon and a minute — and it is what makes a Windows CI job
-practical, where qBittorrent instead sidesteps vcpkg entirely and pulls a
-prebuilt Qt.
+Because the cache is a plain directory of zips, a team or a CI runner can share
+one by pointing `VCPKG_BINARY_SOURCES` at it, no code change involved. That is
+the difference between an hour and a minute: on a 16-core machine the full Qt
+build measures 58 minutes, and restoring the same 36 packages from the cache
+takes 42 seconds, which is what makes a Windows CI job practical. qBittorrent
+instead sidesteps vcpkg entirely and pulls a prebuilt Qt.
+
+### Icons need Qt's SVG module
+
+The icons are SVG files compiled into the binary, and Qt 6 moved SVG out of
+qtbase into a separate `qtsvg` module. Without it the build still succeeds and
+the app still starts, but every icon is blank: `QIcon` has no image handler for
+SVG and hands back a null pixmap. That is why `qtsvg` is a dependency in
+`vcpkg.json`, and why removing it is not a simplification.
 
 ### Why static linking
 
-`VCPKG_TARGET_TRIPLET` is `x64-windows-static`, so Qt is linked into the
+`VCPKG_TARGET_TRIPLET` is `x64-windows-static-release`, so Qt is linked into the
 executable. Mumble and qBittorrent both do this, and the reason is practical:
 Windows has no rpath, so a dynamically linked `feather-chat.exe` started from
 Explorer dies looking for `Qt6Core.dll` and needs `windeployqt` to scatter DLLs
@@ -194,10 +248,15 @@ that path works but nobody here builds it regularly.
 | `just server` | build and run the server on `:7700` | `cd server && go build -o ../dist/server/feather-chat-server . && ../dist/server/feather-chat-server -tcp :7700` |
 | `just test` | run the Go tests (none written yet) | `cd server && go test -race ./...` |
 | `just check` | format, vet, test and build | all of the above |
-| `just clean` | delete build output | `rm -rf dist/client dist/client-debug dist/server` |
+| `just clean` | delete build output | `rm -rf dist/client dist/client-debug dist/client-windows dist/server` |
+| `just clean-deps` | also drop the vcpkg binary cache, forcing a full Qt rebuild | `rm -rf F:/tools/vcpkg-binary-cache` |
 
 `just server :5000` picks another port. `just build-debug` produces an
-unoptimized build with symbols in `build-debug/`.
+unoptimized build with symbols in `dist/client-debug/`.
+
+On Windows `just build` and `just client` load the MSVC environment from
+`scripts/msvc-env.ps1` before calling CMake; see
+[Windows notes](#windows-notes).
 
 `just fmt` and `just check` run [clang-format](https://clang.llvm.org/docs/ClangFormat.html)
 over the C++ as well as `gofmt` over the Go. Install it with
