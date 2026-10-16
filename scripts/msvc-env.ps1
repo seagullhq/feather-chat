@@ -13,7 +13,8 @@ $ErrorActionPreference = 'Stop'
 
 # Already inside a Developer PowerShell, or vcpkg has put the toolset on PATH
 # some other way. Nothing to do, and in particular nothing that can fail.
-if (Get-Command cl.exe -ErrorAction SilentlyContinue) {
+if (Get-Command cl.exe -ErrorAction SilentlyContinue)
+{
     return
 }
 
@@ -21,10 +22,12 @@ if (Get-Command cl.exe -ErrorAction SilentlyContinue) {
 # registry, so this finds VS wherever it is installed on the machine rather
 # than assuming a path.
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-if (-not (Test-Path -LiteralPath $vswhere)) {
+if (-not (Test-Path -LiteralPath $vswhere))
+{
     $vswhere = Join-Path $env:ProgramFiles 'Microsoft Visual Studio\Installer\vswhere.exe'
 }
-if (-not (Test-Path -LiteralPath $vswhere)) {
+if (-not (Test-Path -LiteralPath $vswhere))
+{
     throw 'vswhere.exe not found, and cl.exe is not on PATH. Install Visual Studio with the "Desktop development with C++" workload, or build from a Developer PowerShell.'
 }
 
@@ -34,13 +37,15 @@ if (-not (Test-Path -LiteralPath $vswhere)) {
 $installPath = & $vswhere -latest -products * `
     -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
     -property installationPath
-if (-not $installPath) {
+if (-not $installPath)
+{
     throw 'No Visual Studio installation with the MSVC toolchain was found.'
 }
 $installPath = $installPath.Trim()
 
 $devcmd = Join-Path $installPath 'Common7\Tools\VsDevCmd.bat'
-if (-not (Test-Path -LiteralPath $devcmd)) {
+if (-not (Test-Path -LiteralPath $devcmd))
+{
     throw "VsDevCmd.bat not found at $devcmd."
 }
 
@@ -56,22 +61,27 @@ $vcpkgRootBefore = $env:VCPKG_ROOT
 # the variables we care about into this PowerShell process.
 $devcmdArgs = '"' + $devcmd + '" -no_logo -arch=x64 -host_arch=x64'
 $dump = cmd.exe /s /c ($devcmdArgs + ' >nul && set')
-if ($LASTEXITCODE -ne 0) {
+if ($LASTEXITCODE -ne 0)
+{
     throw "VsDevCmd.bat failed for $installPath (exit $LASTEXITCODE)."
 }
 
 # Import everything rather than a hand-picked list: the toolchain needs INCLUDE,
 # LIB, LIBPATH and a PATH that resolves cl/link, and the SDK vars come with it.
-foreach ($line in $dump) {
-    if ($line -match '^([^=]+)=(.*)$') {
+foreach ($line in $dump)
+{
+    if ($line -match '^([^=]+)=(.*)$')
+    {
         [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process')
     }
 }
 
-if ($vcpkgRootBefore) {
+if ($vcpkgRootBefore)
+{
     $env:VCPKG_ROOT = $vcpkgRootBefore
 }
 
-if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue))
+{
     throw "cl.exe is still not on PATH after loading $installPath."
 }
