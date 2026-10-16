@@ -14,6 +14,11 @@
     {
       "name": "qtsvg",
       "platform": "windows"
+    },
+    {
+      "name": "qtmultimedia",
+      "platform": "windows",
+      "default-features": false
     }
   ]
 }
