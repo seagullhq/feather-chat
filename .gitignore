@@ -2,7 +2,10 @@ dist/
 vcpkg_installed/
 CMakeUserPresets.json
 server/server
-client/target/
 compile_commands.json
 .env
 !.env.example
+
+# Editor/LSP caches (clangd, neocmakelsp, ...). They ship their own .gitignore,
+# but ignore the directory explicitly so nothing leaks if one stops doing so.
+.cache/
