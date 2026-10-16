@@ -47,9 +47,10 @@ void VoiceTab::refreshAudioDevice()
     bool found = false;
     for (auto audioDevice : audioDevices) {
         audioDeviceList->addItem(audioDevice.description());
-        if(audioDevice.description() != defaultAudioDevice.description() && !found){
+        if (audioDevice.description() != defaultAudioDevice.description() && !found) {
             idx++;
-        }else{
+        }
+        else {
             found = true;
         }
     }
@@ -57,7 +58,6 @@ void VoiceTab::refreshAudioDevice()
     // Get OS default audio device
     audioDeviceList->activated(idx);
 }
-
 
 void VoiceTab::refreshMicrophone()
 {
@@ -68,9 +68,10 @@ void VoiceTab::refreshMicrophone()
     bool found = false;
     for (auto microphone : microphones) {
         microphoneList->addItem(microphone.description());
-        if(microphone.description() != defaultMicrophone.description() && !found){
+        if (microphone.description() != defaultMicrophone.description() && !found) {
             idx++;
-        }else{
+        }
+        else {
             found = true;
         }
     }

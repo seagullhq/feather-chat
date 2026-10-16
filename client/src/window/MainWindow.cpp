@@ -95,13 +95,10 @@ bool MainWindow::applyServer(const QString &serverHost)
         return false;
     }
 
-    if (host != currentServerHost) {
-        // A session is bound to the server it authenticated against, so a
-        // different host drops the connection before the next login.
-        client->disconnectFromServer();
-        client->setServer(host, kServerPort);
-        currentServerHost = host;
-    }
+    // setServer() tears the old socket down synchronously when the host
+    // changes, so the login that follows connects fresh instead of racing a
+    // Closing one.
+    client->setServer(host, kServerPort);
 
     statusbar->setServerName(host);
     return true;

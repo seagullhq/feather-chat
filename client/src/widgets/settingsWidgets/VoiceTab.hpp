@@ -1,7 +1,7 @@
 #pragma once
 
-#include <QWidget>
 #include <QComboBox>
+#include <QWidget>
 
 class QLabel;
 
@@ -16,8 +16,8 @@ public:
 private:
     void refreshMicrophone();
     void refreshAudioDevice();
-    QLabel* microphoneLabel {nullptr};
-    QLabel* audioDeviceLabel {nullptr};
+    QLabel *microphoneLabel { nullptr };
+    QLabel *audioDeviceLabel { nullptr };
     QComboBox *microphoneList { nullptr };
     QComboBox *audioDeviceList { nullptr };
 };

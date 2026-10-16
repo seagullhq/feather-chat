@@ -2,67 +2,65 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Network Multimedia)
 
 qt_standard_project_setup()
 
-set(_feather_win_manifest "")
-if(WIN32)
-    set(_feather_win_manifest app.manifest)
-endif()
+set(assets "${CMAKE_CURRENT_SOURCE_DIR}/assets")
 
-# CONFIGURE_DEPENDS makes the generator re-run this glob at build time, so
-# new/removed files under src/ are picked up without manual re-configure.
-# Headers are included for IDE / AUTOMOC purposes.
-file(GLOB_RECURSE FEATHER_CHAT_SOURCES CONFIGURE_DEPENDS
+# Globs instead of lists, so new files need no edit here. CONFIGURE_DEPENDS
+# re-runs the glob at build time; the headers are included for AUTOMOC.
+file(GLOB_RECURSE FEATHER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp"
 )
 
-qt_add_executable(feather-chat
-    ${FEATHER_CHAT_SOURCES}
-    ${_feather_win_manifest}
-)
+# Qt generates a manifest whose <trustInfo> is in the asm.v2 namespace (must be
+# asm.v3), so Windows refuses to load the exe. A .manifest source makes Qt skip
+# its own and CMake embeds ours unchanged.
+set(FEATHER_MANIFEST "")
+if(WIN32)
+    set(FEATHER_MANIFEST app.manifest)
+endif()
 
-# Glob the icons instead of listing them: FILES takes no wildcard, so expand it
-# here. CONFIGURE_DEPENDS makes the generator re-run the glob at build time, so
-# new/removed SVGs under assets/icons/ are picked up without a manual
-# re-configure (same rationale as the source glob above). Only *.svg matches,
-# so the LICENSE file in that directory stays out.
-file(GLOB _feather_icons CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/*.svg"
-)
+qt_add_executable(feather-chat ${FEATHER_SOURCES} ${FEATHER_MANIFEST})
 
+# qt_add_resources FILES takes no wildcard, so glob the icons. Only *.svg
+# matches, which keeps the LICENSE beside them out.
+file(GLOB FEATHER_ICONS CONFIGURE_DEPENDS "${assets}/icons/*.svg")
 qt_add_resources(feather-chat "icons"
     PREFIX "/icons"
-    BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons"
-    FILES ${_feather_icons}
+    BASE "${assets}/icons"
+    FILES ${FEATHER_ICONS}
 )
 
-# The app/window icon lives beside the icons/ directory rather than inside it,
-# because it is the product mark, not one of the generic UI icons. Expose it as
-# :/feather.svg for QApplication::setWindowIcon.
+# The window icon is the product mark, not a UI icon, so it sits beside icons/
+# and is exposed as :/feather.svg.
 qt_add_resources(feather-chat "appicon"
     PREFIX "/"
-    BASE "${CMAKE_CURRENT_SOURCE_DIR}/assets"
-    FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/feather.svg"
+    BASE "${assets}"
+    FILES "${assets}/feather.svg"
 )
 
-# Debug goes to its own directory. Without the per-config property below both
-# configurations wrote to dist/client, so building the debug preset replaced the
-# release binary rather than sitting beside it.
+# Release and debug share one output directory with Ninja; without the per-config
+# property the debug build would overwrite the release binary.
 set_target_properties(feather-chat PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/dist/client"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_SOURCE_DIR}/dist/client-debug"
 )
 
-# QT_NO_DEPLOY skips windeployqt (qtpaths is missing in static vcpkg builds).
-#
-# Windows manifest: Qt 6 auto-generates one from app.exe.manifest.in, but that
-# template puts <trustInfo> in the asm.v2 namespace (must be asm.v3), so the
-# linked exe gets a manifest Windows refuses to load (SxS configuration error).
-# Qt skips its own manifest generation when the target already has a .manifest
-# source (QtPublicWindowsHelpers.cmake), and CMake then passes ours to
-# lld-link via /MANIFESTINPUT, embedding it unchanged. No Windows SDK / mt.exe
-# needed, and llvm-mt cannot write into an exe resource.
+# windeployqt cannot run in static vcpkg builds (no qtpaths).
 if(WIN32)
     set_target_properties(feather-chat PROPERTIES QT_NO_DEPLOY ON)
 endif()
 
 target_link_libraries(feather-chat PRIVATE Qt6::Widgets Qt6::Network Qt6::Multimedia)
+
+# clangd finds compile_commands.json by walking up from each source, but the
+# database lives in dist/, a sibling of src/. Copy it to the repo root so it is
+# found on whichever preset built it. An always-run target, not a POST_BUILD on
+# the exe, because the copy must survive builds that relink nothing.
+if(CMAKE_EXPORT_COMPILE_COMMANDS)
+    add_custom_target(feather-compile-commands ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_BINARY_DIR}/compile_commands.json"
+            "${CMAKE_SOURCE_DIR}/compile_commands.json"
+        VERBATIM
+    )
+endif()

@@ -30,6 +30,15 @@ ControlClient::ControlClient(QObject *parent)
 
 void ControlClient::setServer(const QString &host, quint16 port)
 {
+    if (this->host == host && this->port == port) {
+        return;
+    }
+    // A session is bound to the server it authenticated against. Tear the old
+    // socket down synchronously: disconnectFromHost() only enters ClosingState,
+    // so a login() queued right after would sit in the outbox and then be failed
+    // by the later onDisconnected() with "connection lost". That made the first
+    // login after a host change always fail.
+    resetConnection();
     this->host = host;
     this->port = port;
 }
@@ -70,6 +79,16 @@ void ControlClient::join(const QString &room)
 void ControlClient::disconnectFromServer()
 {
     socket->disconnectFromHost();
+}
+
+void ControlClient::resetConnection()
+{
+    socket->abort(); // immediate UnconnectedState, unlike disconnectFromHost()
+    outbox.clear();
+    buffer.clear();
+    pendingPassword.clear();
+    pending = Pending::None;
+    timeout->stop();
 }
 
 bool ControlClient::isConnected() const

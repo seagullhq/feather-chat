@@ -1,12 +1,12 @@
 CompileFlags:
   # No CompilationDatabase override: clangd's default search looks for
   # compile_commands.json in every parent directory of the source file, i.e.
-  # the repo root. Both builds copy their database there after building (see
-  # the justfile and scripts/windows-build.ps1), so this one config works on
-  # every platform. This key used to point at dist/client-windows, which left
-  # Linux with no database at all and every Qt include missing; a list of both
-  # build dirs is not a fix, as clangd accepts a single directory and silently
-  # ignores the value.
+  # the repo root. The build copies its database there for every preset
+  # (client/CMakeLists.txt), and the justfile / scripts/windows-build.ps1
+  # recipes refresh it too, so this one config works on every platform. This key
+  # used to point at dist/client-windows, which left Linux with no database at
+  # all and every Qt include missing; a list of both build dirs is not a fix, as
+  # clangd accepts a single directory and silently ignores the value.
   Add:
     - -Wno-unknown-pragmas
   # Qt adds this GCC 16 option to the compilation database. It only affects

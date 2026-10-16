@@ -2,49 +2,53 @@ package servers
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
-	"math/rand"
+	"math/big"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
-var (
-	ErrTaken          = errors.New("username or email already registered")
-	ErrBadCredentials = errors.New("invalid credentials")
-)
+// ErrTaken is returned when the unique index rejects a server creation.
+var ErrTaken = errors.New("server already exists")
 
 type ServerStore struct {
 	servers *mongo.Collection
 }
 
+// The bson tags are mandatory: the servers collection has a $jsonSchema
+// validator (migration 0002) requiring snake_case names, and without them the
+// driver stores lowercased field names (ownerid, invitecode, ...) and every
+// insert fails validation.
 type Server struct {
-	ID         bson.ObjectID
-	Name       string
-	OwnerID    bson.ObjectID
-	Members    []bson.ObjectID
-	InviteCode string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID         bson.ObjectID   `bson:"_id"`
+	Name       string          `bson:"name"`
+	OwnerID    bson.ObjectID   `bson:"owner_id"`
+	Members    []bson.ObjectID `bson:"members"`
+	InviteCode string          `bson:"invite_code"`
+	CreatedAt  time.Time       `bson:"created_at"`
+	UpdatedAt  time.Time       `bson:"updated_at"`
 }
 
-const charset = "abcdefghijklmnopqrstuvwxyz" +
+const inviteCharset = "abcdefghijklmnopqrstuvwxyz" +
 	"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-var seededRand *rand.Rand = rand.New(
-	rand.NewSource(time.Now().UnixNano()))
-
-func StringWithCharset(length int, charset string) string {
+// inviteCode returns a cryptographically random invite code. crypto/rand is
+// safe for concurrent use; the shared math/rand.Rand this replaced was not, and
+// CreateServer runs on one goroutine per connected client.
+func inviteCode(length int) (string, error) {
 	b := make([]byte, length)
+	limit := big.NewInt(int64(len(inviteCharset)))
 	for i := range b {
-		b[i] = charset[seededRand.Intn(len(charset))]
+		n, err := rand.Int(rand.Reader, limit)
+		if err != nil {
+			return "", err
+		}
+		b[i] = inviteCharset[n.Int64()]
 	}
-	return string(b)
-}
-
-func String(length int) string {
-	return StringWithCharset(length, charset)
+	return string(b), nil
 }
 
 func NewStore(db *mongo.Database) *ServerStore {
@@ -52,6 +56,10 @@ func NewStore(db *mongo.Database) *ServerStore {
 }
 
 func (s *ServerStore) CreateServer(ctx context.Context, ownerID bson.ObjectID, serverName string) (*Server, error) {
+	code, err := inviteCode(7)
+	if err != nil {
+		return nil, err
+	}
 
 	now := time.Now().UTC()
 	server := Server{
@@ -59,17 +67,15 @@ func (s *ServerStore) CreateServer(ctx context.Context, ownerID bson.ObjectID, s
 		Name:       serverName,
 		OwnerID:    ownerID,
 		Members:    []bson.ObjectID{ownerID},
-		InviteCode: String(7),
+		InviteCode: code,
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
 
-	_, err := s.servers.InsertOne(ctx, server)
-
-	if err == nil {
-		return nil, err
-	}
-	if !mongo.IsDuplicateKeyError(err) {
+	if _, err := s.servers.InsertOne(ctx, server); err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			return nil, ErrTaken
+		}
 		return nil, err
 	}
 	return &server, nil

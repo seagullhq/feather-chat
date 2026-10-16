@@ -18,5 +18,4 @@ private:
 
     ControlClient *client { nullptr };
     Statusbar *statusbar { nullptr };
-    QString currentServerHost;
 };
