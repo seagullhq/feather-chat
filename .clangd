@@ -1,11 +1,24 @@
 CompileFlags:
-  # The MSVC build writes its database to dist/client-windows, not dist/client.
-  # Point this there on Windows; clangd has no per-platform config, so it can
-  # only follow one of the two.
-  CompilationDatabase: dist/client-windows
+  # No CompilationDatabase override: clangd's default search looks for
+  # compile_commands.json in every parent directory of the source file, i.e.
+  # the repo root. Both builds copy their database there after building (see
+  # the justfile and scripts/windows-build.ps1), so this one config works on
+  # every platform. This key used to point at dist/client-windows, which left
+  # Linux with no database at all and every Qt include missing; a list of both
+  # build dirs is not a fix, as clangd accepts a single directory and silently
+  # ignores the value.
   Add:
     - -Wno-unknown-pragmas
   # Qt adds this GCC 16 option to the compilation database. It only affects
   # code generation, and clangd's Clang frontend cannot parse it.
   Remove:
     - -mno-direct-extern-access
+
+# clangd inserts the header where a symbol is declared, so Qt completions bring
+# in <qwidget.h>, <qapplication.h>, ... while Qt's documented spelling is the
+# class-named header (<QWidget>), a separate file that only includes qwidget.h.
+# Qt's "IWYU pragma: export" on those files makes <QWidget> valid to write, but
+# nothing maps qwidget.h back to it, so the insertion cannot be corrected from
+# here. Off means includes are typed by hand, in Qt style.
+Completion:
+  HeaderInsertion: Never

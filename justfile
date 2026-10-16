@@ -16,6 +16,10 @@ default:
 build:
     cmake --preset default
     cmake --build --preset default
+    # clangd finds its compilation database by searching parent directories of
+    # the source files, so it must sit in the repo root. CMake only writes it
+    # inside the build dir; the root copy is gitignored, machine-local state.
+    cp dist/client/compile_commands.json compile_commands.json
 
 [windows]
 build:
@@ -25,6 +29,8 @@ build:
 build-debug:
     cmake --preset debug
     cmake --build --preset debug
+    # Refresh the repo-root compile database for clangd, as in `build`.
+    cp dist/client-debug/compile_commands.json compile_commands.json
 
 # Build and run the client.
 [unix]
