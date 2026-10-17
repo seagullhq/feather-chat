@@ -7,6 +7,7 @@ AudioManager::AudioManager(const QAudioDevice *microphone, const QAudioDevice *a
     , audioDevice(audioDevice ? new QAudioDevice(*audioDevice) : nullptr)
     , audioSource(new QAudioSource)
 {
+    audioSource->setVolume(qBound(0.0, 0.5, 1.0));
 }
 void AudioManager::setMicVolume(double volume)
 {

@@ -17,6 +17,5 @@ private:
     QLabel *serverLabel;
     QLabel *microphoneLabel;
 
-    QPushButton *muteButton;
-    QPushButton *deafenButton;
+    QPushButton *userSettingsButton;
 };

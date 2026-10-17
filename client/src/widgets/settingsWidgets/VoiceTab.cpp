@@ -24,6 +24,7 @@ VoiceTab::VoiceTab(QWidget *parent)
     volumeLabel->setText("Volume:");
 
     volumeSlider->setMaximum(100);
+    volumeSlider->setValue(50);
     volumeSlider->setMinimum(0);
 
     layout->addWidget(microphoneLabel);

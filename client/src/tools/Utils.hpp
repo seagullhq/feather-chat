@@ -1,3 +1,4 @@
+#pragma once
 
 #include <QIcon>
 #include <QPainter>

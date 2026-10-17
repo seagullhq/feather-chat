@@ -43,13 +43,13 @@ ServerRail::ServerRail(QWidget *parent)
 
     layout->addStretch();
 
-    auto *addServer = new QPushButton;
-    addServer->setObjectName("addServer");
-    addServer->setToolTip("Add server");
-    addServer->setIcon(QIcon(ICONS::whiteIcon(":/icons/plus.svg", 26)));
-    addServer->setIconSize(QSize(26, 26));
+    auto *exploreServer = new QPushButton;
+    exploreServer->setObjectName("addServer");
+    exploreServer->setToolTip("Explore Server");
+    exploreServer->setIcon(QIcon(ICONS::whiteIcon(":/icons/compass.svg", 26)));
+    exploreServer->setIconSize(QSize(26, 26));
     QT_MANAGER::connectWithContext(this,
-        QT_MANAGER::Conn { addServer, &QPushButton::clicked, &ServerRail::addServerRequested });
+        QT_MANAGER::Conn { exploreServer, &QPushButton::clicked, &ServerRail::addServerRequested });
 
-    layout->addWidget(addServer, 0, Qt::AlignHCenter);
+    layout->addWidget(exploreServer, 0, Qt::AlignHCenter);
 }

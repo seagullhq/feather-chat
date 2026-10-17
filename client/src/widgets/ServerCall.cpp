@@ -1,7 +1,6 @@
 #include "ServerCall.hpp"
 
 #include "../tools/Utils.hpp"
-#include "../window/SettingWindow.hpp"
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
@@ -16,6 +15,8 @@ ServerCall::ServerCall(QWidget *parent)
     , channelLabel(new QLabel(this))
     , participantsLabel(new QLabel(this))
     , connectButton(new QPushButton(this))
+    , muteButton(new QPushButton)
+    , deafenButton(new QPushButton)
 {
     setupUi();
 }
@@ -40,28 +41,37 @@ void ServerCall::setupUi()
     participantsLabel->setText("0 users");
     participantsLabel->setObjectName("participantsLabel");
 
-    userSettingsButton = new QPushButton;
-    ICONS::setButtonIcon(userSettingsButton, ":/icons/gear-six.svg");
-    userSettingsButton->setObjectName("userSettings");
-    userSettingsButton->setToolTip("User settings");
+    muteButton->setCheckable(true);
+    muteButton->setToolTip("Mute");
+    ICONS::setButtonIcon(muteButton, ":/icons/microphone.svg");
+    muteButton->setStyleSheet("QPushButton:checked { background-color: red; }");
+
+    deafenButton->setCheckable(true);
+    deafenButton->setToolTip("Deafen");
+    ICONS::setButtonIcon(deafenButton, ":/icons/ear.svg");
+    deafenButton->setStyleSheet("QPushButton:checked { background-color: gray; }");
+
+    QT_MANAGER::connectWithContext(this,
+        QT_MANAGER::Conn { muteButton, &QPushButton::toggled,
+            [this](bool muted) {
+                ICONS::setButtonIcon(
+                    muteButton, muted ? ":/icons/microphone-slash.svg" : ":/icons/microphone.svg");
+            } },
+        QT_MANAGER::Conn { deafenButton, &QPushButton::toggled, [this](bool deafened) {
+                              ICONS::setButtonIcon(deafenButton,
+                                  deafened ? ":/icons/ear-slash.svg" : ":/icons/ear.svg");
+                          } });
 
     ICONS::setButtonIcon(connectButton, ":/icons/phone.svg");
     connectButton->setObjectName("openButton");
     connectButton->setCheckable(true);
 
     connectButton->setToolTip("Mute");
-    QT_MANAGER::connectWithContext(this,
-        QT_MANAGER::Conn { connectButton, &QPushButton::toggled,
-            [this](bool leave) {
-                ICONS::setButtonIcon(
-                    connectButton, leave ? ":/icons/phone-slash.svg" : ":/icons/phone.svg");
-            } },
-        QT_MANAGER::Conn { userSettingsButton, &QPushButton::clicked, [this]() {
-                              auto *settings = new SettingWindow;
-                              settings->setAttribute(
-                                  Qt::WA_DeleteOnClose); // closes and frees on window close
-                              settings->show();
-                          } });
+    QT_MANAGER::connectWithContext(
+        this, QT_MANAGER::Conn { connectButton, &QPushButton::toggled, [this](bool leave) {
+                                    ICONS::setButtonIcon(connectButton,
+                                        leave ? ":/icons/phone-slash.svg" : ":/icons/phone.svg");
+                                } });
 
     connectButton->setStyleSheet("QPushButton:checked { background-color: red; }");
 
@@ -69,7 +79,8 @@ void ServerCall::setupUi()
     layout->addWidget(channelLabel);
     layout->addWidget(participantsLabel);
     layout->addStretch();
-    layout->addWidget(userSettingsButton);
+    layout->addWidget(muteButton);
+    layout->addWidget(deafenButton);
     layout->addWidget(connectButton);
 }
 

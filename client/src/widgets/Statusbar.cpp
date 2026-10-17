@@ -1,20 +1,17 @@
 #include "Statusbar.hpp"
 #include "../tools/Utils.hpp"
-
+#include "../window/SettingWindow.hpp"
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
-#include <qpushbutton.h>
 
 Statusbar::Statusbar(QWidget *parent)
     : QFrame(parent)
     , serverLabel(new QLabel("No server"))
     , microphoneLabel(new QLabel("No microphone"))
-    , muteButton(new QPushButton)
-    , deafenButton(new QPushButton)
 {
     setObjectName("statusbarFrame");
 
@@ -26,33 +23,12 @@ Statusbar::Statusbar(QWidget *parent)
     layout->setContentsMargins(8, 4, 8, 4);
     layout->setSpacing(8);
 
-    muteButton->setCheckable(true);
-    deafenButton->setCheckable(true);
+    userSettingsButton = new QPushButton;
+    ICONS::setButtonIcon(userSettingsButton, ":/icons/gear-six.svg");
+    userSettingsButton->setObjectName("userSettings");
+    userSettingsButton->setToolTip("User settings");
 
-    muteButton->setToolTip("Mute");
-    deafenButton->setToolTip("Deafen");
-
-    ICONS::setButtonIcon(muteButton, ":/icons/microphone.svg");
-    ICONS::setButtonIcon(deafenButton, ":/icons/ear.svg");
-
-    QT_MANAGER::connectWithContext(this,
-        QT_MANAGER::Conn { muteButton, &QPushButton::toggled,
-            [this](bool muted) {
-                ICONS::setButtonIcon(
-                    muteButton, muted ? ":/icons/microphone-slash.svg" : ":/icons/microphone.svg");
-            } },
-        QT_MANAGER::Conn { deafenButton, &QPushButton::toggled, [this](bool deafened) {
-                              ICONS::setButtonIcon(deafenButton,
-                                  deafened ? ":/icons/ear-slash.svg" : ":/icons/ear.svg");
-                          } });
-
-    muteButton->setStyleSheet("QPushButton:checked { background-color: red; }");
-
-    deafenButton->setStyleSheet("QPushButton:checked { background-color: gray; }");
-
-    layout->addWidget(muteButton);
-    layout->addWidget(deafenButton);
-
+    layout->addWidget(userSettingsButton);
     layout->addStretch();
 
     serverLabel->setStyleSheet("color: white;");
@@ -68,6 +44,14 @@ Statusbar::Statusbar(QWidget *parent)
     layout->addWidget(serverLabel);
     layout->addWidget(microphoneIcon);
     layout->addWidget(microphoneLabel);
+
+    QT_MANAGER::connectWithContext(
+        this, QT_MANAGER::Conn { userSettingsButton, &QPushButton::clicked, [this]() {
+                                    auto *settings = new SettingWindow;
+                                    settings->setAttribute(
+                                        Qt::WA_DeleteOnClose); // closes and frees on window close
+                                    settings->show();
+                                } });
 }
 
 void Statusbar::setMicrophoneName(const QString &name)
