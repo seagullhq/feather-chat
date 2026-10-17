@@ -27,7 +27,7 @@ ServerRail::ServerRail(QWidget *parent)
     auto *homeButton = new QPushButton;
     homeButton->setObjectName("homeButton");
     homeButton->setToolTip("Home");
-    homeButton->setIcon(QIcon(ICONS::whiteIcon(":/icons/home.svg", 26)));
+    homeButton->setIcon(QIcon(ICONS::whiteIcon(":/icons/chats-teardrop.svg", 26)));
     homeButton->setIconSize(QSize(26, 26));
 
     layout->addWidget(homeButton, 0, Qt::AlignHCenter);
@@ -43,12 +43,13 @@ ServerRail::ServerRail(QWidget *parent)
 
     layout->addStretch();
 
-    auto *addServer = new QPushButton;
-    addServer->setObjectName("addServer");
-    addServer->setToolTip("Add server");
-    addServer->setIcon(QIcon(ICONS::whiteIcon(":/icons/plus.svg", 26)));
-    addServer->setIconSize(QSize(26, 26));
-    connect(addServer, &QPushButton::clicked, this, &ServerRail::addServerRequested);
+    auto *exploreServer = new QPushButton;
+    exploreServer->setObjectName("addServer");
+    exploreServer->setToolTip("Explore Server");
+    exploreServer->setIcon(QIcon(ICONS::whiteIcon(":/icons/compass.svg", 26)));
+    exploreServer->setIconSize(QSize(26, 26));
+    QT_MANAGER::connectWithContext(this,
+        QT_MANAGER::Conn { exploreServer, &QPushButton::clicked, &ServerRail::addServerRequested });
 
-    layout->addWidget(addServer, 0, Qt::AlignHCenter);
+    layout->addWidget(exploreServer, 0, Qt::AlignHCenter);
 }

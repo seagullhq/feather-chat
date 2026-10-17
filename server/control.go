@@ -15,6 +15,7 @@ import (
 
 	"github.com/seagullhq/feather-chat/server/internal/accounts"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
+	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 const maxControl = 1 << 20
@@ -75,14 +76,32 @@ func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Stor
 			}
 			session.send(Control{Type: "ACK"})
 		case "CREATE_SERVER":
+			if !session.authed() {
+				session.send(Control{Type: "ERROR", Error: "authentication required"})
+				continue
+			}
+			// The owner comes from the authenticated session, never from the
+			// client: message.OwnerID would let anyone create servers for anyone.
+			ownerID, err := bson.ObjectIDFromHex(session.UserID)
+			if err != nil {
+				session.send(Control{Type: "ERROR", Error: "authentication required"})
+				continue
+			}
+			name := strings.TrimSpace(message.ServerName)
+			if n := utf8.RuneCountInString(name); n < 3 || n > 32 {
+				session.send(Control{Type: "ERROR", Error: "server name must be 3-32 characters"})
+				continue
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			server, err := serverStore.CreateServer(ctx, message.OwnerID, message.ServerName)
+			server, err := serverStore.CreateServer(ctx, ownerID, name)
 			cancel()
 			if err != nil {
-				if !errors.Is(err, servers.ErrTaken) {
-					log.Printf("[CREATION] failed to create server: %v", err)
+				if errors.Is(err, servers.ErrTaken) {
+					session.send(Control{Type: "ERROR", Error: servers.ErrTaken.Error()})
+					continue
 				}
-				session.send(Control{Type: "ERROR", Error: accounts.ErrTaken.Error()})
+				log.Printf("[CREATION] failed to create server: %v", err)
+				session.send(Control{Type: "ERROR", Error: "server creation failed"})
 				continue
 			}
 			session.send(Control{Type: "ACK", InviteCode: server.InviteCode})
@@ -106,17 +125,19 @@ func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Stor
 				session.send(Control{Type: "ACK"})
 				continue
 			}
-			session.SSRC, session.name = message.SSRC, message.Name
-			session.send(Control{Type: "ACK", SSRC: session.SSRC})
+			roomManager.Claim(session, message.SSRC, message.Name)
+			session.send(Control{Type: "ACK", SSRC: message.SSRC})
 		case "JOIN":
 			if !session.authed() {
 				session.send(Control{Type: "ERROR", Error: "authentication required"})
 				continue
 			}
 			roomManager.Join(session, message.Room)
-			session.send(Control{Type: "ACK", Room: session.Room})
+			session.send(Control{Type: "ACK", Room: message.Room})
 		case "LEAVE":
-			defer roomManager.Leave(session)
+			// Remove the session now. A defer here ran only when the connection
+			// closed, so LEAVE kept the client in the room, still receiving media.
+			roomManager.Leave(session)
 		}
 	}
 }

@@ -18,7 +18,9 @@ private:
     QLabel *statusLabel;
     QLabel *channelLabel;
     QLabel *participantsLabel;
-    QPushButton *openButton;
+    QPushButton *connectButton;
+    QPushButton *muteButton;
+    QPushButton *deafenButton;
 
     void setupUi();
 };

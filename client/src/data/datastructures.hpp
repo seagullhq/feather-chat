@@ -11,7 +11,7 @@ struct Room {
 };
 
 struct Server {
-    QString id, name, address;
+    QString id, name;
     bool isConnected = false;
     QVector<Room> serverRooms;
 };

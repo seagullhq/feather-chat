@@ -1,4 +1,6 @@
 #include "AuthPage.hpp"
+#include "../tools/Base.hpp"
+#include "../tools/Utils.hpp"
 #include <QComboBox>
 #include <QFormLayout>
 #include <QLineEdit>
@@ -7,17 +9,13 @@
 #include <QTabWidget>
 #include <QVBoxLayout>
 
-namespace {
-constexpr auto kDefaultServerHost = "127.0.0.1"; // la porta e' sempre 7700
-}
-
 AuthPage::AuthPage(QWidget *parent)
     : QWidget(parent)
 {
     auto *mainLayout = new QVBoxLayout(this);
     auto *tabWidget = new QTabWidget(this);
 
-    // --- Server ---
+    // Server IP input
     auto *serverLayout = new QFormLayout;
     serverComboBox = new QComboBox(this);
     serverComboBox->setEditable(true);
@@ -27,7 +25,7 @@ AuthPage::AuthPage(QWidget *parent)
 
     mainLayout->addLayout(serverLayout);
 
-    // --- Tab 1: Login ---
+    // Tab: Login
     auto *loginWidget = new QWidget(this);
     auto *loginLayout = new QFormLayout(loginWidget);
 
@@ -35,14 +33,14 @@ AuthPage::AuthPage(QWidget *parent)
     loginPasswordLineEdit = new QLineEdit(loginWidget);
     loginPasswordLineEdit->setEchoMode(QLineEdit::Password);
 
-    loginButton = new QPushButton("Accedi", loginWidget);
-    loginButton->setDefault(true); // Premere Invio attiva automaticamente il pulsante
+    loginButton = new QPushButton("Login", loginWidget);
+    loginButton->setDefault(true); // Pressing Enter enable automatically the button
 
     loginLayout->addRow("Email / Username:", loginEmailLineEdit);
     loginLayout->addRow("Password:", loginPasswordLineEdit);
     loginLayout->addRow(loginButton);
 
-    // --- Tab 2: Registrazione ---
+    // Tab: Register
     auto *regWidget = new QWidget(this);
     auto *regLayout = new QFormLayout(regWidget);
 
@@ -54,25 +52,24 @@ AuthPage::AuthPage(QWidget *parent)
     regConfirmPasswordLineEdit = new QLineEdit(regWidget);
     regConfirmPasswordLineEdit->setEchoMode(QLineEdit::Password);
 
-    regButton = new QPushButton("Registrati", regWidget);
+    regButton = new QPushButton("Regiser", regWidget);
 
     regLayout->addRow("Username:", regUsernameLineEdit);
     regLayout->addRow("Email:", regEmailLineEdit);
     regLayout->addRow("Password:", regPasswordLineEdit);
-    regLayout->addRow("Conferma Password:", regConfirmPasswordLineEdit);
+    regLayout->addRow("Confirm Password:", regConfirmPasswordLineEdit);
     regLayout->addRow(regButton);
 
-    // Aggiunta schede al TabWidget
-    tabWidget->addTab(loginWidget, "Accedi");
-    tabWidget->addTab(regWidget, "Registrati");
+    // Add the tabs to the TabWidget
+    tabWidget->addTab(loginWidget, "Login");
+    tabWidget->addTab(regWidget, "Register");
 
     mainLayout->addWidget(tabWidget);
 
-    // --- Connessioni ---
-    connect(loginButton, &QPushButton::clicked, this, &AuthPage::handleLogin);
-    connect(regButton, &QPushButton::clicked, this, &AuthPage::handleRegister);
+    QT_MANAGER::connectWithContext(this,
+        QT_MANAGER::Conn { loginButton, &QPushButton::clicked, &AuthPage::handleLogin },
+        QT_MANAGER::Conn { regButton, &QPushButton::clicked, &AuthPage::handleRegister });
 
-    // Invio con tasto Enter dai campi di testo
     connect(loginPasswordLineEdit, &QLineEdit::returnPressed, loginButton, &QPushButton::click);
     connect(regConfirmPasswordLineEdit, &QLineEdit::returnPressed, regButton, &QPushButton::click);
 }
@@ -84,7 +81,7 @@ void AuthPage::handleLogin()
     const QString password = loginPasswordLineEdit->text();
 
     if (host.isEmpty() || identifier.isEmpty() || password.isEmpty()) {
-        QMessageBox::warning(this, "Attenzione", "Compila tutti i campi!");
+        QMessageBox::warning(this, "Warning", "Compile all the fields!");
         return;
     }
 
@@ -106,7 +103,7 @@ void AuthPage::handleRegister()
 
     if (host.isEmpty() || username.isEmpty() || email.isEmpty() || password.isEmpty()
         || confirmPassword.isEmpty()) {
-        QMessageBox::warning(this, "Attenzione", "Compila tutti i campi!");
+        QMessageBox::warning(this, "Warning", "Compile all the fields!");
         return;
     }
 
@@ -114,15 +111,15 @@ void AuthPage::handleRegister()
         return;
     }
 
-    // Stesse regole di validateRegistration (server/control.go): lo username e'
-    // contato in code point, la password in byte per il limite di bcrypt.
+    // Same rules of validateRegistration (server/control.go): Username is
+    // counted in code point, The password in byte for the limit of bcrypt.
     if (username.toUcs4().size() < 3 || username.toUcs4().size() > 32) {
-        QMessageBox::warning(this, "Errore", "Lo username deve avere 3-32 caratteri.");
+        QMessageBox::warning(this, "Error", "The username must have a lenght of 3-32 characters.");
         return;
     }
 
     if (password != confirmPassword) {
-        QMessageBox::warning(this, "Errore", "Le password non coincidono!");
+        QMessageBox::warning(this, "Error", "The password does not match!");
         return;
     }
 
@@ -170,7 +167,7 @@ void AuthPage::onAuthenticationFailed(const QString &message)
 
 void AuthPage::onRegistrationSucceeded()
 {
-    // L'auto-login e' in corso: lascia i pulsanti disabilitati fino all'ACK.
+    // TODO
 }
 
 void AuthPage::onRegistrationFailed(const QString &message)

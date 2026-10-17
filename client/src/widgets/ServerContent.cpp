@@ -13,15 +13,15 @@ ServerContent::ServerContent(QWidget *parent)
     layout->setContentsMargins(12, 12, 12, 12);
     layout->setSpacing(12);
 
-    // Lista principale
+    // Channel list
     auto *contentList = new QListWidget(this);
 
-    contentList->addItem("Benvenuto nel server");
-    contentList->addItem("Canale generale");
-    contentList->addItem("Discussioni");
-    contentList->addItem("Annunci");
+    // contentList->addItem("Benvenuto nel server");
+    // contentList->addItem("Canale generale");
+    // contentList->addItem("Discussioni");
+    // contentList->addItem("Annunci");
 
-    // Pannello utenti
+    // User panel
     auto *usersPanel = new QWidget(this);
     usersPanel->setFixedWidth(220);
 
@@ -29,15 +29,15 @@ ServerContent::ServerContent(QWidget *parent)
     usersLayout->setContentsMargins(0, 0, 0, 0);
     usersLayout->setSpacing(8);
 
-    auto *usersTitle = new QLabel("UTENTI", usersPanel);
+    auto *usersTitle = new QLabel("Users", usersPanel);
 
     auto *usersList = new QListWidget(usersPanel);
 
-    usersList->addItem("● Francesco");
-    usersList->addItem("● Marco");
-    usersList->addItem("● Luca");
-    usersList->addItem("● Andrea");
-    usersList->addItem("● Matteo");
+    // usersList->addItem("● Francesco");
+    // usersList->addItem("● Marco");
+    // usersList->addItem("● Luca");
+    // usersList->addItem("● Andrea");
+    // usersList->addItem("● Matteo");
 
     usersLayout->addWidget(usersTitle);
     usersLayout->addWidget(usersList, 1);

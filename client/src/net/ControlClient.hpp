@@ -56,6 +56,7 @@ private:
     void sendHello();
     void finishPending();
     void failPending(const QString &message);
+    void resetConnection();
     void handleMessage(const QJsonObject &message);
     void handleAck(const QJsonObject &ack);
     void handleError(const QJsonObject &error);
