@@ -1,5 +1,6 @@
 #include "MainWindow.hpp"
-#include "../../net/ControlClient.hpp"
+#include "../../core/Client.hpp"
+#include "../../services/SessionService.hpp"
 #include "../views/AuthView.hpp"
 #include "../views/MainView.hpp"
 #include "../views/ServerOptView.hpp"
@@ -29,39 +30,40 @@ MainWindow::MainWindow(QWidget *parent)
     setCentralWidget(stackedWidget);
 
     // La connessione TCP si apre alla prima richiesta (login/registrazione).
-    client = new ControlClient(this);
+    client = new Client(this);
+    auto *session = client->session();
 
     // Events Handler
-    QT_MANAGER::connectAll(client, authPage,
-        std::pair { &ControlClient::authenticationSucceeded, &AuthView::onAuthenticationSucceeded },
-        std::pair { &ControlClient::authenticationFailed, &AuthView::onAuthenticationFailed },
-        std::pair { &ControlClient::registrationSucceeded, &AuthView::onRegistrationSucceeded },
-        std::pair { &ControlClient::registrationFailed, &AuthView::onRegistrationFailed });
+    QT_MANAGER::connectAll(session, authPage,
+        std::pair { &SessionService::authenticationSucceeded, &AuthView::onAuthenticationSucceeded },
+        std::pair { &SessionService::authenticationFailed, &AuthView::onAuthenticationFailed },
+        std::pair { &SessionService::registrationSucceeded, &AuthView::onRegistrationSucceeded },
+        std::pair { &SessionService::registrationFailed, &AuthView::onRegistrationFailed });
 
     // Login/Register Handler
     QT_MANAGER::connectAll(authPage, this,
         std::pair { &AuthView::loginRequested,
-            [this, authPage](
+            [this, authPage, session](
                 const QString &host, const QString &identifier, const QString &password) {
                 if (!applyServer(host)) {
                     authPage->onAuthenticationFailed("Invalid server host.");
                     return;
                 }
-                client->login(identifier, password);
+                session->login(identifier, password);
             } },
         std::pair { &AuthView::registerRequested,
-            [this, authPage](const QString &host, const QString &username, const QString &email,
+            [this, authPage, session](const QString &host, const QString &username, const QString &email,
                 const QString &password) {
                 if (!applyServer(host)) {
                     authPage->onRegistrationFailed("Invalid server host.");
                     return;
                 }
-                client->registerUser(username, email, password);
+                session->registerUser(username, email, password);
             } });
 
     // Pages Handler
     QT_MANAGER::connectWithContext(this,
-        QT_MANAGER::Conn { client, &ControlClient::authenticationSucceeded,
+        QT_MANAGER::Conn { session, &SessionService::authenticationSucceeded,
             [stackedWidget]() { stackedWidget->setCurrentIndex(1); } });
 }
 bool MainWindow::applyServer(const QString &serverHost)
@@ -74,7 +76,7 @@ bool MainWindow::applyServer(const QString &serverHost)
     // setServer() tears the old socket down synchronously when the host
     // changes, so the login that follows connects fresh instead of racing a
     // Closing one.
-    client->setServer(host, kServerPort);
+    client->session()->setServer(host, kServerPort);
 
     mainPage->setServerName(host);
     return true;

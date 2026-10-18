@@ -3,9 +3,10 @@
 #include <QMainWindow>
 #include <QString>
 
-class ControlClient;
+class Client;
 class MainView;
 class QStackedWidget;
+class SessionService;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -16,6 +17,6 @@ public:
 private:
     bool applyServer(const QString &serverHost);
 
-    ControlClient *client { nullptr };
+    Client *client { nullptr };
     MainView *mainPage { nullptr };
 };
