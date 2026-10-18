@@ -1,6 +1,6 @@
 #include "Statusbar.hpp"
-#include "../tools/Utils.hpp"
-#include "../window/SettingWindow.hpp"
+#include "../../core/Utils.hpp"
+#include "../windows/SettingWindow.hpp"
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>

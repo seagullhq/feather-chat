@@ -1,5 +1,5 @@
 #include "audio/AudioManager.hpp"
-#include "window/MainWindow.hpp"
+#include "ui/windows/MainWindow.hpp"
 #include <QApplication>
 #include <QIcon>
 

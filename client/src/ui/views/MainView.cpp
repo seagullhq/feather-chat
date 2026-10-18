@@ -1,13 +1,13 @@
-#include "MainPage.hpp"
+#include "MainView.hpp"
 #include "../widgets/ServerCall.hpp"
 #include "../widgets/ServerContent.hpp"
 #include "../widgets/ServerRail.hpp"
 #include "../widgets/Statusbar.hpp"
-#include "../window/ServerModal.hpp"
+#include "../dialogs/ServerModal.hpp"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 
-MainPage::MainPage(QWidget *parent)
+MainView::MainView(QWidget *parent)
     : QWidget(parent)
 {
     auto *layout = new QVBoxLayout(this);
@@ -43,7 +43,7 @@ MainPage::MainPage(QWidget *parent)
     connect(serverRail, &ServerRail::addServerRequested, serverModal, &ServerModal::open);
 }
 
-void MainPage::setServerName(const QString &name)
+void MainView::setServerName(const QString &name)
 {
     statusbar->setServerName(name);
 }

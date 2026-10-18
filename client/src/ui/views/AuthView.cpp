@@ -1,6 +1,6 @@
-#include "AuthPage.hpp"
-#include "../tools/Base.hpp"
-#include "../tools/Utils.hpp"
+#include "AuthView.hpp"
+#include "../../core/Constants.hpp"
+#include "../../core/Utils.hpp"
 #include <QComboBox>
 #include <QFormLayout>
 #include <QLineEdit>
@@ -9,7 +9,7 @@
 #include <QTabWidget>
 #include <QVBoxLayout>
 
-AuthPage::AuthPage(QWidget *parent)
+AuthView::AuthView(QWidget *parent)
     : QWidget(parent)
 {
     auto *mainLayout = new QVBoxLayout(this);
@@ -67,14 +67,14 @@ AuthPage::AuthPage(QWidget *parent)
     mainLayout->addWidget(tabWidget);
 
     QT_MANAGER::connectWithContext(this,
-        QT_MANAGER::Conn { loginButton, &QPushButton::clicked, &AuthPage::handleLogin },
-        QT_MANAGER::Conn { regButton, &QPushButton::clicked, &AuthPage::handleRegister });
+        QT_MANAGER::Conn { loginButton, &QPushButton::clicked, &AuthView::handleLogin },
+        QT_MANAGER::Conn { regButton, &QPushButton::clicked, &AuthView::handleRegister });
 
     connect(loginPasswordLineEdit, &QLineEdit::returnPressed, loginButton, &QPushButton::click);
     connect(regConfirmPasswordLineEdit, &QLineEdit::returnPressed, regButton, &QPushButton::click);
 }
 
-void AuthPage::handleLogin()
+void AuthView::handleLogin()
 {
     const QString host = serverHost();
     const QString identifier = loginEmailLineEdit->text().trimmed();
@@ -93,7 +93,7 @@ void AuthPage::handleLogin()
     emit loginRequested(host, identifier, password);
 }
 
-void AuthPage::handleRegister()
+void AuthView::handleRegister()
 {
     const QString host = serverHost();
     const QString username = regUsernameLineEdit->text().trimmed();
@@ -132,18 +132,18 @@ void AuthPage::handleRegister()
     emit registerRequested(host, username, email, password);
 }
 
-void AuthPage::setBusy(bool busy)
+void AuthView::setBusy(bool busy)
 {
     loginButton->setEnabled(!busy);
     regButton->setEnabled(!busy);
 }
 
-QString AuthPage::serverHost() const
+QString AuthView::serverHost() const
 {
     return serverComboBox->currentText().trimmed();
 }
 
-bool AuthPage::hostAccepted(const QString &host)
+bool AuthView::hostAccepted(const QString &host)
 {
     // Only the host goes on the wire; the port is fixed at 7700.
     if (host.contains(':')) {
@@ -154,23 +154,23 @@ bool AuthPage::hostAccepted(const QString &host)
     return true;
 }
 
-void AuthPage::onAuthenticationSucceeded()
+void AuthView::onAuthenticationSucceeded()
 {
     setBusy(false);
 }
 
-void AuthPage::onAuthenticationFailed(const QString &message)
+void AuthView::onAuthenticationFailed(const QString &message)
 {
     setBusy(false);
     QMessageBox::warning(this, "Accesso non riuscito", message);
 }
 
-void AuthPage::onRegistrationSucceeded()
+void AuthView::onRegistrationSucceeded()
 {
     // TODO
 }
 
-void AuthPage::onRegistrationFailed(const QString &message)
+void AuthView::onRegistrationFailed(const QString &message)
 {
     setBusy(false);
     QMessageBox::warning(this, "Registrazione non riuscita", message);

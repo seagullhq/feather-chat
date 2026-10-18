@@ -1,5 +1,5 @@
 #include "SettingWindow.hpp"
-#include "../widgets/settingsWidgets/SettingsTabs.hpp"
+#include "../widgets/settings/SettingsTabs.hpp"
 
 SettingWindow::SettingWindow()
     : QMainWindow(nullptr, Qt::Window)

@@ -2,10 +2,10 @@
 
 #include <QFrame>
 #include <qtmetamacros.h>
-class ServerOptPage : public QFrame {
+class ServerOptView : public QFrame {
     Q_OBJECT
 public:
-    ServerOptPage(QWidget *parent);
+    ServerOptView(QWidget *parent);
     void createServer();
     void modifyServer();
 signals:

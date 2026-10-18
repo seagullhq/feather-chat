@@ -3,11 +3,11 @@
 #include "../widgets/Statusbar.hpp"
 #include <QWidget>
 
-class MainPage : public QWidget {
+class MainView : public QWidget {
     Q_OBJECT
 
 public:
-    explicit MainPage(QWidget *parent = nullptr);
+    explicit MainView(QWidget *parent = nullptr);
 
     // The status bar sits inside the page since it took over the window's
     // chrome, so MainWindow reports the active server through this.

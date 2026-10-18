@@ -1,6 +1,6 @@
 #include "VoiceTab.hpp"
-#include "../../../audio/AudioManager.hpp"
-#include "../../../tools/Utils.hpp"
+#include "../../../../audio/AudioManager.hpp"
+#include "../../../../core/Utils.hpp"
 #include <QAudioDevice>
 #include <QLabel>
 #include <QMediaDevices>

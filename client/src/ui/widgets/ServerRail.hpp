@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../data/datastructures.hpp"
-#include "../tools/Utils.hpp"
+#include "../../models/Models.hpp"
+#include "../../core/Utils.hpp"
 #include <QVBoxLayout>
 #include <cstdint>
 #include <qframe.h>

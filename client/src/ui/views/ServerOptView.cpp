@@ -1,11 +1,11 @@
-#include "ServerOptPage.hpp"
-#include "../tools/Utils.hpp"
+#include "ServerOptView.hpp"
+#include "../../core/Utils.hpp"
 #include <QFormLayout>
 #include <QLineEdit>
 #include <QPushButton>
 #include <qpushbutton.h>
 
-ServerOptPage::ServerOptPage(QWidget *parent)
+ServerOptView::ServerOptView(QWidget *parent)
 {
     auto *serverOptWidget = new QWidget(this);
     auto *serverOptLayout = new QFormLayout(serverOptWidget);
@@ -24,7 +24,7 @@ ServerOptPage::ServerOptPage(QWidget *parent)
     createOrModifyServerBtn->setText("Create");
 
     QT_MANAGER::connectWithContext(this,
-        QT_MANAGER::Conn { backBtn, &QPushButton::clicked, &ServerOptPage::returnHomeRequested },
+        QT_MANAGER::Conn { backBtn, &QPushButton::clicked, &ServerOptView::returnHomeRequested },
         QT_MANAGER::Conn { createOrModifyServerBtn, &QPushButton::clicked, []() -> void {
 
                           } });

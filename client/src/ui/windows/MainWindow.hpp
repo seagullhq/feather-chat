@@ -4,7 +4,7 @@
 #include <QString>
 
 class ControlClient;
-class MainPage;
+class MainView;
 class QStackedWidget;
 
 class MainWindow final : public QMainWindow {
@@ -17,5 +17,5 @@ private:
     bool applyServer(const QString &serverHost);
 
     ControlClient *client { nullptr };
-    MainPage *mainPage { nullptr };
+    MainView *mainPage { nullptr };
 };

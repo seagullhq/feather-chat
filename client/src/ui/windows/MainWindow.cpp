@@ -1,10 +1,10 @@
 #include "MainWindow.hpp"
-#include "../net/ControlClient.hpp"
-#include "../pages/AuthPage.hpp"
-#include "../pages/MainPage.hpp"
-#include "../pages/ServerOptPage.hpp"
-#include "../tools/Base.hpp"
-#include "../tools/Utils.hpp"
+#include "../../net/ControlClient.hpp"
+#include "../views/AuthView.hpp"
+#include "../views/MainView.hpp"
+#include "../views/ServerOptView.hpp"
+#include "../../core/Constants.hpp"
+#include "../../core/Utils.hpp"
 #include <QStackedWidget>
 
 MainWindow::MainWindow(QWidget *parent)
@@ -15,14 +15,14 @@ MainWindow::MainWindow(QWidget *parent)
 
     auto *stackedWidget = new QStackedWidget(this);
 
-    auto *authPage = new AuthPage(this);
+    auto *authPage = new AuthView(this);
 
-    mainPage = new MainPage(this);
+    mainPage = new MainView(this);
 
     stackedWidget->addWidget(authPage); // Index 0
     stackedWidget->addWidget(mainPage); // Index 1
 
-    auto *serverOptPage = new ServerOptPage(this);
+    auto *serverOptPage = new ServerOptView(this);
 
     stackedWidget->addWidget(serverOptPage);
 
@@ -33,14 +33,14 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Events Handler
     QT_MANAGER::connectAll(client, authPage,
-        std::pair { &ControlClient::authenticationSucceeded, &AuthPage::onAuthenticationSucceeded },
-        std::pair { &ControlClient::authenticationFailed, &AuthPage::onAuthenticationFailed },
-        std::pair { &ControlClient::registrationSucceeded, &AuthPage::onRegistrationSucceeded },
-        std::pair { &ControlClient::registrationFailed, &AuthPage::onRegistrationFailed });
+        std::pair { &ControlClient::authenticationSucceeded, &AuthView::onAuthenticationSucceeded },
+        std::pair { &ControlClient::authenticationFailed, &AuthView::onAuthenticationFailed },
+        std::pair { &ControlClient::registrationSucceeded, &AuthView::onRegistrationSucceeded },
+        std::pair { &ControlClient::registrationFailed, &AuthView::onRegistrationFailed });
 
     // Login/Register Handler
     QT_MANAGER::connectAll(authPage, this,
-        std::pair { &AuthPage::loginRequested,
+        std::pair { &AuthView::loginRequested,
             [this, authPage](
                 const QString &host, const QString &identifier, const QString &password) {
                 if (!applyServer(host)) {
@@ -49,7 +49,7 @@ MainWindow::MainWindow(QWidget *parent)
                 }
                 client->login(identifier, password);
             } },
-        std::pair { &AuthPage::registerRequested,
+        std::pair { &AuthView::registerRequested,
             [this, authPage](const QString &host, const QString &username, const QString &email,
                 const QString &password) {
                 if (!applyServer(host)) {

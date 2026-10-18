@@ -6,11 +6,11 @@ class QComboBox;
 class QLineEdit;
 class QPushButton;
 
-class AuthPage : public QWidget {
+class AuthView : public QWidget {
     Q_OBJECT
 
 public:
-    explicit AuthPage(QWidget *parent = nullptr);
+    explicit AuthView(QWidget *parent = nullptr);
 
 signals:
     // Requests only; the page stays disabled until the server answers. The

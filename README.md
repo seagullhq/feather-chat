@@ -256,7 +256,7 @@ that path works but nobody here builds it regularly.
 | `just clean-deps` | also drop the vcpkg binary cache, forcing a full Qt rebuild | `rm -rf F:/tools/vcpkg-binary-cache` |
 
 `just server :5000` picks another control port for the server; the client always
-dials `7700`, so change `kServerPort` in `client/src/pages/MainWindow.cpp` to
+dials `7700`, so change `kServerPort` in `client/src/core/Constants.hpp` to
 match. `just build-debug` produces an unoptimized build with symbols in
 `dist/client-debug/`.
 
