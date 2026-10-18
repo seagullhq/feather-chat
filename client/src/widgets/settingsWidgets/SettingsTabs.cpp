@@ -1,6 +1,6 @@
 #include "SettingsTabs.hpp"
-#include "GeneralTab.hpp"
-#include "VoiceTab.hpp"
+#include "tabs/GeneralTab.hpp"
+#include "tabs/VoiceTab.hpp"
 
 SettingsTabs::SettingsTabs(QWidget *parent)
     : QTabWidget(parent)

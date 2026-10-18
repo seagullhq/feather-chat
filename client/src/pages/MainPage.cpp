@@ -20,7 +20,6 @@ MainPage::MainPage(QWidget *parent)
 
     auto *serverRail = new ServerRail(this);
 
-    // Area centrale: contenuto del server + chiamata
     auto *contentArea = new QWidget(this);
     auto *serverLayout = new QVBoxLayout(contentArea);
     serverLayout->setContentsMargins(0, 0, 0, 0);
