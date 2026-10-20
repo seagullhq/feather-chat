@@ -46,6 +46,7 @@ ServerModal::ServerModal(QWidget *parent)
     auto *joinBtn = new QPushButton("Join a server", card);
     auto *cancelBtn = new QPushButton("Cancel", card);
     createBtn->setMinimumHeight(36);
+    cancelBtn->setMinimumHeight(36);
     joinBtn->setMinimumHeight(36);
 
     cardLayout->addWidget(title);
