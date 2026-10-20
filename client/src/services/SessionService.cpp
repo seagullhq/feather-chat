@@ -2,6 +2,8 @@
 
 #include "../net/TcpTransport.hpp"
 #include "../store/DataStore.hpp"
+#include "../core/Utils.hpp"
+#include "../core/Constants.hpp"
 
 #include <QAbstractSocket>
 #include <QJsonDocument>
@@ -9,9 +11,6 @@
 #include <QTimer>
 #include <QtEndian>
 
-namespace {
-constexpr int kTimeoutMs = 10000;
-}
 
 SessionService::SessionService(QObject *parent)
     : QObject(parent)
@@ -20,13 +19,19 @@ SessionService::SessionService(QObject *parent)
     , ssrc(QRandomGenerator::global()->generate() | 1u)
 {
     timeout->setSingleShot(true);
-    timeout->setInterval(kTimeoutMs);
+    timeout->setInterval(TimeoutMs);
 
-    connect(transport, &TcpTransport::connected, this, &SessionService::onTransportConnected);
-    connect(transport, &TcpTransport::disconnected, this, &SessionService::onTransportDisconnected);
-    connect(transport, &TcpTransport::frameReceived, this, &SessionService::onTransportFrame);
-    connect(transport, &TcpTransport::errorOccurred, this, &SessionService::onTransportError);
-    connect(timeout, &QTimer::timeout, this, &SessionService::onTimeout);
+    QT_MANAGER::connectWithContext(this, QT_MANAGER::Conn{
+        transport, &TcpTransport::connected, &SessionService::onTransportConnected
+    },QT_MANAGER::Conn{
+        transport, &TcpTransport::disconnected, &SessionService::onTransportDisconnected
+    },QT_MANAGER::Conn{
+        transport, &TcpTransport::frameReceived, &SessionService::onTransportFrame
+    },QT_MANAGER::Conn{
+        transport, &TcpTransport::errorOccurred, &SessionService::onTransportError
+    },QT_MANAGER::Conn{
+        timeout, &QTimer::timeout, &SessionService::onTimeout
+    });
 }
 
 void SessionService::setServer(const QString &newHost, quint16 newPort)

@@ -20,7 +20,7 @@ AuthView::AuthView(QWidget *parent)
     serverComboBox = new QComboBox(this);
     serverComboBox->setEditable(true);
     serverComboBox->setInsertPolicy(QComboBox::NoInsert);
-    serverComboBox->addItem(QString::fromLatin1(kDefaultServerHost));
+    serverComboBox->addItem(QString::fromLatin1(DefaultHost));
     serverLayout->addRow("Server:", serverComboBox);
 
     mainLayout->addLayout(serverLayout);

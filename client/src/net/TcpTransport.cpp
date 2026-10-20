@@ -1,12 +1,8 @@
 #include "TcpTransport.hpp"
-
+#include "../core/Constants.hpp"
 #include <QAbstractSocket>
 #include <QTcpSocket>
 #include <QtEndian>
-
-namespace {
-constexpr quint32 kMaxFrame = 1u << 20;
-}
 
 TcpTransport::TcpTransport(QObject *parent)
     : QObject(parent)
@@ -89,7 +85,7 @@ void TcpTransport::onReadyRead()
 
     while (buffer.size() >= 4) {
         const quint32 length = qFromBigEndian<quint32>(buffer.constData());
-        if (length == 0 || length >= kMaxFrame) {
+        if (length == 0 || length >= MaxFrame) {
             socket->abort();
             return;
         }

@@ -76,7 +76,7 @@ bool MainWindow::applyServer(const QString &serverHost)
     // setServer() tears the old socket down synchronously when the host
     // changes, so the login that follows connects fresh instead of racing a
     // Closing one.
-    client->session()->setServer(host, kServerPort);
+    client->session()->setServer(host, ControlPort);
 
     mainPage->setServerName(host);
     return true;
