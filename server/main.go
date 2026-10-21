@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log"
@@ -12,10 +13,15 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/seagullhq/feather-chat/server/internal/accounts"
-	"github.com/seagullhq/feather-chat/server/internal/migrations"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
-	"go.mongodb.org/mongo-driver/v2/mongo"
-	"go.mongodb.org/mongo-driver/v2/mongo/options"
+
+	// Driver PostgreSQL tramite pgx compatibile con database/sql
+	_ "github.com/jackc/pgx/v5/stdlib"
+
+	// Librerie per le migrazioni
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
 func main() {
@@ -25,36 +31,37 @@ func main() {
 		}
 	}
 
-	mongoURI := flag.String("mongo", defaultMongoURI(), "MongoDB connection URI")
-	dbName := flag.String("db", os.Getenv("MONGO_DBNAME"), "MongoDB database name")
+	pgURI := flag.String("postgres", defaultPostgresURI(), "PostgreSQL connection URI")
 
 	// Define tcp and udp address
 	tcpAddr := flag.String("tcp", ":7700", "TCP control address")
 	udpAddr := flag.String("udp", ":7701", "UDP media address")
 	flag.Parse()
 
-	// Connect to MongoDB and run the migrations before accepting clients
-	db, err := mongo.Connect(options.Client().ApplyURI(*mongoURI))
+	// 1. Connessione a PostgreSQL usando il driver pgx
+	db, err := sql.Open("pgx", *pgURI)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Errore apertura connessione DB: %v", err)
 	}
-	defer db.Disconnect(context.Background())
+	defer db.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := db.Ping(ctx, nil); err != nil {
-		log.Fatalf("mongo ping: %v", err)
+	// Verifica la connessione
+	if err := db.PingContext(ctx); err != nil {
+		log.Fatalf("postgres ping fallito: %v", err)
 	}
-	if err := migrations.Run(ctx, db.Database(*dbName)); err != nil {
-		log.Fatalf("migrations: %v", err)
-	}
+	log.Println("Connesso a PostgreSQL con successo")
 
-	store := accounts.NewStore(db.Database(*dbName))
-	serverStore := servers.NewStore(db.Database(*dbName))
+	// 2. Esegui le migrazioni
+	runMigrations(db)
+
+	// 3. Inizializza gli store passandogli l'istanza *sql.DB
+	store := accounts.NewStore(db)
+	serverStore := servers.NewStore(db)
 
 	// Starting listening to the tcp and udp buffers
-
 	listenerTCP, err := net.Listen("tcp", *tcpAddr)
 	if err != nil {
 		log.Fatal(err)
@@ -72,13 +79,43 @@ func main() {
 	serve(listenerTCP, listenerUDP.(*net.UDPConn), store, serverStore)
 }
 
-func defaultMongoURI() string {
+func defaultPostgresURI() string {
 	return fmt.Sprintf(
-		"mongodb://%s:%s@%s:27017/?authSource=admin&directConnection=true",
-		url.QueryEscape(os.Getenv("MONGO_ROOT_USERNAME")),
-		url.QueryEscape(os.Getenv("MONGO_ROOT_PASSWORD")),
-		url.QueryEscape(os.Getenv("MONGO_HOST")),
+		"postgres://%s:%s@%s:5432/%s",
+		url.QueryEscape(os.Getenv("POSTGRES_USER")),
+		url.QueryEscape(os.Getenv("POSTGRES_PASSWORD")),
+		os.Getenv("POSTGRES_HOST"),
+		os.Getenv("POSTGRES_DB"),
 	)
+}
+
+// runMigrations applica automaticamente tutte le migrazioni non ancora eseguite all'avvio
+func runMigrations(db *sql.DB) {
+	driver, err := postgres.WithInstance(db, &postgres.Config{})
+	if err != nil {
+		log.Fatalf("Errore configurazione driver migrazioni: %v", err)
+	}
+
+	// Sostituisci il path con la cartella effettiva dove tieni i file .sql
+	m, err := migrate.NewWithDatabaseInstance(
+		"file://internal/migrations/sql",
+		"postgres",
+		driver,
+	)
+
+	if err != nil {
+		log.Fatalf("Errore inizializzazione migrazioni: %v", err)
+	}
+
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		log.Fatalf("Errore esecuzione migrazioni: %v", err)
+	}
+
+	if err == migrate.ErrNoChange {
+		log.Println("Nessuna nuova migrazione da applicare.")
+	} else {
+		log.Println("Migrazioni applicate con successo!")
+	}
 }
 
 // serve runs the control and media loops until the listeners stop.

@@ -1,15 +1,15 @@
 #include "JoinServerModal.hpp"
 #include <QEvent>
-#include <QFrame>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
 #include <QVBoxLayout>
-#include <QLineEdit>
 
-JoinServerModal::JoinServerModal(QWidget* parent)
+
+JoinServerModal::JoinServerModal(QWidget *parent)
     : QWidget(parent)
 {
     setFocusPolicy(Qt::StrongFocus);
@@ -22,37 +22,42 @@ JoinServerModal::JoinServerModal(QWidget* parent)
     card = new QFrame(this);
     card->setObjectName("joinCard");
     card->setFixedWidth(360);
-    card->setStyleSheet("QFrame#exploreCard {"
+    card->setStyleSheet("QFrame#joinCard {"
                         "    background: palette(window);"
                         "    border: 1px solid rgba(127, 127, 127, 100);"
                         "    border-radius: 12px;"
                         "}");
-    auto* cardLayout = new QVBoxLayout(card);
-    cardLayout->setContentsMargins(24,24,24,24);
+    auto *cardLayout = new QVBoxLayout(card);
+    cardLayout->setContentsMargins(24, 24, 24, 24);
     cardLayout->setSpacing(12);
 
-    auto * title = new QLabel("Join server", card);
+    auto *title = new QLabel("Join server", card);
     title->setAlignment(Qt::AlignCenter);
     QFont f = title->font();
     f.setPointSize(f.pointSize() + 4);
     f.setBold(true);
     title->setFont(f);
 
-    auto * subtitle = new QLabel("Join a server with the invite code");
+    auto *subtitle = new QLabel("Join a server with the invite code");
     subtitle->setAlignment(Qt::AlignCenter);
     subtitle->setWordWrap(true);
 
-    auto * joinBtn = new QPushButton("Join server", card);
+    auto *joinBtn = new QPushButton("Join server", card);
     joinBtn->setMinimumHeight(36);
 
-    auto * cancelBtn = new QPushButton("Cancel", card);
+    auto* inviteLabel = new QLabel(card);
+    inviteLabel->setText("Invite code:");
+
+    auto *cancelBtn = new QPushButton("Cancel", card);
     cancelBtn->setMinimumHeight(36);
-    auto * invite = new QLineEdit("", card);
+    auto *invite = new QLineEdit("", card);
     invite->setMinimumHeight(36);
 
     cardLayout->addWidget(title);
     cardLayout->addWidget(subtitle);
     cardLayout->addSpacing(8);
+    cardLayout->addWidget(inviteLabel);
+    cardLayout->addWidget(invite);
     cardLayout->addWidget(joinBtn);
     cardLayout->addWidget(cancelBtn);
 
@@ -60,11 +65,8 @@ JoinServerModal::JoinServerModal(QWidget* parent)
     outer->addWidget(card, 0, Qt::AlignHCenter);
     outer->addStretch();
 
-    connect(cancelBtn, &QPushButton::clicked, this, & JoinServerModal::close);
-
+    connect(cancelBtn, &QPushButton::clicked, this, &JoinServerModal::close);
 }
-
-
 
 void JoinServerModal::open()
 {

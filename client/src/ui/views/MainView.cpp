@@ -1,9 +1,11 @@
 #include "MainView.hpp"
+#include "../dialogs/CreateServerModal.hpp"
+#include "../dialogs/JoinServerModal.hpp"
+#include "../dialogs/ServerModal.hpp"
 #include "../widgets/ServerCall.hpp"
 #include "../widgets/ServerContent.hpp"
 #include "../widgets/ServerRail.hpp"
 #include "../widgets/Statusbar.hpp"
-#include "../dialogs/ServerModal.hpp"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 
@@ -39,8 +41,15 @@ MainView::MainView(QWidget *parent)
     layout->addLayout(pageLayout, 1);
     layout->addWidget(statusbar);
 
-    auto *serverModal = new ServerModal(this);
+    // The rail opens the "explore" dialog; that dialog only announces the
+    // user's choice, and the view opens the matching form dialog.
+    serverModal = new ServerModal(this);
+    createServerModal = new CreateServerModal(this);
+    joinServerModal = new JoinServerModal(this);
+
     connect(serverRail, &ServerRail::addServerRequested, serverModal, &ServerModal::open);
+    connect(serverModal, &ServerModal::createServerRequested, createServerModal, &CreateServerModal::open);
+    connect(serverModal, &ServerModal::joinServerRequested, joinServerModal, &JoinServerModal::open);
 }
 
 void MainView::setServerName(const QString &name)

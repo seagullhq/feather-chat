@@ -3,6 +3,10 @@
 #include "../widgets/Statusbar.hpp"
 #include <QWidget>
 
+class CreateServerModal;
+class JoinServerModal;
+class ServerModal;
+
 class MainView : public QWidget {
     Q_OBJECT
 
@@ -15,4 +19,10 @@ public:
 
 private:
     Statusbar *statusbar = nullptr;
+
+    // All three are children of MainView, so they stack over the page and
+    // are resized with it. ServerModal routes to the other two by signal.
+    ServerModal *serverModal = nullptr;
+    CreateServerModal *createServerModal = nullptr;
+    JoinServerModal *joinServerModal = nullptr;
 };

@@ -60,14 +60,16 @@ ServerModal::ServerModal(QWidget *parent)
     outer->addWidget(card, 0, Qt::AlignHCenter);
     outer->addStretch();
 
-    /*   connect(createBtn, &QPushButton::clicked, this, [this] {
-          close();
-          emit createServerRequested();
-      });
-      connect(joinBtn, &QPushButton::clicked, this, [this] {
-          close();
-          emit joinServerRequested();
-      }); */
+    // The two modals are separate widgets owned by the view, so ServerModal
+    // only announces the intent and lets the view decide which one to open.
+    connect(createBtn, &QPushButton::clicked, this, [this] {
+        close();
+        emit createServerRequested();
+    });
+    connect(joinBtn, &QPushButton::clicked, this, [this] {
+        close();
+        emit joinServerRequested();
+    });
     connect(cancelBtn, &QPushButton::clicked, this, &ServerModal::close);
 }
 
