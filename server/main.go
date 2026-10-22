@@ -21,7 +21,7 @@ import (
 	// Librerie per le migrazioni
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
 
 func main() {
@@ -96,13 +96,13 @@ func runMigrations(db *sql.DB) {
 		log.Fatalf("Errore configurazione driver migrazioni: %v", err)
 	}
 
-	// Sostituisci il path con la cartella effettiva dove tieni i file .sql
-	m, err := migrate.NewWithDatabaseInstance(
-		"file://internal/migrations/sql",
-		"postgres",
-		driver,
-	)
+	// Le migrazioni sono embedded nel binario: le trova da qualsiasi directory.
+	src, err := iofs.New(migrationFS, "internal/migrations/sql")
+	if err != nil {
+		log.Fatalf("Errore inizializzazione sorgente migrazioni: %v", err)
+	}
 
+	m, err := migrate.NewWithInstance("iofs", src, "postgres", driver)
 	if err != nil {
 		log.Fatalf("Errore inizializzazione migrazioni: %v", err)
 	}
