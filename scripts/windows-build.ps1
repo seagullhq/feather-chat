@@ -70,6 +70,12 @@ try {
 
     cmake --build --preset windows
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    # clangd finds its compilation database by searching parent directories of
+    # the source files, so it must sit in the repo root. CMake only writes it
+    # inside the build dir; the root copy is gitignored, machine-local state.
+    Copy-Item -LiteralPath (Join-Path $buildDir 'compile_commands.json') `
+        -Destination (Join-Path $repoRoot 'compile_commands.json') -Force
 }
 finally {
     Pop-Location
