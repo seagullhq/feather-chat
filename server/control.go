@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -75,14 +76,31 @@ func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Stor
 			}
 			session.send(Control{Type: "ACK"})
 		case "CREATE_SERVER":
+			if !session.authed() {
+				session.send(Control{Type: "ERROR", Error: "authentication required"})
+				continue
+			}
+			// Converta l'ID utente salvato in sessione (stringa) nel formato intero di PostgreSQL
+			ownerID, err := strconv.Atoi(session.UserID)
+			if err != nil {
+				session.send(Control{Type: "ERROR", Error: "authentication required"})
+				continue
+			}
+			name := strings.TrimSpace(message.ServerName)
+			if n := utf8.RuneCountInString(name); n < 3 || n > 32 {
+				session.send(Control{Type: "ERROR", Error: "server name must be 3-32 characters"})
+				continue
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			server, err := serverStore.CreateServer(ctx, message.OwnerID, message.ServerName)
+			server, err := serverStore.CreateServer(ctx, ownerID, name)
 			cancel()
 			if err != nil {
-				if !errors.Is(err, servers.ErrTaken) {
-					log.Printf("[CREATION] failed to create server: %v", err)
+				if errors.Is(err, servers.ErrTaken) {
+					session.send(Control{Type: "ERROR", Error: servers.ErrTaken.Error()})
+					continue
 				}
-				session.send(Control{Type: "ERROR", Error: accounts.ErrTaken.Error()})
+				log.Printf("[CREATION] failed to create server: %v", err)
+				session.send(Control{Type: "ERROR", Error: "server creation failed"})
 				continue
 			}
 			session.send(Control{Type: "ACK", InviteCode: server.InviteCode})
@@ -97,7 +115,8 @@ func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Stor
 				session.send(Control{Type: "ERROR", Error: accounts.ErrBadCredentials.Error()})
 				continue
 			}
-			session.UserID = user.ID.Hex()
+			// Salva l'ID utente numerico convertendolo in stringa
+			session.UserID = strconv.Itoa(user.ID)
 			session.Username = user.Username
 			session.send(Control{Type: "ACK", Name: user.Username})
 
@@ -106,17 +125,17 @@ func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Stor
 				session.send(Control{Type: "ACK"})
 				continue
 			}
-			session.SSRC, session.name = message.SSRC, message.Name
-			session.send(Control{Type: "ACK", SSRC: session.SSRC})
+			roomManager.Claim(session, message.SSRC, message.Name)
+			session.send(Control{Type: "ACK", SSRC: message.SSRC})
 		case "JOIN":
 			if !session.authed() {
 				session.send(Control{Type: "ERROR", Error: "authentication required"})
 				continue
 			}
 			roomManager.Join(session, message.Room)
-			session.send(Control{Type: "ACK", Room: session.Room})
+			session.send(Control{Type: "ACK", Room: message.Room})
 		case "LEAVE":
-			defer roomManager.Leave(session)
+			roomManager.Leave(session)
 		}
 	}
 }
@@ -127,7 +146,6 @@ func validateRegistration(m Control) error {
 	if n := utf8.RuneCountInString(strings.TrimSpace(m.Username)); n < 3 || n > 32 {
 		return errors.New("username must be 3-32 characters")
 	}
-	// bcrypt limits input to 72 bytes, not runes.
 	if n := len([]byte(m.Password)); n < 8 || n > 72 {
 		return errors.New("password must be 8-72 bytes")
 	}
@@ -137,8 +155,6 @@ func validateRegistration(m Control) error {
 	return nil
 }
 
-// readUDP parses the 5-byte header, resolves the session by SSRC and
-// forwards the datagram verbatim to room peers.
 func readUDP(pc *net.UDPConn, roomManager *RoomManager) {
 	buf := make([]byte, 2048)
 	for {
@@ -148,7 +164,6 @@ func readUDP(pc *net.UDPConn, roomManager *RoomManager) {
 			return
 		}
 
-		// The datagram received is greater than 1024, so the server skips it.
 		if n > 1024 {
 			log.Printf("[CONTROL] received a datagram greater than 1024 (size: %d), skipping...", n)
 			continue
@@ -159,13 +174,11 @@ func readUDP(pc *net.UDPConn, roomManager *RoomManager) {
 			continue
 		}
 
-		// A packet with the wrong header length has been received, skipping...
 		if n <= HeaderLen {
 			log.Printf("[CONTROL] received a packet with the wrong header! %d instead of %d", n, HeaderLen)
 			continue
 		}
 
-		// A packet with the wrong kind has been received, skipping...
 		if h.Kind != KindAudio && h.Kind != KindPing {
 			log.Printf("[CONTROL] received a packet with kind not handled by the server! skipping...")
 			continue

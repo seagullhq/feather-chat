@@ -2,13 +2,12 @@ package accounts
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"time"
 
-	"go.mongodb.org/mongo-driver/v2/bson"
-	"go.mongodb.org/mongo-driver/v2/mongo"
-	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -18,23 +17,22 @@ var (
 )
 
 type User struct {
-	ID           bson.ObjectID `bson:"_id"`
-	Username     string        `bson:"username"`
-	Email        string        `bson:"email"`
-	PasswordHash string        `bson:"password_hash"`
-	CreatedAt    time.Time     `bson:"created_at"`
-	UpdatedAt    time.Time     `bson:"updated_at"`
+	ID           int       `json:"id"`
+	Username     string    `json:"username"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type Store struct {
-	users *mongo.Collection
+	db *sql.DB
 }
 
-func NewStore(db *mongo.Database) *Store {
-	return &Store{users: db.Collection("users")}
+func NewStore(db *sql.DB) *Store {
+	return &Store{db: db}
 }
 
-var caseInsensitive = options.Collation{Locale: "en", Strength: 2}
 var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("feather-dummy"), bcrypt.DefaultCost)
 
 func (s *Store) Register(ctx context.Context, username, email, password string) error {
@@ -43,38 +41,55 @@ func (s *Store) Register(ctx context.Context, username, email, password string) 
 		return err
 	}
 	now := time.Now()
-	_, err = s.users.InsertOne(ctx, User{
-		ID:           bson.NewObjectID(),
-		Username:     strings.TrimSpace(username),
-		Email:        strings.TrimSpace(email),
-		PasswordHash: string(hash),
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	})
-	if mongo.IsDuplicateKeyError(err) {
-		return ErrTaken
+
+	query := `
+		INSERT INTO users (username, email, password_hash, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`
+
+	_, err = s.db.ExecContext(ctx, query, strings.TrimSpace(username), strings.TrimSpace(email), string(hash), now, now)
+
+	if err != nil {
+		// Controllo errore di chiave duplicata (codice Postgres 23505)
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ErrTaken
+		}
+		return err
 	}
-	return err
+	return nil
 }
 
 func (s *Store) Authenticate(ctx context.Context, identifier string, password string) (*User, error) {
-	filter := bson.D{{Key: "$or", Value: bson.A{
-		bson.D{{Key: "username", Value: strings.TrimSpace(identifier)}},
-		bson.D{{Key: "email", Value: strings.TrimSpace(identifier)}},
-	}}}
+	identifier = strings.TrimSpace(identifier)
+
+	query := `
+		SELECT id, username, email, password_hash, created_at, updated_at
+		FROM users
+		WHERE lower(username) = lower($1) OR lower(email) = lower($1)
+	`
+
 	var user User
-	err := s.users.FindOne(ctx, filter, options.FindOne().SetCollation(&caseInsensitive)).Decode(&user)
-	if errors.Is(err, mongo.ErrNoDocuments) {
-		// Burn a comparison so a missing account is not measurably faster than
-		// a wrong password, then answer with the same error.
+	err := s.db.QueryRowContext(ctx, query, identifier).Scan(
+		&user.ID,
+		&user.Username,
+		&user.Email,
+		&user.PasswordHash,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+
+	if errors.Is(err, sql.ErrNoRows) {
 		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
 		return nil, ErrBadCredentials
 	}
 	if err != nil {
 		return nil, err
 	}
+
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
 		return nil, ErrBadCredentials
 	}
+
 	return &user, nil
 }

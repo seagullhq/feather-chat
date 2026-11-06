@@ -17,15 +17,25 @@ func NewRoomManager() *RoomManager {
 	return &RoomManager{rooms: map[string]map[uint32]*Session{}}
 }
 
+// Claim records the session's SSRC and name, re-keying its room entry if the
+// SSRC changed. Writes hold roomManager.mu, the same lock the UDP goroutine
+// reads them under in Peers/BySSRC/forward.
 func (roomManager *RoomManager) Claim(s *Session, ssrc uint32, name string) {
 	roomManager.mu.Lock()
 	defer roomManager.mu.Unlock()
+	if r := roomManager.rooms[s.Room]; r != nil && s.SSRC != ssrc {
+		delete(r, s.SSRC)
+		r[ssrc] = s
+	}
 	s.SSRC, s.name = ssrc, name
 }
 
 func (roomManager *RoomManager) Join(s *Session, room string) {
 	roomManager.mu.Lock()
 	defer roomManager.mu.Unlock()
+	if s.Room != "" && s.Room != room {
+		roomManager.dropLocked(s) // a session belongs to one room at a time
+	}
 	s.Room = room
 	r := roomManager.rooms[room]
 	if r == nil {
@@ -39,11 +49,19 @@ func (roomManager *RoomManager) Join(s *Session, room string) {
 func (roomManager *RoomManager) Leave(s *Session) {
 	roomManager.mu.Lock()
 	defer roomManager.mu.Unlock()
-	if r := roomManager.rooms[s.Room]; r != nil {
-		delete(r, s.SSRC)
-		if len(r) == 0 {
-			delete(roomManager.rooms, s.Room)
-		}
+	roomManager.dropLocked(s)
+	s.Room = ""
+}
+
+// dropLocked removes s from its room. The caller must hold roomManager.mu.
+func (roomManager *RoomManager) dropLocked(s *Session) {
+	r := roomManager.rooms[s.Room]
+	if r == nil {
+		return
+	}
+	delete(r, s.SSRC)
+	if len(r) == 0 {
+		delete(roomManager.rooms, s.Room)
 	}
 }
 
@@ -87,13 +105,21 @@ func (roomManager *RoomManager) forward(pc *net.UDPConn, session *Session, buf [
 	}
 
 	if !session.pinged {
-		log.Printf("[ROOM] received a packet before first ping! from %s", session.name)
+		log.Printf("[ROOM] received a packet before first ping! from %s", roomManager.displayName(session))
 		return // AUDIO prima del primo echo: drop, pacchetto da non inoltrare
 	}
 
 	for _, p := range roomManager.Peers(session) {
 		pc.WriteToUDP(buf, p.UDPAddr)
 	}
+}
+
+// displayName returns s's name under the lock, for logging from the UDP
+// goroutine (Claim writes it from a control goroutine).
+func (roomManager *RoomManager) displayName(s *Session) string {
+	roomManager.mu.RLock()
+	defer roomManager.mu.RUnlock()
+	return s.name
 }
 
 // Peers returns the sessions in s's room, excluding s.

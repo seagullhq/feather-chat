@@ -28,8 +28,11 @@ With a C++ toolchain, CMake, Ninja, Go and Qt 6.8 in place:
 git clone https://github.com/seagullhq/feather-chat
 cd feather-chat
 
-just server      # serves hello world on :4444
-just client      # builds and opens a window that says hello world
+cp .env.example .env     # local MongoDB credentials (docker compose reads it)
+docker compose up -d     # the MongoDB the server stores accounts and servers in
+
+just server              # control on :7700, media on :7701
+just client              # builds and opens the desktop client
 ```
 
 They do not talk to each other yet — that is the
@@ -46,7 +49,7 @@ vcpkg, see [Windows notes](#windows-notes).
 | | |
 |---|---|
 | `client/` | Qt6 + C++20 desktop client (Linux, Windows, macOS) |
-| `server/` | Go backend, standard library only |
+| `server/` | Go backend — MongoDB for accounts and servers |
 | `docs/` | [docs index](docs/README.md) — protocol, wire format, audio path, server design, security model, ADR |
 | `triplets/` | vcpkg triplet used by the Windows build |
 | `scripts/` | `msvc-env.ps1`, which puts the MSVC toolchain on `PATH` for the Windows build, and `windows-build.ps1`, which `just build` calls |
@@ -54,7 +57,8 @@ vcpkg, see [Windows notes](#windows-notes).
 ## Installing Qt — Linux and macOS
 
 The client needs **Qt 6.8**, CMake 3.21+, Ninja and a C++20 compiler. The
-server needs **Go 1.26+** and nothing else.
+server needs **Go 1.26+** and a MongoDB it can reach, which the
+[Quick start](#quick-start) starts with `docker compose`.
 
 **On Windows, skip this section** — Qt comes from vcpkg there. See
 [Windows notes](#windows-notes).
@@ -246,13 +250,15 @@ that path works but nobody here builds it regularly.
 | `just build` | configure and build the client | `cmake --preset default && cmake --build --preset default` |
 | `just client` | build it, then run it | the above, then `./dist/client/feather-chat` |
 | `just server` | build and run the server on `:7700` | `cd server && go build -o ../dist/server/feather-chat-server . && ../dist/server/feather-chat-server -tcp :7700` |
-| `just test` | run the Go tests (none written yet) | `cd server && go test -race ./...` |
+| `just test` | run the Go tests | `cd server && go test -race ./...` |
 | `just check` | format, vet, test and build | all of the above |
 | `just clean` | delete build output | `rm -rf dist/client dist/client-debug dist/client-windows dist/server` |
 | `just clean-deps` | also drop the vcpkg binary cache, forcing a full Qt rebuild | `rm -rf F:/tools/vcpkg-binary-cache` |
 
-`just server :5000` picks another port. `just build-debug` produces an
-unoptimized build with symbols in `dist/client-debug/`.
+`just server :5000` picks another control port for the server; the client always
+dials `7700`, so change `kServerPort` in `client/src/core/Constants.hpp` to
+match. `just build-debug` produces an unoptimized build with symbols in
+`dist/client-debug/`.
 
 On Windows `just build` and `just client` load the MSVC environment from
 `scripts/msvc-env.ps1` before calling CMake; see
