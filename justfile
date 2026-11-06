@@ -3,7 +3,7 @@
 # PowerShell, so neither platform needs the other's shell installed.
 #
 # `just` runs each recipe line in a separate shell process, so a Windows recipe
-# that needs state to carry between lines delegates to a script under scripts/.
+# that needs state to carry between lines 
 [windows]
 set shell := ["powershell.exe", "-NoLogo", "-Command"]
 
@@ -11,35 +11,20 @@ set shell := ["powershell.exe", "-NoLogo", "-Command"]
 default:
     @just --list
 
-# Configure and build the client.
-[unix]
+# Build the client (release).
+[working-directory: 'client']
 build:
-    cmake --preset default
-    cmake --build --preset default
-    # clangd finds its compilation database by searching parent directories of
-    # the source files, so it must sit in the repo root. CMake only writes it
-    # inside the build dir; the root copy is gitignored, machine-local state.
-    cp dist/client/compile_commands.json compile_commands.json
+    cargo build --release
 
-[windows]
-build:
-    ./scripts/windows-build.ps1
-
-# Build the client with symbols, into dist/client-debug/.
+# Build the client with symbols.
+[working-directory: 'client']
 build-debug:
-    cmake --preset debug
-    cmake --build --preset debug
-    # Refresh the repo-root compile database for clangd, as in `build`.
-    cp dist/client-debug/compile_commands.json compile_commands.json
+    cargo build
 
 # Build and run the client.
-[unix]
-client: build
-    ./dist/client/feather-chat
-
-[windows]
-client: build
-    .\dist\client\feather-chat.exe
+[working-directory: 'client']
+client:
+    cargo run --release
 
 # Build the server binary into dist/server/.
 [unix]
@@ -64,8 +49,11 @@ server port=":7700": build-server
     .\dist\server\feather-chat-server.exe -tcp {{port}}
 
 # Run every test in the repository.
-test:
-    @just test-server
+test: test-server test-client
+
+[working-directory: 'client']
+test-client:
+    cargo test
 
 # Run the server's Go tests: verbose, no result cache.
 # The -race flag needs cgo and a C compiler, which we don't require on Windows.
@@ -80,26 +68,22 @@ test-server:
     go test -v ./...
 
 # Format everything that has a formatter.
-[unix]
-fmt: fmt-go
-    git ls-files -z 'client/src/*.cpp' 'client/src/*.hpp' | xargs -0 clang-format -i
+fmt: fmt-go fmt-client
 
-[windows]
-fmt: fmt-go
-    Get-ChildItem client\src -Recurse -Include *.cpp,*.hpp | ForEach-Object { clang-format -i $_.FullName }
+# Fail if anything is unformatted.
+fmt-check: fmt-check-go fmt-check-client
+
+[working-directory: 'client']
+fmt-client:
+    cargo fmt
+
+[working-directory: 'client']
+fmt-check-client:
+    cargo fmt --check
 
 [working-directory: 'server']
 fmt-go:
     gofmt -w .
-
-# Fail if anything is unformatted.
-[unix]
-fmt-check: fmt-check-go
-    git ls-files -z 'client/src/*.cpp' 'client/src/*.hpp' | xargs -0 clang-format --style=file --dry-run -Werror
-
-[windows]
-fmt-check: fmt-check-go
-    Get-ChildItem client\src -Recurse -Include *.cpp,*.hpp | ForEach-Object { clang-format --style=file --dry-run -Werror $_.FullName }
 
 [unix]
 [working-directory: 'server']
@@ -118,12 +102,7 @@ vet:
 # Format, vet, test and build. Run before pushing.
 check: fmt-check vet test build
 
-# Delete build output; the Qt binary cache keeps the next build fast anyway.
-clean:
-    cmake -E rm -rf dist/client dist/client-debug dist/client-windows dist/server
 
-# Delete build output and the vcpkg binary cache, forcing a full Qt rebuild (an hour).
-# The cache lives outside the repo; this is the path scripts/windows-build.ps1
-# points VCPKG_BINARY_SOURCES at. Nothing to delete on Linux or macOS.
-clean-deps: clean
-    cmake -E rm -rf F:/tools/vcpkg-binary-cache
+# Delete build output.
+clean:
+    cargo clean --manifest-path client/Cargo.toml

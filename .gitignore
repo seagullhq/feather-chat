@@ -9,3 +9,6 @@ compile_commands.json
 # Editor/LSP caches (clangd, neocmakelsp, ...). They ship their own .gitignore,
 # but ignore the directory explicitly so nothing leaks if one stops doing so.
 .cache/
+
+# Rust
+client/target/
