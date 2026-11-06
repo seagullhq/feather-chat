@@ -112,6 +112,7 @@ func runMigrations(db *sql.DB) {
 	// Non chiudere m: il driver postgres racchiude il *sql.DB condiviso e
 	// m.Close() lo chiuderebbe, rompendo gli store creati subito dopo.
 	m, err := migrate.NewWithInstance("iofs", sourceDriver, "postgres", driver)
+
 	if err != nil {
 		log.Fatalf("Errore inizializzazione migrazioni: %v", err)
 	}
