@@ -29,6 +29,25 @@ build-debug:
 client:
     cargo run --release --target-dir {{ client_target }}
 
+# Install the client, desktop entry and icons for the current user.
+[linux]
+[working-directory('client')]
+install-client: build
+    install -Dm755 {{ client_target }}/release/feather-chat ~/.local/bin/feather-chat
+    install -Dm644 assets/icon.png ~/.local/share/icons/hicolor/256x256/apps/feather-chat.png
+    install -Dm644 assets/feather.svg ~/.local/share/icons/hicolor/scalable/apps/feather-chat.svg
+    install -Dm644 ../packaging/linux/feather-chat.desktop ~/.local/share/applications/feather-chat.desktop
+    gtk-update-icon-cache -q -t ~/.local/share/icons/hicolor 2>/dev/null || true
+
+# Build a macOS .app bundle into dist/.
+[macos]
+bundle-client: build
+    rm -rf "dist/Feather Chat.app"
+    mkdir -p "dist/Feather Chat.app/Contents/MacOS" "dist/Feather Chat.app/Contents/Resources"
+    install -m 755 dist/client/release/feather-chat "dist/Feather Chat.app/Contents/MacOS/feather-chat"
+    install -m 644 packaging/macos/Info.plist "dist/Feather Chat.app/Contents/Info.plist"
+    install -m 644 client/assets/icon.icns "dist/Feather Chat.app/Contents/Resources/icon.icns"
+
 # Build the server binary into dist/server/.
 [unix]
 [working-directory('server')]

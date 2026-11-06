@@ -41,6 +41,34 @@ icons!(
     "speaker-high"
 );
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn window_icon() -> Option<std::sync::Arc<image::RgbaImage>> {
+    let icon = image::load_from_memory_with_format(
+        include_bytes!("../assets/icon.png"),
+        image::ImageFormat::Png,
+    )
+    .ok()?;
+    Some(std::sync::Arc::new(icon.to_rgba8()))
+}
+
+#[cfg(target_os = "macos")]
+fn set_app_icon() {
+    use objc2::{AnyThread, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::NSData;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let data = NSData::with_bytes(include_bytes!("../assets/icon.icns"));
+    let Some(icon) = NSImage::initWithData(NSImage::alloc(), &data) else {
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    // SAFETY: `NSImage` is a valid icon and the application retains the image.
+    unsafe { app.setApplicationIconImage(Some(&icon)) };
+}
+
 struct Assets;
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<std::borrow::Cow<'static, [u8]>>> {
@@ -154,6 +182,8 @@ fn main() {
     gpui_platform::application()
         .with_assets(Assets)
         .run(|cx: &mut App| {
+            #[cfg(target_os = "macos")]
+            set_app_icon();
             theme::init(cx);
             input::bind_keys(cx);
             ui::bind_keys(cx);
@@ -168,6 +198,9 @@ fn main() {
                     cx,
                 ))),
                 window_min_size: Some(size(px(640.), px(420.))),
+                app_id: Some("feather-chat".into()),
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                icon: window_icon(),
                 ..Default::default()
             };
             cx.open_window(opts, |window, cx| cx.new(|cx| Root::new(window, cx)))
