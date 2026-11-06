@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"flag"
 	"fmt"
 	"log"
@@ -21,8 +22,15 @@ import (
 	// Librerie per le migrazioni
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
+
+// migrationFiles incorporates the .sql migrations into the binary, so the
+// server works no matter which directory it is started from and does not need
+// the migration files next to the executable.
+//
+//go:embed internal/migrations/sql/*.sql
+var migrationFiles embed.FS
 
 func main() {
 	if err := godotenv.Load(); err != nil {
@@ -91,18 +99,19 @@ func defaultPostgresURI() string {
 
 // runMigrations applica automaticamente tutte le migrazioni non ancora eseguite all'avvio
 func runMigrations(db *sql.DB) {
+	sourceDriver, err := iofs.New(migrationFiles, "internal/migrations/sql")
+	if err != nil {
+		log.Fatalf("Errore inizializzazione sorgente migrazioni: %v", err)
+	}
+
 	driver, err := postgres.WithInstance(db, &postgres.Config{})
 	if err != nil {
 		log.Fatalf("Errore configurazione driver migrazioni: %v", err)
 	}
 
-	// Sostituisci il path con la cartella effettiva dove tieni i file .sql
-	m, err := migrate.NewWithDatabaseInstance(
-		"file://internal/migrations/sql",
-		"postgres",
-		driver,
-	)
-
+	// Non chiudere m: il driver postgres racchiude il *sql.DB condiviso e
+	// m.Close() lo chiuderebbe, rompendo gli store creati subito dopo.
+	m, err := migrate.NewWithInstance("iofs", sourceDriver, "postgres", driver)
 	if err != nil {
 		log.Fatalf("Errore inizializzazione migrazioni: %v", err)
 	}
