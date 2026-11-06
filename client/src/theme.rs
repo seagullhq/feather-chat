@@ -80,6 +80,16 @@ impl Theme {
 }
 
 impl Theme {
+    /// `panel` flattened over `bg` and forced opaque. Use for surfaces drawn
+    /// over a scrim (dialogs): some system themes (WinUI) make the card color
+    /// translucent, which would let the dimmed backdrop show through.
+    pub fn opaque_panel(&self) -> Hsla {
+        Hsla {
+            a: 1.,
+            ..self.bg.blend(self.panel)
+        }
+    }
+
     /// Stable system color for a name.
     pub fn tint(&self, name: &str) -> Hsla {
         let h = name

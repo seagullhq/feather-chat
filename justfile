@@ -3,38 +3,41 @@
 # PowerShell, so neither platform needs the other's shell installed.
 #
 # `just` runs each recipe line in a separate shell process, so a Windows recipe
-# that needs state to carry between lines 
+# that needs state to carry between lines must keep it on a single line.
 [windows]
 set shell := ["powershell.exe", "-NoLogo", "-Command"]
+
+# Cargo output directory (relative to client/, where the cargo recipes run).
+client_target := "../dist/client"
 
 # Run `just` with no arguments to see this list.
 default:
     @just --list
 
-# Build the client (release).
-[working-directory: 'client']
+# Build the client (release) into dist/client/release/.
+[working-directory('client')]
 build:
-    cargo build --release
+    cargo build --release --target-dir {{ client_target }}
 
-# Build the client with symbols.
-[working-directory: 'client']
+# Build the client with symbols into dist/client/debug/.
+[working-directory('client')]
 build-debug:
-    cargo build
+    cargo build --target-dir {{ client_target }}
 
 # Build and run the client.
-[working-directory: 'client']
+[working-directory('client')]
 client:
-    cargo run --release
+    cargo run --release --target-dir {{ client_target }}
 
 # Build the server binary into dist/server/.
 [unix]
-[working-directory: 'server']
+[working-directory('server')]
 build-server:
     mkdir -p ../dist/server
     go build -o ../dist/server/feather-chat-server .
 
 [windows]
-[working-directory: 'server']
+[working-directory('server')]
 build-server:
     if (!(Test-Path ../dist/server)) { New-Item -ItemType Directory -Path ../dist/server }
     go build -o ../dist/server/feather-chat-server.exe .
@@ -42,28 +45,28 @@ build-server:
 # Build and run the server.
 [unix]
 server port=":7700": build-server
-    ./dist/server/feather-chat-server -tcp {{port}}
+    ./dist/server/feather-chat-server -tcp {{ port }}
 
 [windows]
 server port=":7700": build-server
-    .\dist\server\feather-chat-server.exe -tcp {{port}}
+    .\dist\server\feather-chat-server.exe -tcp {{ port }}
 
 # Run every test in the repository.
 test: test-server test-client
 
-[working-directory: 'client']
+[working-directory('client')]
 test-client:
-    cargo test
+    cargo test --target-dir {{ client_target }}
 
 # Run the server's Go tests: verbose, no result cache.
 # The -race flag needs cgo and a C compiler, which we don't require on Windows.
 [unix]
-[working-directory: 'server']
+[working-directory('server')]
 test-server:
     go test -race -v ./...
 
 [windows]
-[working-directory: 'server']
+[working-directory('server')]
 test-server:
     go test -v ./...
 
@@ -73,36 +76,36 @@ fmt: fmt-go fmt-client
 # Fail if anything is unformatted.
 fmt-check: fmt-check-go fmt-check-client
 
-[working-directory: 'client']
+[working-directory('client')]
 fmt-client:
     cargo fmt
 
-[working-directory: 'client']
+[working-directory('client')]
 fmt-check-client:
     cargo fmt --check
 
-[working-directory: 'server']
+[working-directory('server')]
 fmt-go:
     gofmt -w .
 
 [unix]
-[working-directory: 'server']
+[working-directory('server')]
 fmt-check-go:
     gofmt -l . | (! grep .)
 
 [windows]
-[working-directory: 'server']
+[working-directory('server')]
 fmt-check-go:
     if (gofmt -l .) { Write-Error "Go files need gofmt"; exit 1 }
 
-[working-directory: 'server']
+[working-directory('server')]
 vet:
     go vet ./...
 
 # Format, vet, test and build. Run before pushing.
-check: fmt-check vet test build
-
+check: fmt-check vet test build build-server
 
 # Delete build output.
+[working-directory('client')]
 clean:
-    cargo clean --manifest-path client/Cargo.toml
+    cargo clean --target-dir {{ client_target }}
