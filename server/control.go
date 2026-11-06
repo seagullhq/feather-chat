@@ -9,13 +9,13 @@ import (
 	"log"
 	"net"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/seagullhq/feather-chat/server/internal/accounts"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
-	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
 const maxControl = 1 << 20
@@ -80,9 +80,8 @@ func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Stor
 				session.send(Control{Type: "ERROR", Error: "authentication required"})
 				continue
 			}
-			// The owner comes from the authenticated session, never from the
-			// client: message.OwnerID would let anyone create servers for anyone.
-			ownerID, err := bson.ObjectIDFromHex(session.UserID)
+			// Converta l'ID utente salvato in sessione (stringa) nel formato intero di PostgreSQL
+			ownerID, err := strconv.Atoi(session.UserID)
 			if err != nil {
 				session.send(Control{Type: "ERROR", Error: "authentication required"})
 				continue
@@ -116,7 +115,8 @@ func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Stor
 				session.send(Control{Type: "ERROR", Error: accounts.ErrBadCredentials.Error()})
 				continue
 			}
-			session.UserID = user.ID.Hex()
+			// Salva l'ID utente numerico convertendolo in stringa
+			session.UserID = strconv.Itoa(user.ID)
 			session.Username = user.Username
 			session.send(Control{Type: "ACK", Name: user.Username})
 
@@ -135,8 +135,6 @@ func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Stor
 			roomManager.Join(session, message.Room)
 			session.send(Control{Type: "ACK", Room: message.Room})
 		case "LEAVE":
-			// Remove the session now. A defer here ran only when the connection
-			// closed, so LEAVE kept the client in the room, still receiving media.
 			roomManager.Leave(session)
 		}
 	}
@@ -148,7 +146,6 @@ func validateRegistration(m Control) error {
 	if n := utf8.RuneCountInString(strings.TrimSpace(m.Username)); n < 3 || n > 32 {
 		return errors.New("username must be 3-32 characters")
 	}
-	// bcrypt limits input to 72 bytes, not runes.
 	if n := len([]byte(m.Password)); n < 8 || n > 72 {
 		return errors.New("password must be 8-72 bytes")
 	}
@@ -158,8 +155,6 @@ func validateRegistration(m Control) error {
 	return nil
 }
 
-// readUDP parses the 5-byte header, resolves the session by SSRC and
-// forwards the datagram verbatim to room peers.
 func readUDP(pc *net.UDPConn, roomManager *RoomManager) {
 	buf := make([]byte, 2048)
 	for {
@@ -169,7 +164,6 @@ func readUDP(pc *net.UDPConn, roomManager *RoomManager) {
 			return
 		}
 
-		// The datagram received is greater than 1024, so the server skips it.
 		if n > 1024 {
 			log.Printf("[CONTROL] received a datagram greater than 1024 (size: %d), skipping...", n)
 			continue
@@ -180,13 +174,11 @@ func readUDP(pc *net.UDPConn, roomManager *RoomManager) {
 			continue
 		}
 
-		// A packet with the wrong header length has been received, skipping...
 		if n <= HeaderLen {
 			log.Printf("[CONTROL] received a packet with the wrong header! %d instead of %d", n, HeaderLen)
 			continue
 		}
 
-		// A packet with the wrong kind has been received, skipping...
 		if h.Kind != KindAudio && h.Kind != KindPing {
 			log.Printf("[CONTROL] received a packet with kind not handled by the server! skipping...")
 			continue

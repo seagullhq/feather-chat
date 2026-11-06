@@ -3,41 +3,33 @@ package servers
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"errors"
 	"math/big"
 	"time"
 
-	"go.mongodb.org/mongo-driver/v2/bson"
-	"go.mongodb.org/mongo-driver/v2/mongo"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// ErrTaken is returned when the unique index rejects a server creation.
 var ErrTaken = errors.New("server already exists")
 
 type ServerStore struct {
-	servers *mongo.Collection
+	db *sql.DB
 }
 
-// The bson tags are mandatory: the servers collection has a $jsonSchema
-// validator (migration 0002) requiring snake_case names, and without them the
-// driver stores lowercased field names (ownerid, invitecode, ...) and every
-// insert fails validation.
 type Server struct {
-	ID         bson.ObjectID   `bson:"_id"`
-	Name       string          `bson:"name"`
-	OwnerID    bson.ObjectID   `bson:"owner_id"`
-	Members    []bson.ObjectID `bson:"members"`
-	InviteCode string          `bson:"invite_code"`
-	CreatedAt  time.Time       `bson:"created_at"`
-	UpdatedAt  time.Time       `bson:"updated_at"`
+	ID         int       `json:"id"`
+	Name       string    `json:"name"`
+	OwnerID    int       `json:"owner_id"`
+	Members    []int     `json:"members,omitempty"`
+	InviteCode string    `json:"invite_code"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 const inviteCharset = "abcdefghijklmnopqrstuvwxyz" +
 	"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-// inviteCode returns a cryptographically random invite code. crypto/rand is
-// safe for concurrent use; the shared math/rand.Rand this replaced was not, and
-// CreateServer runs on one goroutine per connected client.
 func inviteCode(length int) (string, error) {
 	b := make([]byte, length)
 	limit := big.NewInt(int64(len(inviteCharset)))
@@ -51,32 +43,63 @@ func inviteCode(length int) (string, error) {
 	return string(b), nil
 }
 
-func NewStore(db *mongo.Database) *ServerStore {
-	return &ServerStore{servers: db.Collection("servers")}
+func NewStore(db *sql.DB) *ServerStore {
+	return &ServerStore{db: db}
 }
 
-func (s *ServerStore) CreateServer(ctx context.Context, ownerID bson.ObjectID, serverName string) (*Server, error) {
+func (s *ServerStore) CreateServer(ctx context.Context, ownerID int, serverName string) (*Server, error) {
 	code, err := inviteCode(7)
 	if err != nil {
 		return nil, err
 	}
 
 	now := time.Now().UTC()
+
+	// Usiamo una transazione per inserire sia il server che l'associazione del membro
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	query := `
+		INSERT INTO servers (name, owner_id, invite_code, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id
+	`
+
+	var serverID int
+	err = tx.QueryRowContext(ctx, query, serverName, ownerID, code, now, now).Scan(&serverID)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, ErrTaken
+		}
+		return nil, err
+	}
+
+	// Inserimento del proprietario nella tabella dei membri del server
+	memberQuery := `
+		INSERT INTO server_members (server_id, user_id, joined_at)
+		VALUES ($1, $2, $3)
+	`
+	if _, err = tx.ExecContext(ctx, memberQuery, serverID, ownerID, now); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
 	server := Server{
-		ID:         bson.NewObjectID(),
+		ID:         serverID,
 		Name:       serverName,
 		OwnerID:    ownerID,
-		Members:    []bson.ObjectID{ownerID},
+		Members:    []int{ownerID},
 		InviteCode: code,
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
 
-	if _, err := s.servers.InsertOne(ctx, server); err != nil {
-		if mongo.IsDuplicateKeyError(err) {
-			return nil, ErrTaken
-		}
-		return nil, err
-	}
 	return &server, nil
 }
