@@ -1,5 +1,5 @@
 use super::{ToggleDeafen, ToggleMute, tab_nav};
-use crate::api::Control;
+use crate::api::{Control, ServerSummary};
 use crate::model::{self, Member, Server};
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
@@ -83,6 +83,23 @@ impl MainView {
 
     pub fn set_control(&mut self, control: Control, cx: &mut Context<Self>) {
         self.control = Some(control);
+        cx.notify();
+    }
+
+    /// Replaces the sidebar with the servers the logged-in user belongs to.
+    pub fn set_servers(&mut self, servers: Vec<ServerSummary>, cx: &mut Context<Self>) {
+        self.servers = servers
+            .into_iter()
+            .map(|server| Server {
+                id: server.id,
+                name: server.name,
+                icon: None,
+                channels: vec![],
+            })
+            .collect();
+        self.server = self.server.min(self.servers.len().saturating_sub(1));
+        self.viewing = 0;
+        self.joined = None;
         cx.notify();
     }
 

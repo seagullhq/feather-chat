@@ -75,6 +75,33 @@ func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Stor
 				continue
 			}
 			session.send(Control{Type: "ACK"})
+		case "LIST_SERVERS":
+			if !session.authed() {
+				session.send(Control{Type: "ERROR", Error: "authentication required"})
+				continue
+			}
+			userID, err := strconv.Atoi(session.UserID)
+			if err != nil {
+				session.send(Control{Type: "ERROR", Error: "authentication required"})
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			list, err := serverStore.ListForUser(ctx, userID)
+			cancel()
+			if err != nil {
+				log.Printf("[LIST] failed to list servers: %v", err)
+				session.send(Control{Type: "ERROR", Error: "server listing failed"})
+				continue
+			}
+			summaries := make([]ServerSummary, 0, len(list))
+			for _, server := range list {
+				summaries = append(summaries, ServerSummary{
+					ID:         server.ID,
+					Name:       server.Name,
+					InviteCode: server.InviteCode,
+				})
+			}
+			session.send(Control{Type: "ACK", Servers: summaries})
 		case "CREATE_SERVER":
 			if !session.authed() {
 				session.send(Control{Type: "ERROR", Error: "authentication required"})

@@ -4,13 +4,15 @@ use serde_json::Value;
 use std::net::TcpStream;
 
 use super::auth::{self, Request};
-use super::server;
+use super::server::{self, ServerSummary};
 use super::transport::Connection;
 
 pub enum Event {
     AuthOk,
     AuthFailed(String),
     RegisterFailed(String),
+    ServersListed(Vec<ServerSummary>),
+    ServersListFailed(String),
     ServerCreated {
         id: i64,
         name: String,
@@ -95,6 +97,17 @@ fn commands(
     commands: async_channel::Receiver<Command>,
     events: async_channel::Sender<Event>,
 ) {
+    // Login is not complete for the UI until the sidebar has the user's
+    // servers back, so fetch them before accepting other commands.
+    match server::list_servers(&mut session) {
+        Ok(servers) => {
+            let _ = events.send_blocking(Event::ServersListed(servers));
+        }
+        Err(e) => {
+            let _ = events.send_blocking(Event::ServersListFailed(e));
+        }
+    }
+
     while let Ok(command) = commands.recv_blocking() {
         match command {
             Command::CreateServer { name } => match server::create_server(&mut session, name) {
@@ -180,7 +193,8 @@ mod tests {
         PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    // Fake server: ACK LOGIN with a name, ACK HELLO with an ssrc, then close.
+    // Fake server: ACK LOGIN with a name, ACK HELLO with an ssrc, then answer
+    // the automatic LIST_SERVERS before closing.
     #[test]
     fn login_flow() {
         let _guard = port_lock();
@@ -196,6 +210,16 @@ mod tests {
                 (Some("HELLO"), Some("bob"))
             );
             write_frame(&mut s, &json!({"type":"ACK","ssrc":m["ssrc"]})).unwrap();
+            let m = read_frame(&mut s).unwrap();
+            assert_eq!(m["type"], "LIST_SERVERS");
+            write_frame(
+                &mut s,
+                &json!({"type":"ACK","servers":[{"id":3,"name":"Casa","inviteCode":"abc1234"}]}),
+            )
+            .unwrap();
+            // Keep the socket open for a moment: closing immediately can race
+            // the Disconnected event ahead of ServersListed.
+            std::thread::sleep(std::time::Duration::from_millis(100));
         });
         let (tx, rx) = async_channel::unbounded();
         spawn(
@@ -207,6 +231,15 @@ mod tests {
             tx,
         );
         assert!(matches!(rx.recv_blocking().unwrap(), Event::AuthOk));
+        match rx.recv_blocking().unwrap() {
+            Event::ServersListed(servers) => {
+                assert_eq!(servers.len(), 1);
+                assert_eq!(servers[0].id, 3);
+                assert_eq!(servers[0].name, "Casa");
+                assert_eq!(servers[0].invite_code, "abc1234");
+            }
+            _ => panic!("expected ServersListed"),
+        }
         assert!(matches!(rx.recv_blocking().unwrap(), Event::Disconnected));
     }
 
@@ -222,6 +255,9 @@ mod tests {
             let m = read_frame(&mut s).unwrap();
             assert_eq!(m["type"], "HELLO");
             write_frame(&mut s, &json!({"type":"ACK","ssrc":m["ssrc"]})).unwrap();
+            let m = read_frame(&mut s).unwrap();
+            assert_eq!(m["type"], "LIST_SERVERS");
+            write_frame(&mut s, &json!({"type":"ACK","servers":[]})).unwrap();
             let m = read_frame(&mut s).unwrap();
             assert_eq!(m["type"], "CREATE_SERVER");
             assert_eq!(m["serverName"], "Nuovo");
@@ -246,6 +282,10 @@ mod tests {
             tx,
         );
         assert!(matches!(rx.recv_blocking().unwrap(), Event::AuthOk));
+        assert!(matches!(
+            rx.recv_blocking().unwrap(),
+            Event::ServersListed(servers) if servers.is_empty()
+        ));
         assert!(control.create_server("Nuovo".into()));
         loop {
             match rx.recv_blocking().unwrap() {

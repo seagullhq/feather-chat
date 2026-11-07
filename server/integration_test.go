@@ -309,3 +309,94 @@ func TestIntegrationCreateServer(t *testing.T) {
 		t.Fatalf("CREATE_SERVER ACK invite code = %q, want 7 characters", ack.InviteCode)
 	}
 }
+
+// TestIntegrationListServers covers the login path: after LOGIN the client asks
+// LIST_SERVERS and must get back the servers the user belongs to, and nothing
+// from another account.
+func TestIntegrationListServers(t *testing.T) {
+	store, db := testStore(t)
+
+	owner := fmt.Sprintf("ls_%d", time.Now().UnixNano())
+	other := owner + "_other"
+	const password = "integration-password-123"
+	firstName := fmt.Sprintf("one_%d", time.Now().UnixNano())
+	secondName := fmt.Sprintf("two_%d", time.Now().UnixNano())
+	otherName := fmt.Sprintf("oth_%d", time.Now().UnixNano())
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := db.ExecContext(ctx, "DELETE FROM users WHERE LOWER(username) IN (LOWER($1), LOWER($2))", owner, other); err != nil {
+			t.Logf("cleanup users %s/%s: %v", owner, other, err)
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := store.Register(ctx, owner, owner+"@example.test", password); err != nil {
+		t.Fatalf("Register owner: %v", err)
+	}
+	if err := store.Register(ctx, other, other+"@example.test", password); err != nil {
+		t.Fatalf("Register other: %v", err)
+	}
+	ownerUser, err := store.Authenticate(ctx, owner, password)
+	if err != nil {
+		t.Fatalf("Authenticate owner: %v", err)
+	}
+	otherUser, err := store.Authenticate(ctx, other, password)
+	if err != nil {
+		t.Fatalf("Authenticate other: %v", err)
+	}
+
+	serverStore := servers.NewStore(db)
+	if _, err := serverStore.CreateServer(ctx, ownerUser.ID, firstName); err != nil {
+		t.Fatalf("CreateServer(first): %v", err)
+	}
+	if _, err := serverStore.CreateServer(ctx, ownerUser.ID, secondName); err != nil {
+		t.Fatalf("CreateServer(second): %v", err)
+	}
+	if _, err := serverStore.CreateServer(ctx, otherUser.ID, otherName); err != nil {
+		t.Fatalf("CreateServer(other): %v", err)
+	}
+
+	ltcp, _ := net.Listen("tcp", "127.0.0.1:0")
+	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	defer ltcp.Close()
+	defer ludp.Close()
+	go serve(ltcp, ludp.(*net.UDPConn), store, serverStore)
+
+	// LIST_SERVERS before LOGIN must be refused.
+	anon, err := net.Dial("tcp", ltcp.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer anon.Close()
+	sendTest(t, anon, Control{Type: "LIST_SERVERS"})
+	if e := awaitControl(t, anon, "ERROR", func(m Control) bool { return m.Type == "ERROR" }); e.Error != "authentication required" {
+		t.Fatalf("anonymous LIST_SERVERS error = %q, want %q", e.Error, "authentication required")
+	}
+
+	c := dialControl(t, ltcp.Addr().String(), 0x5555, "room", owner, owner+"@example.test", password, false)
+	defer c.Close()
+	sendTest(t, c, Control{Type: "LIST_SERVERS"})
+	ack := awaitControl(t, c, "LIST_SERVERS ACK", func(m Control) bool {
+		return m.Type == "ACK" && m.Servers != nil
+	})
+
+	got := map[string]bool{}
+	for _, server := range ack.Servers {
+		if server.ID == 0 {
+			t.Fatal("LIST_SERVERS returned a zero server ID")
+		}
+		if len(server.InviteCode) != 7 {
+			t.Fatalf("LIST_SERVERS invite code = %q, want 7 characters", server.InviteCode)
+		}
+		got[server.Name] = true
+	}
+	if len(got) != 2 || !got[firstName] || !got[secondName] {
+		t.Fatalf("LIST_SERVERS returned %v, want %q and %q", got, firstName, secondName)
+	}
+	if got[otherName] {
+		t.Fatalf("LIST_SERVERS leaked another user's server %q", otherName)
+	}
+}

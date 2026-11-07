@@ -10,4 +10,5 @@ mod session;
 mod transport;
 
 pub use auth::Request;
+pub use server::ServerSummary;
 pub use session::{Control, Event, spawn};

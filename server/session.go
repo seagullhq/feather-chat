@@ -11,19 +11,27 @@ import (
 
 // Control is a TCP control message (§7): HELLO, JOIN, LEAVE, ACK, ROSTER.
 type Control struct {
-	Type       string        `json:"type"`
-	Name       string        `json:"name,omitempty"`
-	SSRC       uint32        `json:"ssrc,omitempty"`
-	Room       string        `json:"room,omitempty"`
-	Username   string        `json:"username,omitempty"`
-	OwnerID    bson.ObjectID `bson:"ownerId,omitempty"`
-	ServerName string        `json:"serverName,omitempty"`
-	ServerID   int           `json:"serverId,omitempty"`
-	InviteCode string        `json:"inviteCode,omitempty"`
-	Email      string        `json:"email,omitempty"`
-	Identifier string        `json:"identifier,omitempty"`
-	Password   string        `json:"password,omitempty"`
-	Error      string        `json:"error,omitempty"`
+	Type       string          `json:"type"`
+	Name       string          `json:"name,omitempty"`
+	SSRC       uint32          `json:"ssrc,omitempty"`
+	Room       string          `json:"room,omitempty"`
+	Username   string          `json:"username,omitempty"`
+	OwnerID    bson.ObjectID   `bson:"ownerId,omitempty"`
+	ServerName string          `json:"serverName,omitempty"`
+	ServerID   int             `json:"serverId,omitempty"`
+	InviteCode string          `json:"inviteCode,omitempty"`
+	Servers    []ServerSummary `json:"servers,omitempty"`
+	Email      string          `json:"email,omitempty"`
+	Identifier string          `json:"identifier,omitempty"`
+	Password   string          `json:"password,omitempty"`
+	Error      string          `json:"error,omitempty"`
+}
+
+// ServerSummary is the server identity the client needs to rebuild its sidebar.
+type ServerSummary struct {
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	InviteCode string `json:"inviteCode"`
 }
 
 // Session is one connected client (TCP control + UDP media).

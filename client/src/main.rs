@@ -161,6 +161,10 @@ impl Root {
             Event::AuthFailed(m) | Event::RegisterFailed(m) => {
                 self.auth.update(cx, |a, cx| a.on_failed(m, cx))
             }
+            Event::ServersListed(servers) => self
+                .main
+                .update(cx, |main, cx| main.set_servers(servers, cx)),
+            Event::ServersListFailed(m) => eprintln!("could not list servers: {m}"),
             Event::ServerCreated {
                 id,
                 name,
