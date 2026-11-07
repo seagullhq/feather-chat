@@ -1,4 +1,5 @@
 use super::{ToggleDeafen, ToggleMute, tab_nav};
+use crate::api::Control;
 use crate::model::{self, Member, Server};
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
@@ -35,14 +36,20 @@ pub struct MainView {
     focus: FocusHandle,
     focused_once: bool,
     add: Entity<AddServerModal>,
+    control: Option<Control>,
 }
 
 impl MainView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>, demo: bool) -> Self {
         let add = cx.new(AddServerModal::new);
-        cx.subscribe_in(&add, window, |this, _, _: &ModalEvent, window, cx| {
-            this.set_adding(false, window, cx)
-        })
+        cx.subscribe_in(
+            &add,
+            window,
+            |this, _, event: &ModalEvent, window, cx| match event {
+                ModalEvent::Close => this.set_adding(false, window, cx),
+                ModalEvent::Create { name } => this.create_server(name.clone(), cx),
+            },
+        )
         .detach();
 
         if demo {
@@ -70,7 +77,61 @@ impl MainView {
             focus: cx.focus_handle(),
             focused_once: false,
             add,
+            control: None,
         }
+    }
+
+    pub fn set_control(&mut self, control: Control, cx: &mut Context<Self>) {
+        self.control = Some(control);
+        cx.notify();
+    }
+
+    fn create_server(&mut self, name: String, cx: &mut Context<Self>) {
+        let Some(control) = self.control.clone() else {
+            self.add.update(cx, |modal, cx| {
+                modal.on_failed("Not connected to a server.".into(), cx)
+            });
+            return;
+        };
+        if !control.create_server(name) {
+            self.add.update(cx, |modal, cx| {
+                modal.on_failed("The connection is closed.".into(), cx)
+            });
+        }
+    }
+
+    pub fn on_server_created(
+        &mut self,
+        id: i64,
+        name: String,
+        invite_code: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.servers.push(Server {
+            id,
+            name: name.clone(),
+            icon: None,
+            channels: vec![],
+        });
+        self.server = self.servers.len() - 1;
+        self.viewing = 0;
+        self.joined = None;
+        self.add
+            .update(cx, |modal, cx| modal.on_created(name, invite_code, cx));
+        cx.notify();
+    }
+
+    pub fn on_server_create_failed(&mut self, message: String, cx: &mut Context<Self>) {
+        self.add
+            .update(cx, |modal, cx| modal.on_failed(message, cx));
+    }
+
+    pub fn on_disconnected(&mut self, cx: &mut Context<Self>) {
+        self.control = None;
+        self.add.update(cx, |modal, cx| {
+            modal.on_failed("Connection lost.".into(), cx)
+        });
+        cx.notify();
     }
 
     fn tick(&mut self, cx: &mut Context<Self>) {
@@ -92,6 +153,9 @@ impl MainView {
 
     fn set_adding(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.adding = on;
+        if on {
+            self.add.update(cx, |modal, cx| modal.reset(cx));
+        }
         let target = if on {
             self.add.read(cx).input_focus(cx)
         } else {

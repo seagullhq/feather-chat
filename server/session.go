@@ -18,6 +18,7 @@ type Control struct {
 	Username   string        `json:"username,omitempty"`
 	OwnerID    bson.ObjectID `bson:"ownerId,omitempty"`
 	ServerName string        `json:"serverName,omitempty"`
+	ServerID   int           `json:"serverId,omitempty"`
 	InviteCode string        `json:"inviteCode,omitempty"`
 	Email      string        `json:"email,omitempty"`
 	Identifier string        `json:"identifier,omitempty"`

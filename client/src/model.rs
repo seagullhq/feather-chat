@@ -62,6 +62,8 @@ pub struct Channel {
 }
 
 pub struct Server {
+    /// Server row ID from the control plane. 0 until listing exists for old rows.
+    pub id: i64,
     pub name: String,
     /// Profile picture (local file). None = initial on a system-color tint.
     pub icon: Option<std::path::PathBuf>,
@@ -82,6 +84,7 @@ fn people(names: &[&str]) -> Vec<Member> {
 pub fn demo() -> Vec<Server> {
     vec![
         Server {
+            id: 1,
             name: "Casa".into(),
             icon: None,
             channels: vec![
@@ -106,6 +109,7 @@ pub fn demo() -> Vec<Server> {
             ],
         },
         Server {
+            id: 2,
             name: "Band".into(),
             icon: None,
             channels: vec![
@@ -114,6 +118,7 @@ pub fn demo() -> Vec<Server> {
             ],
         },
         Server {
+            id: 3,
             name: "Uni".into(),
             icon: None,
             channels: vec![channel(

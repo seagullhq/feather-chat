@@ -1,11 +1,11 @@
+mod api;
 mod input;
 mod model;
-mod net;
 mod theme;
 mod ui;
 
+use api::{Control, Event, Request};
 use gpui::{prelude::*, *};
-use net::{Event, Request};
 use theme::ThemeExt;
 use ui::{AuthRequest, AuthView, MainView};
 
@@ -85,6 +85,7 @@ struct Root {
     focus: FocusHandle,
     logged_in: bool,
     events: async_channel::Sender<Event>,
+    control: Option<Control>,
 }
 
 impl Root {
@@ -95,8 +96,10 @@ impl Root {
         let main = cx.new(|cx| MainView::new(window, cx, demo));
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
-        cx.subscribe(&auth, |this, _, req: &AuthRequest, _| this.on_request(req))
-            .detach();
+        cx.subscribe(&auth, |this, _, req: &AuthRequest, cx| {
+            this.on_request(req, cx)
+        })
+        .detach();
         cx.spawn(async move |this, cx| {
             while let Ok(ev) = rx.recv().await {
                 if this.update(cx, |this, cx| this.on_event(ev, cx)).is_err() {
@@ -112,10 +115,11 @@ impl Root {
             // Dev shortcut: FEATHER_FAKE_LOGIN=1 skips the login screen.
             logged_in: std::env::var_os("FEATHER_FAKE_LOGIN").is_some(),
             events,
+            control: None,
         }
     }
 
-    fn on_request(&mut self, req: &AuthRequest) {
+    fn on_request(&mut self, req: &AuthRequest, cx: &mut Context<Self>) {
         let (host, req) = match req {
             AuthRequest::Login {
                 host,
@@ -142,7 +146,10 @@ impl Root {
                 },
             ),
         };
-        net::spawn(host.clone(), req, self.events.clone());
+        let control = api::spawn(host.clone(), req, self.events.clone());
+        self.control = Some(control.clone());
+        self.main
+            .update(cx, |main, cx| main.set_control(control, cx));
     }
 
     fn on_event(&mut self, ev: Event, cx: &mut Context<Self>) {
@@ -154,7 +161,20 @@ impl Root {
             Event::AuthFailed(m) | Event::RegisterFailed(m) => {
                 self.auth.update(cx, |a, cx| a.on_failed(m, cx))
             }
-            Event::Disconnected => {}
+            Event::ServerCreated {
+                id,
+                name,
+                invite_code,
+            } => self.main.update(cx, |main, cx| {
+                main.on_server_created(id, name, invite_code, cx)
+            }),
+            Event::ServerCreateFailed(m) => self
+                .main
+                .update(cx, |main, cx| main.on_server_create_failed(m, cx)),
+            Event::Disconnected => {
+                self.control.take();
+                self.main.update(cx, |main, cx| main.on_disconnected(cx));
+            }
         }
         cx.notify();
     }

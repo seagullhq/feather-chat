@@ -103,7 +103,12 @@ func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Stor
 				session.send(Control{Type: "ERROR", Error: "server creation failed"})
 				continue
 			}
-			session.send(Control{Type: "ACK", InviteCode: server.InviteCode})
+			session.send(Control{
+				Type:       "ACK",
+				ServerID:   server.ID,
+				Name:       server.Name,
+				InviteCode: server.InviteCode,
+			})
 		case "LOGIN":
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			user, err := users.Authenticate(ctx, message.Identifier, message.Password)

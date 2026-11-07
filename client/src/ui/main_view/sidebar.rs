@@ -105,13 +105,12 @@ pub(super) fn server_face(
 /// never changes. Flat: no shadow, no gradient.
 fn server_chip(
     t: &crate::theme::Theme,
-    id: usize,
     server: &Server,
     selected: bool,
     on_click: ClickHandler,
 ) -> impl IntoElement {
     div()
-        .id(("server", id))
+        .id(("server", server.id as usize))
         .focusable()
         .tab_stop(true)
         .role(Role::Button)
@@ -156,7 +155,6 @@ impl super::MainView {
                     .children(self.servers.iter().enumerate().map(|(i, s)| {
                         server_chip(
                             &t,
-                            i,
                             s,
                             i == self.server,
                             Box::new(cx.listener(move |this, _, _, cx| {
