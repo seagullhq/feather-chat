@@ -11,20 +11,23 @@ import (
 
 // Control is a TCP control message (§7): HELLO, JOIN, LEAVE, ACK, ROSTER.
 type Control struct {
-	Type       string          `json:"type"`
-	Name       string          `json:"name,omitempty"`
-	SSRC       uint32          `json:"ssrc,omitempty"`
-	Room       string          `json:"room,omitempty"`
-	Username   string          `json:"username,omitempty"`
-	OwnerID    bson.ObjectID   `bson:"ownerId,omitempty"`
-	ServerName string          `json:"serverName,omitempty"`
-	ServerID   int             `json:"serverId,omitempty"`
-	InviteCode string          `json:"inviteCode,omitempty"`
-	Servers    []ServerSummary `json:"servers,omitempty"`
-	Email      string          `json:"email,omitempty"`
-	Identifier string          `json:"identifier,omitempty"`
-	Password   string          `json:"password,omitempty"`
-	Error      string          `json:"error,omitempty"`
+	Type            string               `json:"type"`
+	Name            string               `json:"name,omitempty"`
+	SSRC            uint32               `json:"ssrc,omitempty"`
+	Room            string               `json:"room,omitempty"`
+	Username        string               `json:"username,omitempty"`
+	OwnerID         bson.ObjectID        `bson:"ownerId,omitempty"`
+	ServerName      string               `json:"serverName,omitempty"`
+	ServerID        int                  `json:"serverId,omitempty"`
+	InviteCode      string               `json:"inviteCode,omitempty"`
+	Servers         []ServerSummary      `json:"servers,omitempty"`
+	Email           string               `json:"email,omitempty"`
+	Identifier      string               `json:"identifier,omitempty"`
+	Password        string               `json:"password,omitempty"`
+	Error           string               `json:"error,omitempty"`
+	ChannelName     string               `json:"channelName,omitempty"`
+	ChannelType     string               `json:"channelType,omitempty"`
+	ChannelTypeList []ChannelTypeSummary `json:"channelTypes,omitempty"`
 }
 
 // ServerSummary is the server identity the client needs to rebuild its sidebar.
@@ -32,6 +35,11 @@ type ServerSummary struct {
 	ID         int    `json:"id"`
 	Name       string `json:"name"`
 	InviteCode string `json:"inviteCode"`
+}
+
+type ChannelTypeSummary struct {
+	ID       int    `json:"id"`
+	TypeName string `json:"name"`
 }
 
 // Session is one connected client (TCP control + UDP media).

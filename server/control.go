@@ -102,6 +102,28 @@ func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Stor
 				})
 			}
 			session.send(Control{Type: "ACK", Servers: summaries})
+		case "LIST_CHANNEL_TYPES":
+			if !session.authed() {
+				session.send(Control{Type: "ERROR", Error: "authentication required"})
+				continue
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			list, err := serverStore.ListChannelType(ctx)
+			cancel()
+			if err != nil {
+				log.Printf("[LIST] failed to list channel types: %v", err)
+				session.send(Control{Type: "ERROR", Error: "channel type listing failed"})
+				continue
+			}
+			summaries := make([]ChannelTypeSummary, 0, len(list))
+			for _, ctype := range list {
+				summaries = append(summaries, ChannelTypeSummary{
+					ID:       ctype.ID,
+					TypeName: ctype.TypeName,
+				})
+			}
+			session.send(Control{Type: "ACK", ChannelTypeList: summaries})
 		case "CREATE_SERVER":
 			if !session.authed() {
 				session.send(Control{Type: "ERROR", Error: "authentication required"})
@@ -136,6 +158,44 @@ func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Stor
 				Name:       server.Name,
 				InviteCode: server.InviteCode,
 			})
+		case "CREATE_CHANNEL":
+			if !session.authed() {
+				session.send(Control{Type: "ERROR", Error: "authentication required"})
+				continue
+			}
+
+			name := strings.TrimSpace(message.ChannelName)
+			if n := utf8.RuneCountInString(name); n < 3 || n > 255 {
+				session.send(Control{Type: "ERROR", Error: "Channel name must be 3-255 characters"})
+				continue
+			}
+
+			channelType, err := strconv.Atoi(strings.TrimSpace(message.ChannelType))
+			if err != nil {
+				session.send(Control{Type: "ERROR", Error: "invalid channel type"})
+				continue
+			}
+
+			userID, err := strconv.Atoi(session.UserID)
+			if err != nil {
+				session.send(Control{Type: "ERROR", Error: "authentication required"})
+				continue
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			channel, err := serverStore.CreateChannel(ctx, name, channelType, message.ServerID, userID)
+			cancel()
+			if err != nil {
+				if errors.Is(err, servers.ErrTaken) {
+					session.send(Control{Type: "ERROR", Error: servers.ErrTaken.Error()})
+					continue
+				}
+				log.Printf("[CREATION] failed to create channel: %v", err)
+				session.send(Control{Type: "ERROR", Error: "channel creation failed"})
+				continue
+			}
+			session.send(Control{Type: "ACK", ServerID: message.ServerID, ChannelName: channel.Name, ChannelType: strconv.Itoa(channel.ChannelType)})
+
 		case "LOGIN":
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			user, err := users.Authenticate(ctx, message.Identifier, message.Password)
