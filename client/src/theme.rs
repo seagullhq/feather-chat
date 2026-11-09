@@ -1,9 +1,13 @@
-//! Colors, radii and font come from the operating system (KDE, GNOME portal,
-//! macOS, Windows) through `native-theme`; nothing in the UI hardcodes a
-//! palette. The theme is a gpui global, reloaded when the OS theme changes.
+//! Colors, radii and font size come from the operating system (KDE, GNOME
+//! portal, macOS, Windows) through `native-theme`; nothing in the UI hardcodes
+//! a palette. The UI font itself is the bundled Aldrich family. The theme is a
+//! gpui global, reloaded when the OS theme changes.
 
 use gpui::{App, Global, Hsla, Pixels, Rgba, SharedString, px};
 use native_theme::{ColorMode, SystemTheme};
+
+/// Bundled UI font, registered at startup in `main`.
+pub const FONT_FAMILY: &str = "Aldrich";
 
 #[derive(Clone)]
 pub struct Theme {
@@ -72,7 +76,7 @@ impl Theme {
             focus: c(d.focus_ring_color),
             selection: c(d.text_selection_background),
             radius: px(d.border.corner_radius),
-            font: d.font.family.clone().into(),
+            font: FONT_FAMILY.into(),
             font_size: px(d.font.size),
             palette: [d.accent_color, d.info_color, d.warning_color, d.link_color].map(c),
         }

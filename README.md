@@ -105,3 +105,5 @@ Found a problem in what does exist? Open an issue.
 [AGPL-3.0](LICENSE). Run it, modify it and self-host it freely. If you offer a
 modified version to others over a network, you have to publish your changes
 too.
+
+Third-party assets and their licenses are listed in [CREDITS.md](CREDITS.md).

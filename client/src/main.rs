@@ -202,12 +202,22 @@ impl Render for Root {
     }
 }
 
+fn load_fonts(cx: &mut App) {
+    let fonts = vec![std::borrow::Cow::Borrowed(
+        include_bytes!("../assets/fonts/Aldrich/Aldrich-Regular.ttf").as_slice(),
+    )];
+    cx.text_system()
+        .add_fonts(fonts)
+        .expect("failed to load bundled fonts");
+}
+
 fn main() {
     gpui_platform::application()
         .with_assets(Assets)
         .run(|cx: &mut App| {
             #[cfg(target_os = "macos")]
             set_app_icon();
+            load_fonts(cx);
             theme::init(cx);
             input::bind_keys(cx);
             ui::bind_keys(cx);
