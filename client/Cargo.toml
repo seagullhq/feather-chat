@@ -19,6 +19,8 @@ unicode-segmentation = "1"
 rand = "0.8"
 cpal = "0.15"
 native-theme = { version = "0.7.0", features = ["native", "watch"] }
+opus-rs = "0.1.41"
+rtrb = "0.4.1"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

@@ -129,6 +129,23 @@ Message schema lives in code (`server/`), canonical example messages are
 `HELLO`, `JOIN`, `LEAVE`, `ACK`, `ROSTER`. Unrecognized message types MUST
 be tolerated; the connection stays open (version interop rule).
 
+### 7.1 Voice channel messages
+
+All JSON, framed as above. A client MUST `HELLO` (random non-zero `ssrc`; the
+ACK omits `ssrc` if it is taken, so pick another) before `JOIN`.
+
+| Message | Direction | Fields |
+|---|---|---|
+| `JOIN` | C→S | `channelId` (voice channel the user may access) |
+| `ACK` to JOIN | S→C | `room`, `channelId`, `serverId`, `members` (everyone already there) |
+| `STATE` | C→S | `muted`, `deafened` (no ACK) |
+| `LEAVE` | C→S | none (no ACK; closing TCP does the same) |
+| `MEMBER_JOINED` / `MEMBER_STATE` | S→C push | `channelId`, `member` = `{ssrc,name,muted,deafened}` |
+| `MEMBER_LEFT` | S→C push | `channelId`, `ssrc` |
+
+`LIST_CHANNELS` also returns `members` per channel. Pushes never use the
+`ACK`/`ERROR` types, so they can't be mistaken for a reply to a request.
+
 ## 8. Worked examples
 
 **AUDIO, seq = 7, single Opus frame on the wire:**

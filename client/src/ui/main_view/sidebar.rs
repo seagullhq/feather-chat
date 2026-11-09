@@ -162,6 +162,7 @@ impl super::MainView {
                             Box::new(cx.listener(move |this, _, _, cx| {
                                 this.server = i;
                                 this.server_menu = false;
+                                this.load_channels();
                                 cx.notify();
                             })),
                         )

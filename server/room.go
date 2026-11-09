@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net"
+	"sort"
 	"sync"
 	"time"
 )
@@ -11,23 +12,43 @@ import (
 type RoomManager struct {
 	mu    sync.RWMutex
 	rooms map[string]map[uint32]*Session
+	// claimed holds every SSRC taken at HELLO, in a room or not, so two
+	// clients can never end up with the same one.
+	claimed map[uint32]*Session
 }
 
 func NewRoomManager() *RoomManager {
-	return &RoomManager{rooms: map[string]map[uint32]*Session{}}
+	return &RoomManager{rooms: map[string]map[uint32]*Session{}, claimed: map[uint32]*Session{}}
 }
 
 // Claim records the session's SSRC and name, re-keying its room entry if the
-// SSRC changed. Writes hold roomManager.mu, the same lock the UDP goroutine
-// reads them under in Peers/BySSRC/forward.
-func (roomManager *RoomManager) Claim(s *Session, ssrc uint32, name string) {
+// SSRC changed. It fails if another session already holds the SSRC. Writes
+// hold roomManager.mu, the same lock the UDP goroutine reads them under.
+func (roomManager *RoomManager) Claim(s *Session, ssrc uint32, name string) bool {
 	roomManager.mu.Lock()
 	defer roomManager.mu.Unlock()
+	if o, ok := roomManager.claimed[ssrc]; ok && o != s {
+		return false
+	}
+	if s.SSRC != 0 && s.SSRC != ssrc {
+		delete(roomManager.claimed, s.SSRC)
+	}
+	roomManager.claimed[ssrc] = s
 	if r := roomManager.rooms[s.Room]; r != nil && s.SSRC != ssrc {
 		delete(r, s.SSRC)
 		r[ssrc] = s
 	}
 	s.SSRC, s.name = ssrc, name
+	return true
+}
+
+// Release frees the session's SSRC when its control connection ends.
+func (roomManager *RoomManager) Release(s *Session) {
+	roomManager.mu.Lock()
+	defer roomManager.mu.Unlock()
+	if roomManager.claimed[s.SSRC] == s {
+		delete(roomManager.claimed, s.SSRC)
+	}
 }
 
 func (roomManager *RoomManager) Join(s *Session, room string) {
@@ -37,6 +58,9 @@ func (roomManager *RoomManager) Join(s *Session, room string) {
 		roomManager.dropLocked(s) // a session belongs to one room at a time
 	}
 	s.Room = room
+	if s.Username != "" {
+		s.name = s.Username
+	}
 	r := roomManager.rooms[room]
 	if r == nil {
 		r = map[uint32]*Session{}
@@ -45,12 +69,72 @@ func (roomManager *RoomManager) Join(s *Session, room string) {
 	r[s.SSRC] = s
 }
 
-// Leave removes the session from its room.
-func (roomManager *RoomManager) Leave(s *Session) {
+// Leave removes the session from its room and returns who was left behind,
+// so the caller can tell them.
+func (roomManager *RoomManager) Leave(s *Session) []*Session {
 	roomManager.mu.Lock()
 	defer roomManager.mu.Unlock()
+	peers := roomManager.othersLocked(s)
 	roomManager.dropLocked(s)
 	s.Room = ""
+	return peers
+}
+
+// othersLocked lists the room-mates of s. Unlike Peers it keeps sessions that
+// are quiet on UDP: this is for TCP notifications, not media.
+func (roomManager *RoomManager) othersLocked(s *Session) []*Session {
+	var out []*Session
+	for _, p := range roomManager.rooms[s.Room] {
+		if p != s {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// Others is othersLocked under the read lock.
+func (roomManager *RoomManager) Others(s *Session) []*Session {
+	roomManager.mu.RLock()
+	defer roomManager.mu.RUnlock()
+	return roomManager.othersLocked(s)
+}
+
+// Members lists who is in room, optionally without one session.
+func (roomManager *RoomManager) Members(room string, except *Session) []Member {
+	roomManager.mu.RLock()
+	defer roomManager.mu.RUnlock()
+	var out []Member
+	for _, p := range roomManager.rooms[room] {
+		if p != except {
+			out = append(out, memberOf(p))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].SSRC < out[j].SSRC })
+	return out
+}
+
+func memberOf(s *Session) Member {
+	return Member{SSRC: s.SSRC, Name: s.name, Muted: s.muted, Deafened: s.deafened}
+}
+
+// MemberOf snapshots s as a Member.
+func (roomManager *RoomManager) MemberOf(s *Session) Member {
+	roomManager.mu.RLock()
+	defer roomManager.mu.RUnlock()
+	return memberOf(s)
+}
+
+// SetState updates mute/deafen (nil = unchanged) and returns the new state.
+func (roomManager *RoomManager) SetState(s *Session, muted, deafened *bool) Member {
+	roomManager.mu.Lock()
+	defer roomManager.mu.Unlock()
+	if muted != nil {
+		s.muted = *muted
+	}
+	if deafened != nil {
+		s.deafened = *deafened
+	}
+	return memberOf(s)
 }
 
 // dropLocked removes s from its room. The caller must hold roomManager.mu.
@@ -63,19 +147,6 @@ func (roomManager *RoomManager) dropLocked(s *Session) {
 	if len(r) == 0 {
 		delete(roomManager.rooms, s.Room)
 	}
-}
-
-// Taken reports whether the SSRC is already held (collision at HELLO).
-func (roomManager *RoomManager) Taken(ssrc uint32) bool {
-	roomManager.mu.RLock()
-	defer roomManager.mu.RUnlock()
-	now := time.Now()
-	for _, r := range roomManager.rooms {
-		if s, ok := r[ssrc]; ok && !s.stale(now) {
-			return true
-		}
-	}
-	return false
 }
 
 func (roomManager *RoomManager) BySSRC(ssrc uint32) *Session {

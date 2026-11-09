@@ -1,5 +1,6 @@
 mod api;
 mod input;
+mod media;
 mod model;
 mod theme;
 mod ui;
@@ -184,17 +185,41 @@ impl Root {
             Event::ServerCreateFailed(m) => self
                 .main
                 .update(cx, |main, cx| main.on_server_create_failed(m, cx)),
-            Event::ChannelCreated { server_id, name } => self
+            Event::ChannelCreated {
+                server_id,
+                id,
+                name,
+            } => self.main.update(cx, |main, cx| {
+                main.on_channel_created(server_id, id, name, cx)
+            }),
+            Event::Joined {
+                server_id,
+                channel_id,
+                members,
+                media,
+            } => self.main.update(cx, |main, cx| {
+                main.on_joined(server_id, channel_id, members, media, cx)
+            }),
+            Event::JoinFailed(m) => eprintln!("could not join channel: {m}"),
+            Event::MemberJoined { channel_id, member } => self
                 .main
-                .update(cx, |main, cx| main.on_channel_created(server_id, name, cx)),
+                .update(cx, |main, cx| main.on_member_joined(channel_id, member, cx)),
+            Event::MemberLeft { channel_id, ssrc } => self
+                .main
+                .update(cx, |main, cx| main.on_member_left(channel_id, ssrc, cx)),
+            Event::MemberState { channel_id, member } => self
+                .main
+                .update(cx, |main, cx| main.on_member_state(channel_id, member, cx)),
             Event::ChannelCreateFailed(m) => self
                 .main
                 .update(cx, |main, cx| main.on_channel_create_failed(m, cx)),
-            Event::ChannelsListed { .. } => {}
-            Event::ChannelsListFailed {
+            Event::ChannelsListed {
                 server_id,
-                message,
-            } => {
+                channels,
+            } => self
+                .main
+                .update(cx, |main, cx| main.set_channels(server_id, channels, cx)),
+            Event::ChannelsListFailed { server_id, message } => {
                 eprintln!("could not list channels for server {server_id}: {message}")
             }
             Event::Disconnected => {

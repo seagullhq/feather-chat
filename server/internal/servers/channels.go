@@ -2,6 +2,7 @@ package servers
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
 
@@ -64,3 +65,38 @@ func (s *ServerStore) CreateChannel(ctx context.Context, channelName string, cha
 }
 
 func DeleteChannel(ctx context.Context, serverId int) {}
+
+// ErrNotFound: the channel does not exist, is not a voice channel, or the
+// user is not a member of its server. One error for all three so a probe
+// cannot tell which channels exist.
+var ErrNotFound = errors.New("channel not found")
+
+// VoiceChannelForUser returns the voice channel only if the user owns or
+// belongs to its server. This is the gate between a JOIN and a media room.
+func (s *ServerStore) VoiceChannelForUser(ctx context.Context, channelID, userID int) (*Channel, error) {
+	query := `
+		SELECT c.id, c.name, COALESCE(c.channel_type, 0), c.server_id
+		FROM server_channels c
+		JOIN servers s ON s.id = c.server_id
+		JOIN channel_types t ON t.id = c.channel_type
+		WHERE c.id = $1
+		  AND t.type_name = 'voice'
+		  AND (
+				s.owner_id = $2
+				OR EXISTS (
+					SELECT 1 FROM server_members m
+					WHERE m.server_id = c.server_id AND m.user_id = $2
+				)
+		  )
+	`
+	var ch Channel
+	err := s.db.QueryRowContext(ctx, query, channelID, userID).
+		Scan(&ch.ID, &ch.Name, &ch.ChannelType, &ch.ServerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &ch, nil
+}

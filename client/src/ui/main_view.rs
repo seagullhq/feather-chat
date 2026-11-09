@@ -1,5 +1,6 @@
 use super::{ToggleDeafen, ToggleMute, tab_nav};
-use crate::api::{ChannelTypeSummary, Control, ServerSummary};
+use crate::api::{ChannelSummary, ChannelTypeSummary, Control, RosterMember, ServerSummary};
+use crate::media;
 use crate::model::{self, Member, Server};
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
@@ -40,6 +41,9 @@ pub struct MainView {
     control: Option<Control>,
     server_menu: bool,
     hostname: String,
+    /// Levels and mute flags of the running voice session, while joined.
+    media: Option<std::sync::Arc<media::Shared>>,
+    demo: bool,
 }
 
 impl MainView {
@@ -68,20 +72,18 @@ impl MainView {
         )
         .detach();
 
-        if demo {
-            // Voice activity is faked; drop this once the media path reports levels.
-            cx.spawn(async move |this, cx| {
-                loop {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(80))
-                        .await;
-                    if this.update(cx, |t, cx| t.tick(cx)).is_err() {
-                        break;
-                    }
+        // Demo mode fakes voice activity; otherwise levels come from the media engine.
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(80))
+                    .await;
+                if this.update(cx, |t, cx| t.tick(cx)).is_err() {
+                    break;
                 }
-            })
-            .detach();
-        }
+            }
+        })
+        .detach();
         Self {
             servers: if demo { model::demo() } else { vec![] },
             server: 0,
@@ -98,6 +100,8 @@ impl MainView {
             control: None,
             server_menu: false,
             hostname: String::new(),
+            media: None,
+            demo,
         }
     }
 
@@ -118,6 +122,32 @@ impl MainView {
         }
     }
 
+    /// Asks the control plane for the channels of the selected server.
+    pub fn load_channels(&self) {
+        if let (Some(c), Some(s)) = (&self.control, self.servers.get(self.server)) {
+            c.list_channels(s.id);
+        }
+    }
+
+    pub fn set_channels(
+        &mut self,
+        server_id: i64,
+        channels: Vec<ChannelSummary>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(s) = self.servers.iter_mut().find(|s| s.id == server_id) {
+            s.channels = channels
+                .into_iter()
+                .map(|c| model::Channel {
+                    id: c.id,
+                    name: c.name,
+                    members: c.members.into_iter().map(Member::from_roster).collect(),
+                })
+                .collect();
+            cx.notify();
+        }
+    }
+
     pub fn set_hostname(&mut self, host: String) {
         self.hostname = host;
     }
@@ -129,11 +159,8 @@ impl MainView {
 
     /// Replaces the sidebar with the servers the logged-in user belongs to.
     pub fn set_servers(&mut self, servers: Vec<ServerSummary>, cx: &mut Context<Self>) {
-        let old_viewing: std::collections::HashMap<i64, usize> = self
-            .servers
-            .iter()
-            .map(|s| (s.id, s.viewing))
-            .collect();
+        let old_viewing: std::collections::HashMap<i64, usize> =
+            self.servers.iter().map(|s| (s.id, s.viewing)).collect();
         self.servers = servers
             .into_iter()
             .map(|server| {
@@ -149,6 +176,7 @@ impl MainView {
             .collect();
         self.server = self.server.min(self.servers.len().saturating_sub(1));
         self.joined = None;
+        self.load_channels();
         cx.notify();
     }
 
@@ -193,7 +221,13 @@ impl MainView {
         }
     }
 
-    pub fn on_channel_created(&mut self, server_id: i64, name: String, cx: &mut Context<Self>) {
+    pub fn on_channel_created(
+        &mut self,
+        server_id: i64,
+        id: i64,
+        name: String,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(server) = self
             .servers
             .iter_mut()
@@ -201,6 +235,7 @@ impl MainView {
         {
             let created = server.channels.len();
             server.channels.push(model::Channel {
+                id,
                 name,
                 members: vec![],
             });
@@ -247,6 +282,8 @@ impl MainView {
 
     pub fn on_disconnected(&mut self, cx: &mut Context<Self>) {
         self.control = None;
+        self.joined = None;
+        self.media = None;
         self.add.update(cx, |modal, cx| {
             modal.on_failed("Connection lost.".into(), cx)
         });
@@ -257,6 +294,9 @@ impl MainView {
     }
 
     fn tick(&mut self, cx: &mut Context<Self>) {
+        if !self.demo {
+            return self.poll_media(cx);
+        }
         for s in &mut self.servers {
             for c in &mut s.channels {
                 let mut talking = c.members.iter().filter(|m| m.is_talking()).count();
@@ -271,6 +311,122 @@ impl MainView {
             self.me.simulate(0);
         }
         cx.notify();
+    }
+
+    /// Copies mic and speaker levels from the voice engine into the model.
+    fn poll_media(&mut self, cx: &mut Context<Self>) {
+        let (Some(m), Some((s, c))) = (&self.media, self.joined) else {
+            return;
+        };
+        self.me.level = if self.me.muted || self.me.deafened {
+            0.
+        } else {
+            m.mic_level()
+        };
+        let levels = m.peer_levels();
+        if let Some(channel) = self.servers.get_mut(s).and_then(|s| s.channels.get_mut(c)) {
+            for member in &mut channel.members {
+                member.level = levels.get(&member.ssrc).copied().unwrap_or(0.);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Joins the channel being viewed. `joined` is set when the server says yes.
+    pub fn join_viewing(&mut self) {
+        let (Some(channel), Some(control)) = (self.channel_view(), &self.control) else {
+            return;
+        };
+        control.join(channel.id, self.me.muted, self.me.deafened);
+    }
+
+    pub fn leave(&mut self, cx: &mut Context<Self>) {
+        if let Some(control) = &self.control {
+            control.leave();
+        }
+        self.joined = None;
+        self.media = None;
+        self.me.level = 0.;
+        cx.notify();
+    }
+
+    pub fn on_joined(
+        &mut self,
+        server_id: i64,
+        channel_id: i64,
+        members: Vec<RosterMember>,
+        media: Option<std::sync::Arc<media::Shared>>,
+        cx: &mut Context<Self>,
+    ) {
+        let found = self.servers.iter().enumerate().find_map(|(si, s)| {
+            (s.id == server_id).then(|| {
+                s.channels
+                    .iter()
+                    .position(|c| c.id == channel_id)
+                    .map(|ci| (si, ci))
+            })?
+        });
+        let Some((si, ci)) = found else { return };
+        self.servers[si].channels[ci].members =
+            members.into_iter().map(Member::from_roster).collect();
+        self.joined = Some((si, ci));
+        self.media = media;
+        cx.notify();
+    }
+
+    fn channel_by_id(&mut self, channel_id: i64) -> Option<&mut model::Channel> {
+        self.servers
+            .iter_mut()
+            .flat_map(|s| s.channels.iter_mut())
+            .find(|c| c.id == channel_id)
+    }
+
+    pub fn on_member_joined(
+        &mut self,
+        channel_id: i64,
+        member: RosterMember,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(c) = self.channel_by_id(channel_id) {
+            c.members.retain(|m| m.ssrc != member.ssrc);
+            c.members.push(Member::from_roster(member));
+        }
+        cx.notify();
+    }
+
+    pub fn on_member_left(&mut self, channel_id: i64, ssrc: u32, cx: &mut Context<Self>) {
+        if let Some(c) = self.channel_by_id(channel_id) {
+            c.members.retain(|m| m.ssrc != ssrc);
+        }
+        cx.notify();
+    }
+
+    pub fn on_member_state(
+        &mut self,
+        channel_id: i64,
+        member: RosterMember,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(m) = self
+            .channel_by_id(channel_id)
+            .and_then(|c| c.members.iter_mut().find(|m| m.ssrc == member.ssrc))
+        {
+            m.muted = member.muted;
+            m.deafened = member.deafened;
+        }
+        cx.notify();
+    }
+
+    /// Pushes mute/deafen to the voice engine and tells the room.
+    fn sync_state(&self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        if let Some(m) = &self.media {
+            m.muted.store(self.me.muted, Relaxed);
+            m.deafened.store(self.me.deafened, Relaxed);
+        }
+        if let (Some(_), Some(c)) = (self.joined, &self.control) {
+            c.state(self.me.muted, self.me.deafened);
+        }
     }
 
     fn set_adding(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -315,11 +471,13 @@ impl MainView {
         } else {
             self.me.muted = !self.me.muted;
         }
+        self.sync_state();
         cx.notify();
     }
 
     fn toggle_deafen(&mut self, cx: &mut Context<Self>) {
         self.me.deafened = !self.me.deafened;
+        self.sync_state();
         cx.notify();
     }
 

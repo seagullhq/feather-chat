@@ -22,12 +22,8 @@ impl super::MainView {
 
         // Same widget (and height) as the other bar buttons; accent color marks "Join".
         let join = |label: &'static str, primary: bool, cx: &mut Context<Self>| {
-            let b = ToolButton::new("join", label, "phone").on_click(cx.listener(
-                move |this, _, _, cx| {
-                    this.joined = Some(target);
-                    cx.notify();
-                },
-            ));
+            let b = ToolButton::new("join", label, "phone")
+                .on_click(cx.listener(move |this, _, _, _| this.join_viewing()));
             if primary { b.color(t.accent) } else { b }
         };
 
@@ -87,11 +83,7 @@ impl super::MainView {
                     ToolButton::new("leave", "Quit", "phone-slash")
                         .reserve(4)
                         .color(t.danger)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.joined = None;
-                            this.me.level = 0.;
-                            cx.notify();
-                        })),
+                        .on_click(cx.listener(|this, _, _, cx| this.leave(cx))),
                 )
         };
 

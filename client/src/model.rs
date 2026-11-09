@@ -2,6 +2,8 @@
 //! protocol has no roster messages yet (docs/protocol.md).
 
 pub struct Member {
+    /// Media id from the server; 0 for demo data.
+    pub ssrc: u32,
     pub name: String,
     pub muted: bool,
     pub deafened: bool,
@@ -15,11 +17,21 @@ pub const SPEAKING: f32 = 0.12;
 impl Member {
     pub fn new(name: &str) -> Self {
         Self {
+            ssrc: 0,
             name: name.into(),
             muted: false,
             deafened: false,
             level: 0.,
             talking: false,
+        }
+    }
+
+    pub fn from_roster(r: crate::api::RosterMember) -> Self {
+        Self {
+            ssrc: r.ssrc,
+            muted: r.muted,
+            deafened: r.deafened,
+            ..Self::new(&r.name)
         }
     }
 
@@ -57,6 +69,8 @@ impl Member {
 }
 
 pub struct Channel {
+    /// Channel row ID from the control plane; 0 for demo data.
+    pub id: i64,
     pub name: String,
     pub members: Vec<Member>,
 }
@@ -74,6 +88,7 @@ pub struct Server {
 
 fn channel(name: &str, members: Vec<Member>) -> Channel {
     Channel {
+        id: 0,
         name: name.into(),
         members,
     }

@@ -15,6 +15,11 @@ type Control struct {
 	Name            string               `json:"name,omitempty"`
 	SSRC            uint32               `json:"ssrc,omitempty"`
 	Room            string               `json:"room,omitempty"`
+	ChannelID       int                  `json:"channelId,omitempty"`
+	Members         []Member             `json:"members,omitempty"`
+	Member          *Member              `json:"member,omitempty"`
+	Muted           *bool                `json:"muted,omitempty"`
+	Deafened        *bool                `json:"deafened,omitempty"`
 	Username        string               `json:"username,omitempty"`
 	OwnerID         bson.ObjectID        `bson:"ownerId,omitempty"`
 	ServerName      string               `json:"serverName,omitempty"`
@@ -46,22 +51,35 @@ type ChannelTypeSummary struct {
 // ChannelSummary is the channel identity the client needs to rebuild a
 // server's channel list.
 type ChannelSummary struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	ChannelType int    `json:"channelType"`
+	ID          int      `json:"id"`
+	Name        string   `json:"name"`
+	ChannelType int      `json:"channelType"`
+	Members     []Member `json:"members,omitempty"`
+}
+
+// Member is one participant of a voice channel, as clients see it.
+type Member struct {
+	SSRC     uint32 `json:"ssrc"`
+	Name     string `json:"name"`
+	Muted    bool   `json:"muted"`
+	Deafened bool   `json:"deafened"`
 }
 
 // Session is one connected client (TCP control + UDP media).
 type Session struct {
-	SSRC    uint32
-	Room    string
-	UDPAddr *net.UDPAddr
+	SSRC uint32
+	Room string
+	// ChannelID is the DB channel behind Room; only the control goroutine touches it.
+	ChannelID int
+	UDPAddr   *net.UDPAddr
 
 	tcp      net.Conn
 	wmu      sync.Mutex
 	name     string
 	lastSeen time.Time
 	pinged   bool // Prima ping ricevuta?
+	muted    bool // guarded by RoomManager.mu
+	deafened bool // guarded by RoomManager.mu
 	lastMu   sync.Mutex
 
 	UserID   string

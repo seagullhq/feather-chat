@@ -1,11 +1,13 @@
 //! Persistent, authenticated control session.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::net::TcpStream;
 
 use super::auth::{self, Request};
-use super::server::{self, ChannelSummary, ChannelTypeSummary, ServerSummary};
+use super::server::{self, ChannelSummary, ChannelTypeSummary, RosterMember, ServerSummary};
 use super::transport::Connection;
+use crate::media;
+use std::sync::Arc;
 
 pub enum Event {
     AuthOk,
@@ -31,13 +33,47 @@ pub enum Event {
     ServerCreateFailed(String),
     ChannelCreated {
         server_id: i64,
+        id: i64,
         name: String,
     },
     ChannelCreateFailed(String),
+    /// JOIN accepted. `media` is None if the voice engine could not start.
+    Joined {
+        server_id: i64,
+        channel_id: i64,
+        members: Vec<RosterMember>,
+        media: Option<Arc<media::Shared>>,
+    },
+    JoinFailed(String),
+    MemberJoined {
+        channel_id: i64,
+        member: RosterMember,
+    },
+    MemberLeft {
+        channel_id: i64,
+        ssrc: u32,
+    },
+    MemberState {
+        channel_id: i64,
+        member: RosterMember,
+    },
     Disconnected,
 }
 
 enum Command {
+    Join {
+        channel_id: i64,
+        muted: bool,
+        deafened: bool,
+    },
+    Leave,
+    State {
+        muted: bool,
+        deafened: bool,
+    },
+    ListChannels {
+        server_id: i64,
+    },
     CreateServer {
         name: String,
     },
@@ -58,6 +94,30 @@ pub struct Control {
 impl Control {
     pub fn create_server(&self, name: String) -> bool {
         self.tx.try_send(Command::CreateServer { name }).is_ok()
+    }
+
+    pub fn join(&self, channel_id: i64, muted: bool, deafened: bool) -> bool {
+        self.tx
+            .try_send(Command::Join {
+                channel_id,
+                muted,
+                deafened,
+            })
+            .is_ok()
+    }
+
+    pub fn leave(&self) -> bool {
+        self.tx.try_send(Command::Leave).is_ok()
+    }
+
+    pub fn state(&self, muted: bool, deafened: bool) -> bool {
+        self.tx.try_send(Command::State { muted, deafened }).is_ok()
+    }
+
+    pub fn list_channels(&self, server_id: i64) -> bool {
+        self.tx
+            .try_send(Command::ListChannels { server_id })
+            .is_ok()
     }
 
     pub fn create_channel(&self, server_id: i64, name: String, channel_type: i32) -> bool {
@@ -101,6 +161,26 @@ impl Session {
     }
 }
 
+/// MEMBER_* roster pushes from the server.
+fn push(frame: &Value) -> Option<Event> {
+    let channel_id = frame["channelId"].as_i64()?;
+    match frame["type"].as_str()? {
+        "MEMBER_JOINED" => Some(Event::MemberJoined {
+            channel_id,
+            member: RosterMember::parse(&frame["member"])?,
+        }),
+        "MEMBER_STATE" => Some(Event::MemberState {
+            channel_id,
+            member: RosterMember::parse(&frame["member"])?,
+        }),
+        "MEMBER_LEFT" => Some(Event::MemberLeft {
+            channel_id,
+            ssrc: frame["ssrc"].as_u64()? as u32,
+        }),
+        _ => None,
+    }
+}
+
 /// Keeps reading frames after auth so disconnects are noticed, and hands every
 /// complete frame to the session that is waiting for a reply.
 fn reader(
@@ -111,6 +191,11 @@ fn reader(
     loop {
         match super::transport::read_frame(&mut stream) {
             Ok(frame) => {
+                // Server pushes never answer a request: keep them out of `call`.
+                if let Some(ev) = push(&frame) {
+                    let _ = events.send_blocking(ev);
+                    continue;
+                }
                 if frames.send_blocking(Ok(frame)).is_err() {
                     return;
                 }
@@ -128,7 +213,12 @@ fn commands(
     mut session: Session,
     commands: async_channel::Receiver<Command>,
     events: async_channel::Sender<Event>,
+    host: String,
+    ssrc: u32,
 ) {
+    // The voice engine lives exactly as long as the JOIN it belongs to.
+    #[allow(unused_assignments, unused_variables)] // held only for its Drop
+    let mut engine: Option<media::Engine> = None;
     // Login is not complete for the UI until the sidebar has the user's
     // servers back, so fetch them before accepting other commands.
     match server::list_servers(&mut session) {
@@ -150,6 +240,61 @@ fn commands(
 
     while let Ok(command) = commands.recv_blocking() {
         match command {
+            Command::Join {
+                channel_id,
+                muted,
+                deafened,
+            } => {
+                engine = None; // moving channels: stop the old voice session first
+                match server::join_channel(&mut session, channel_id) {
+                    Ok(j) => {
+                        let media = match media::Engine::start(&host, ssrc, muted, deafened) {
+                            Ok(e) => {
+                                let shared = e.shared();
+                                engine = Some(e);
+                                Some(shared)
+                            }
+                            Err(e) => {
+                                eprintln!("voice engine: {e}");
+                                None
+                            }
+                        };
+                        if muted || deafened {
+                            let _ = session
+                                .conn
+                                .write(&json!({"type":"STATE","muted":muted,"deafened":deafened}));
+                        }
+                        let _ = events.send_blocking(Event::Joined {
+                            server_id: j.server_id,
+                            channel_id: j.channel_id,
+                            members: j.members,
+                            media,
+                        });
+                    }
+                    Err(e) => {
+                        let _ = events.send_blocking(Event::JoinFailed(e));
+                    }
+                }
+            }
+            Command::Leave => {
+                engine = None;
+                let _ = session.conn.write(&json!({"type":"LEAVE"}));
+            }
+            Command::State { muted, deafened } => {
+                let _ = session
+                    .conn
+                    .write(&json!({"type":"STATE","muted":muted,"deafened":deafened}));
+            }
+            Command::ListChannels { server_id } => {
+                let _ =
+                    events.send_blocking(match server::list_channels(&mut session, server_id) {
+                        Ok(channels) => Event::ChannelsListed {
+                            server_id,
+                            channels,
+                        },
+                        Err(message) => Event::ChannelsListFailed { server_id, message },
+                    });
+            }
             Command::CreateServer { name } => match server::create_server(&mut session, name) {
                 Ok(created) => {
                     let _ = events.send_blocking(Event::ServerCreated {
@@ -170,6 +315,7 @@ fn commands(
                 Ok(created) => {
                     let _ = events.send_blocking(Event::ChannelCreated {
                         server_id: created.server_id,
+                        id: created.id,
                         name: created.name,
                     });
                 }
@@ -198,7 +344,7 @@ pub fn spawn(host: String, req: Request, tx: async_channel::Sender<Event>) -> Co
                 password,
             } => auth::register(&host, username, email, password),
         };
-        let conn = match conn {
+        let (conn, ssrc) = match conn {
             Ok(c) => c,
             Err(e) => return fail(&tx, &req, e),
         };
@@ -222,6 +368,8 @@ pub fn spawn(host: String, req: Request, tx: async_channel::Sender<Event>) -> Co
             },
             cmd_rx,
             tx,
+            host,
+            ssrc,
         );
     });
     Control { tx: cmd_tx }

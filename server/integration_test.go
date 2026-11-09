@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -72,7 +73,7 @@ func runTestMigrations(db *sql.DB) error {
 // dialControl connects a real client over TCP: HELLO, then LOGIN (and REGISTER
 // for the first one), then JOIN. TCP ordering guarantees the server handles
 // them in this order, so the JOIN sees an authenticated session.
-func dialControl(t *testing.T, addr string, ssrc uint32, room, username, email, password string, register bool) net.Conn {
+func dialControl(t *testing.T, addr string, ssrc uint32, channelID int, username, email, password string, register bool) net.Conn {
 	t.Helper()
 	c, err := net.Dial("tcp", addr)
 	if err != nil {
@@ -83,8 +84,12 @@ func dialControl(t *testing.T, addr string, ssrc uint32, room, username, email, 
 		sendTest(t, c, Control{Type: "REGISTER", Username: username, Email: email, Password: password})
 	}
 	sendTest(t, c, Control{Type: "LOGIN", Identifier: username, Password: password})
-	sendTest(t, c, Control{Type: "JOIN", Room: room})
-	awaitRoom(t, c)
+	// LOGIN ACK carries the username; waiting keeps REGISTER/LOGIN ordered across clients.
+	awaitControl(t, c, "LOGIN ACK", func(m Control) bool { return m.Type == "ACK" && m.Name != "" })
+	if channelID != 0 {
+		sendTest(t, c, Control{Type: "JOIN", ChannelID: channelID})
+		awaitRoom(t, c)
+	}
 	return c
 }
 
@@ -148,10 +153,32 @@ func TestIntegrationTwoClients(t *testing.T) {
 	udpAddr := ludp.LocalAddr().String()
 
 	// A registers the real user; B logs into the same account.
-	a := dialControl(t, ltcp.Addr().String(), 0x1111, "room", username, email, password, true)
-	b := dialControl(t, ltcp.Addr().String(), 0x2222, "room", username, email, password, false)
+	a := dialControl(t, ltcp.Addr().String(), 0x1111, 0, username, email, password, true)
+	b := dialControl(t, ltcp.Addr().String(), 0x2222, 0, username, email, password, false)
 	defer a.Close()
 	defer b.Close()
+	sendTest(t, a, Control{Type: "CREATE_SERVER", ServerName: "v" + username})
+	srv := awaitControl(t, a, "CREATE_SERVER ACK", func(m Control) bool { return m.Type == "ACK" && m.InviteCode != "" })
+	var voiceType int
+	if err := db.QueryRow("SELECT id FROM channel_types WHERE type_name = 'voice'").Scan(&voiceType); err != nil {
+		t.Fatal(err)
+	}
+	sendTest(t, a, Control{Type: "CREATE_CHANNEL", ServerID: srv.ServerID, ChannelName: "voice-room", ChannelType: strconv.Itoa(voiceType)})
+	ch := awaitControl(t, a, "CREATE_CHANNEL ACK", func(m Control) bool { return m.Type == "ACK" && m.ChannelName != "" })
+	_ = ch
+	var channelID int
+	if err := db.QueryRow("SELECT id FROM server_channels WHERE server_id = $1", srv.ServerID).Scan(&channelID); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []net.Conn{a, b} {
+		sendTest(t, c, Control{Type: "JOIN", ChannelID: channelID})
+		awaitRoom(t, c)
+	}
+	// A channel that is not theirs (or missing) must be refused.
+	sendTest(t, a, Control{Type: "JOIN", ChannelID: channelID + 1000000})
+	if e := awaitControl(t, a, "ERROR", func(m Control) bool { return m.Type == "ERROR" }); e.Error != "channel not found" {
+		t.Fatalf("bad JOIN error = %q", e.Error)
+	}
 	t.Log("both clients registered/logged in and joined room")
 	time.Sleep(50 * time.Millisecond) // let JOINs register before media
 
@@ -293,7 +320,7 @@ func TestIntegrationCreateServer(t *testing.T) {
 	}
 
 	// An authenticated session gets the server identity and invite code back.
-	c := dialControl(t, ltcp.Addr().String(), 0x4444, "room", username, email, password, false)
+	c := dialControl(t, ltcp.Addr().String(), 0x4444, 0, username, email, password, false)
 	defer c.Close()
 	sendTest(t, c, Control{Type: "CREATE_SERVER", ServerName: authedName})
 	ack := awaitControl(t, c, "CREATE_SERVER ACK", func(m Control) bool {
@@ -376,7 +403,7 @@ func TestIntegrationListServers(t *testing.T) {
 		t.Fatalf("anonymous LIST_SERVERS error = %q, want %q", e.Error, "authentication required")
 	}
 
-	c := dialControl(t, ltcp.Addr().String(), 0x5555, "room", owner, owner+"@example.test", password, false)
+	c := dialControl(t, ltcp.Addr().String(), 0x5555, 0, owner, owner+"@example.test", password, false)
 	defer c.Close()
 	sendTest(t, c, Control{Type: "LIST_SERVERS"})
 	ack := awaitControl(t, c, "LIST_SERVERS ACK", func(m Control) bool {
@@ -398,5 +425,80 @@ func TestIntegrationListServers(t *testing.T) {
 	}
 	if got[otherName] {
 		t.Fatalf("LIST_SERVERS leaked another user's server %q", otherName)
+	}
+}
+
+// TestIntegrationRoster: JOIN returns who is already there, the others are told
+// about joins, state changes and leaves, and an SSRC can't be claimed twice.
+func TestIntegrationRoster(t *testing.T) {
+	store, db := testStore(t)
+	username := fmt.Sprintf("ro_%d", time.Now().UnixNano())
+	const password = "integration-password-123"
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM users WHERE LOWER(username) = LOWER($1)", username)
+	})
+
+	ltcp, _ := net.Listen("tcp", "127.0.0.1:0")
+	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	defer ltcp.Close()
+	defer ludp.Close()
+	go serve(ltcp, ludp.(*net.UDPConn), store, servers.NewStore(db))
+	addr := ltcp.Addr().String()
+
+	a := dialControl(t, addr, 0x1111, 0, username, username+"@example.test", password, true)
+	b := dialControl(t, addr, 0x2222, 0, username, "", password, false)
+	defer a.Close()
+	defer b.Close()
+
+	// A second client asking for A's SSRC must be refused: the ACK has none.
+	dup := dialControl(t, addr, 0x1111, 0, username, "", password, false)
+	defer dup.Close()
+	sendTest(t, dup, Control{Type: "HELLO", SSRC: 0x1111, Name: "dup"})
+	if ack := awaitControl(t, dup, "dup HELLO ACK", func(m Control) bool { return m.Type == "ACK" }); ack.SSRC != 0 {
+		t.Fatalf("duplicate SSRC was granted: %+v", ack)
+	}
+
+	sendTest(t, a, Control{Type: "CREATE_SERVER", ServerName: "r" + username})
+	srv := awaitControl(t, a, "CREATE_SERVER ACK", func(m Control) bool { return m.Type == "ACK" && m.InviteCode != "" })
+	var voice int
+	if err := db.QueryRow("SELECT id FROM channel_types WHERE type_name = 'voice'").Scan(&voice); err != nil {
+		t.Fatal(err)
+	}
+	sendTest(t, a, Control{Type: "CREATE_CHANNEL", ServerID: srv.ServerID, ChannelName: "roster-room", ChannelType: strconv.Itoa(voice)})
+	ch := awaitControl(t, a, "CREATE_CHANNEL ACK", func(m Control) bool { return m.Type == "ACK" && m.ChannelName != "" })
+	if ch.ChannelID == 0 {
+		t.Fatal("CREATE_CHANNEL ACK has no channelId")
+	}
+
+	sendTest(t, a, Control{Type: "JOIN", ChannelID: ch.ChannelID})
+	ackA := awaitControl(t, a, "A JOIN ACK", func(m Control) bool { return m.Type == "ACK" && m.Room != "" })
+	if len(ackA.Members) != 0 {
+		t.Fatalf("A joined an empty room but sees %v", ackA.Members)
+	}
+	sendTest(t, b, Control{Type: "JOIN", ChannelID: ch.ChannelID})
+	ackB := awaitControl(t, b, "B JOIN ACK", func(m Control) bool { return m.Type == "ACK" && m.Room != "" })
+	if len(ackB.Members) != 1 || ackB.Members[0].SSRC != 0x1111 || ackB.Members[0].Name != username {
+		t.Fatalf("B should see A in the roster, got %+v", ackB.Members)
+	}
+	if j := awaitControl(t, a, "MEMBER_JOINED", func(m Control) bool { return m.Type == "MEMBER_JOINED" }); j.Member == nil || j.Member.SSRC != 0x2222 || j.ChannelID != ch.ChannelID {
+		t.Fatalf("A got %+v", j)
+	}
+
+	// LIST_CHANNELS shows the live roster too.
+	sendTest(t, dup, Control{Type: "LIST_CHANNELS", ServerID: srv.ServerID})
+	list := awaitControl(t, dup, "LIST_CHANNELS", func(m Control) bool { return m.Type == "ACK" && m.Channels != nil })
+	if len(list.Channels) != 1 || len(list.Channels[0].Members) != 2 {
+		t.Fatalf("LIST_CHANNELS roster = %+v", list.Channels)
+	}
+
+	yes := true
+	sendTest(t, b, Control{Type: "STATE", Muted: &yes})
+	if s := awaitControl(t, a, "MEMBER_STATE", func(m Control) bool { return m.Type == "MEMBER_STATE" }); s.Member == nil || !s.Member.Muted || s.Member.SSRC != 0x2222 {
+		t.Fatalf("A got %+v", s)
+	}
+
+	b.Close() // a dropped TCP link must clear the roster too
+	if l := awaitControl(t, a, "MEMBER_LEFT", func(m Control) bool { return m.Type == "MEMBER_LEFT" }); l.SSRC != 0x2222 || l.ChannelID != ch.ChannelID {
+		t.Fatalf("A got %+v", l)
 	}
 }

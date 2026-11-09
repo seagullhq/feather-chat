@@ -18,7 +18,43 @@ pub struct ChannelTypeSummary {
 
 /// One channel of a server, as returned by `LIST_CHANNELS`.
 pub struct ChannelSummary {
+    pub id: i64,
     pub name: String,
+    pub members: Vec<RosterMember>,
+}
+
+/// Someone in a voice channel (ack of JOIN, LIST_CHANNELS, MEMBER_* pushes).
+#[derive(Clone)]
+pub struct RosterMember {
+    pub ssrc: u32,
+    pub name: String,
+    pub muted: bool,
+    pub deafened: bool,
+}
+
+impl RosterMember {
+    pub(super) fn parse(v: &serde_json::Value) -> Option<Self> {
+        Some(Self {
+            ssrc: v["ssrc"].as_u64()? as u32,
+            name: v["name"].as_str()?.to_string(),
+            muted: v["muted"].as_bool().unwrap_or(false),
+            deafened: v["deafened"].as_bool().unwrap_or(false),
+        })
+    }
+
+    fn list(v: &serde_json::Value) -> Vec<Self> {
+        v.as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Self::parse)
+            .collect()
+    }
+}
+
+pub(super) struct Joined {
+    pub server_id: i64,
+    pub channel_id: i64,
+    pub members: Vec<RosterMember>,
 }
 
 pub(super) struct CreatedServer {
@@ -28,6 +64,7 @@ pub(super) struct CreatedServer {
 }
 
 pub(super) struct CreatedChannel {
+    pub id: i64,
     pub server_id: i64,
     pub name: String,
 }
@@ -75,7 +112,9 @@ pub(super) fn list_channels(
         .flatten()
         .filter_map(|channel| {
             Some(ChannelSummary {
+                id: channel["id"].as_i64()?,
                 name: channel["name"].as_str()?.to_string(),
+                members: RosterMember::list(&channel["members"]),
             })
         })
         .collect())
@@ -105,7 +144,17 @@ pub(super) fn create_channel(
         "channelType": channel_type.to_string(),
     }))?;
     Ok(CreatedChannel {
+        id: ack["channelId"].as_i64().unwrap_or(0),
         server_id: ack["serverId"].as_i64().unwrap_or(server_id),
         name: ack["channelName"].as_str().unwrap_or(&name).to_string(),
+    })
+}
+
+pub(super) fn join_channel(session: &mut Session, channel_id: i64) -> Result<Joined, String> {
+    let ack = session.call(json!({"type":"JOIN","channelId":channel_id}))?;
+    Ok(Joined {
+        server_id: ack["serverId"].as_i64().unwrap_or(0),
+        channel_id: ack["channelId"].as_i64().unwrap_or(channel_id),
+        members: RosterMember::list(&ack["members"]),
     })
 }
