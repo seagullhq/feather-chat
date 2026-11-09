@@ -146,6 +146,9 @@ impl Root {
                 },
             ),
         };
+        self.main.update(cx, |main, _| {
+            main.set_hostname(host.to_string());
+        });
         let control = api::spawn(host.clone(), req, self.events.clone());
         self.control = Some(control.clone());
         self.main

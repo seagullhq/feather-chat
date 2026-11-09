@@ -36,6 +36,7 @@ pub struct MainView {
     add: Entity<AddServerModal>,
     control: Option<Control>,
     server_menu: bool,
+    hostname: String,
 }
 
 impl MainView {
@@ -78,7 +79,12 @@ impl MainView {
             add,
             control: None,
             server_menu: false,
+            hostname: String::new(),
         }
+    }
+
+    pub fn set_hostname(&mut self, host: String) {
+        self.hostname = host;
     }
 
     pub fn set_control(&mut self, control: Control, cx: &mut Context<Self>) {

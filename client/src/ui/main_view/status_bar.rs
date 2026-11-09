@@ -8,6 +8,7 @@ impl super::MainView {
     /// Deliberately small and muted: it is not the focus.
     pub(super) fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
+
         let server = match self.joined {
             Some((s, _)) => self.servers[s].name.clone(),
             None => "No server".into(),
@@ -44,7 +45,7 @@ impl super::MainView {
             )
             .child(div().flex_1())
             .child(icon("server", 14., t.muted))
-            .child(server)
+            .child(self.hostname.clone())
             .child(div().w(px(6.)))
             .child(icon("microphone", 14., t.muted))
             .child(self.mic_name.clone())
