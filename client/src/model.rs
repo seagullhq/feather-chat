@@ -68,6 +68,8 @@ pub struct Server {
     /// Profile picture (local file). None = initial on a system-color tint.
     pub icon: Option<std::path::PathBuf>,
     pub channels: Vec<Channel>,
+    /// Index of the channel being watched on this server.
+    pub viewing: usize,
 }
 
 fn channel(name: &str, members: Vec<Member>) -> Channel {
@@ -107,6 +109,7 @@ pub fn demo() -> Vec<Server> {
                 ),
                 channel("Silenzio", vec![]),
             ],
+            viewing: 0,
         },
         Server {
             id: 2,
@@ -116,6 +119,7 @@ pub fn demo() -> Vec<Server> {
                 channel("Prove", people(&["Giulia", "Tommaso"])),
                 channel("Mix", vec![]),
             ],
+            viewing: 0,
         },
         Server {
             id: 3,
@@ -125,6 +129,23 @@ pub fn demo() -> Vec<Server> {
                 "Studio",
                 people(&["Sara", "Paolo", "Nico", "Elena", "Fede"]),
             )],
+            viewing: 0,
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_tracks_viewing_channel() {
+        let mut servers = demo();
+        assert_eq!(servers[0].viewing, 0);
+        assert_eq!(servers[1].viewing, 0);
+
+        servers[0].viewing = 2;
+        assert_eq!(servers[0].viewing, 2);
+        assert_eq!(servers[1].viewing, 0);
+    }
 }

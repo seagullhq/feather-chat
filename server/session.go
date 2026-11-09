@@ -28,6 +28,7 @@ type Control struct {
 	ChannelName     string               `json:"channelName,omitempty"`
 	ChannelType     string               `json:"channelType,omitempty"`
 	ChannelTypeList []ChannelTypeSummary `json:"channelTypes,omitempty"`
+	Channels        []ChannelSummary     `json:"channels,omitempty"`
 }
 
 // ServerSummary is the server identity the client needs to rebuild its sidebar.
@@ -40,6 +41,14 @@ type ServerSummary struct {
 type ChannelTypeSummary struct {
 	ID       int    `json:"id"`
 	TypeName string `json:"name"`
+}
+
+// ChannelSummary is the channel identity the client needs to rebuild a
+// server's channel list.
+type ChannelSummary struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	ChannelType int    `json:"channelType"`
 }
 
 // Session is one connected client (TCP control + UDP media).

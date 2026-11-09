@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::net::TcpStream;
 
 use super::auth::{self, Request};
-use super::server::{self, ServerSummary};
+use super::server::{self, ChannelSummary, ChannelTypeSummary, ServerSummary};
 use super::transport::Connection;
 
 pub enum Event {
@@ -13,17 +13,39 @@ pub enum Event {
     RegisterFailed(String),
     ServersListed(Vec<ServerSummary>),
     ServersListFailed(String),
+    ChannelTypesListed(Vec<ChannelTypeSummary>),
+    ChannelTypesListFailed(String),
+    ChannelsListed {
+        server_id: i64,
+        channels: Vec<ChannelSummary>,
+    },
+    ChannelsListFailed {
+        server_id: i64,
+        message: String,
+    },
     ServerCreated {
         id: i64,
         name: String,
         invite_code: String,
     },
     ServerCreateFailed(String),
+    ChannelCreated {
+        server_id: i64,
+        name: String,
+    },
+    ChannelCreateFailed(String),
     Disconnected,
 }
 
 enum Command {
-    CreateServer { name: String },
+    CreateServer {
+        name: String,
+    },
+    CreateChannel {
+        server_id: i64,
+        name: String,
+        channel_type: i32,
+    },
 }
 
 /// Handle to the authenticated control session. Cloning it shares the same
@@ -36,6 +58,16 @@ pub struct Control {
 impl Control {
     pub fn create_server(&self, name: String) -> bool {
         self.tx.try_send(Command::CreateServer { name }).is_ok()
+    }
+
+    pub fn create_channel(&self, server_id: i64, name: String, channel_type: i32) -> bool {
+        self.tx
+            .try_send(Command::CreateChannel {
+                server_id,
+                name,
+                channel_type,
+            })
+            .is_ok()
     }
 }
 
@@ -107,6 +139,14 @@ fn commands(
             let _ = events.send_blocking(Event::ServersListFailed(e));
         }
     }
+    match server::list_channel_types(&mut session) {
+        Ok(types) => {
+            let _ = events.send_blocking(Event::ChannelTypesListed(types));
+        }
+        Err(e) => {
+            let _ = events.send_blocking(Event::ChannelTypesListFailed(e));
+        }
+    }
 
     while let Ok(command) = commands.recv_blocking() {
         match command {
@@ -120,6 +160,21 @@ fn commands(
                 }
                 Err(e) => {
                     let _ = events.send_blocking(Event::ServerCreateFailed(e));
+                }
+            },
+            Command::CreateChannel {
+                server_id,
+                name,
+                channel_type,
+            } => match server::create_channel(&mut session, server_id, name, channel_type) {
+                Ok(created) => {
+                    let _ = events.send_blocking(Event::ChannelCreated {
+                        server_id: created.server_id,
+                        name: created.name,
+                    });
+                }
+                Err(e) => {
+                    let _ = events.send_blocking(Event::ChannelCreateFailed(e));
                 }
             },
         }
@@ -217,6 +272,13 @@ mod tests {
                 &json!({"type":"ACK","servers":[{"id":3,"name":"Casa","inviteCode":"abc1234"}]}),
             )
             .unwrap();
+            let m = read_frame(&mut s).unwrap();
+            assert_eq!(m["type"], "LIST_CHANNEL_TYPES");
+            write_frame(
+                &mut s,
+                &json!({"type":"ACK","channelTypes":[{"id":2,"name":"voice"}]}),
+            )
+            .unwrap();
             // Keep the socket open for a moment: closing immediately can race
             // the Disconnected event ahead of ServersListed.
             std::thread::sleep(std::time::Duration::from_millis(100));
@@ -240,6 +302,14 @@ mod tests {
             }
             _ => panic!("expected ServersListed"),
         }
+        match rx.recv_blocking().unwrap() {
+            Event::ChannelTypesListed(types) => {
+                assert_eq!(types.len(), 1);
+                assert_eq!(types[0].id, 2);
+                assert_eq!(types[0].name, "voice");
+            }
+            _ => panic!("expected ChannelTypesListed"),
+        }
         assert!(matches!(rx.recv_blocking().unwrap(), Event::Disconnected));
     }
 
@@ -258,6 +328,13 @@ mod tests {
             let m = read_frame(&mut s).unwrap();
             assert_eq!(m["type"], "LIST_SERVERS");
             write_frame(&mut s, &json!({"type":"ACK","servers":[]})).unwrap();
+            let m = read_frame(&mut s).unwrap();
+            assert_eq!(m["type"], "LIST_CHANNEL_TYPES");
+            write_frame(
+                &mut s,
+                &json!({"type":"ACK","channelTypes":[{"id":2,"name":"voice"}]}),
+            )
+            .unwrap();
             let m = read_frame(&mut s).unwrap();
             assert_eq!(m["type"], "CREATE_SERVER");
             assert_eq!(m["serverName"], "Nuovo");
@@ -300,6 +377,7 @@ mod tests {
                     break;
                 }
                 Event::Disconnected => continue,
+                Event::ChannelTypesListed(_) => continue,
                 _ => panic!("unexpected event"),
             }
         }

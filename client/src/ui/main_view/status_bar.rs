@@ -9,7 +9,7 @@ impl super::MainView {
     pub(super) fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
 
-        let server = match self.joined {
+        let _server = match self.joined {
             Some((s, _)) => self.servers[s].name.clone(),
             None => "No server".into(),
         };

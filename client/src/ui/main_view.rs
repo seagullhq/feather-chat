@@ -1,16 +1,18 @@
 use super::{ToggleDeafen, ToggleMute, tab_nav};
-use crate::api::{Control, ServerSummary};
+use crate::api::{ChannelTypeSummary, Control, ServerSummary};
 use crate::model::{self, Member, Server};
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
 use std::time::Duration;
 
+mod add_channel;
 mod add_server;
 mod controls;
 mod sidebar;
 mod stage;
 mod status_bar;
 
+use add_channel::AddChannelModal;
 use add_server::{AddServerModal, ModalEvent};
 
 fn default_mic() -> String {
@@ -24,16 +26,17 @@ fn default_mic() -> String {
 pub struct MainView {
     servers: Vec<Server>,
     server: usize,
-    /// Channel shown on the stage. Not necessarily the one you are in.
-    viewing: usize,
     /// (server, channel) you are connected to.
     joined: Option<(usize, usize)>,
     me: Member,
     mic_name: SharedString,
     adding: bool,
+    adding_channel: bool,
     focus: FocusHandle,
     focused_once: bool,
     add: Entity<AddServerModal>,
+    add_channel: Entity<AddChannelModal>,
+    channel_types: Vec<ChannelTypeSummary>,
     control: Option<Control>,
     server_menu: bool,
     hostname: String,
@@ -48,6 +51,19 @@ impl MainView {
             |this, _, event: &ModalEvent, window, cx| match event {
                 ModalEvent::Close => this.set_adding(false, window, cx),
                 ModalEvent::Create { name } => this.create_server(name.clone(), cx),
+            },
+        )
+        .detach();
+
+        let add_channel = cx.new(AddChannelModal::new);
+        cx.subscribe_in(
+            &add_channel,
+            window,
+            |this, _, event: &add_channel::ModalEvent, window, cx| match event {
+                add_channel::ModalEvent::Close => this.set_adding_channel(false, window, cx),
+                add_channel::ModalEvent::Create { name, channel_type } => {
+                    this.create_channel(name.clone(), *channel_type, cx)
+                }
             },
         )
         .detach();
@@ -69,17 +85,36 @@ impl MainView {
         Self {
             servers: if demo { model::demo() } else { vec![] },
             server: 0,
-            viewing: 0,
             joined: None,
             me: Member::new("Tu"),
             mic_name: default_mic().into(),
             adding: false,
+            adding_channel: false,
             focus: cx.focus_handle(),
             focused_once: false,
             add,
+            add_channel,
+            channel_types: Vec::new(),
             control: None,
             server_menu: false,
             hostname: String::new(),
+        }
+    }
+
+    pub fn viewing(&self) -> usize {
+        let Some(server) = self.servers.get(self.server) else {
+            return 0;
+        };
+        if server.channels.is_empty() {
+            0
+        } else {
+            server.viewing.min(server.channels.len().saturating_sub(1))
+        }
+    }
+
+    pub fn set_viewing(&mut self, viewing: usize) {
+        if let Some(server) = self.servers.get_mut(self.server) {
+            server.viewing = viewing;
         }
     }
 
@@ -94,18 +129,33 @@ impl MainView {
 
     /// Replaces the sidebar with the servers the logged-in user belongs to.
     pub fn set_servers(&mut self, servers: Vec<ServerSummary>, cx: &mut Context<Self>) {
+        let old_viewing: std::collections::HashMap<i64, usize> = self
+            .servers
+            .iter()
+            .map(|s| (s.id, s.viewing))
+            .collect();
         self.servers = servers
             .into_iter()
-            .map(|server| Server {
-                id: server.id,
-                name: server.name,
-                icon: None,
-                channels: vec![],
+            .map(|server| {
+                let viewing = old_viewing.get(&server.id).copied().unwrap_or(0);
+                Server {
+                    id: server.id,
+                    name: server.name,
+                    icon: None,
+                    channels: vec![],
+                    viewing,
+                }
             })
             .collect();
         self.server = self.server.min(self.servers.len().saturating_sub(1));
-        self.viewing = 0;
         self.joined = None;
+        cx.notify();
+    }
+
+    pub fn set_channel_types(&mut self, types: Vec<ChannelTypeSummary>, cx: &mut Context<Self>) {
+        self.channel_types = types.clone();
+        self.add_channel
+            .update(cx, |modal, cx| modal.set_types(types, cx));
         cx.notify();
     }
 
@@ -123,6 +173,52 @@ impl MainView {
         }
     }
 
+    fn create_channel(&mut self, name: String, channel_type: i32, cx: &mut Context<Self>) {
+        let Some(server_id) = self.servers.get(self.server).map(|server| server.id) else {
+            self.add_channel.update(cx, |modal, cx| {
+                modal.on_failed("No server selected.".into(), cx)
+            });
+            return;
+        };
+        let Some(control) = self.control.clone() else {
+            self.add_channel.update(cx, |modal, cx| {
+                modal.on_failed("Not connected to a server.".into(), cx)
+            });
+            return;
+        };
+        if !control.create_channel(server_id, name, channel_type) {
+            self.add_channel.update(cx, |modal, cx| {
+                modal.on_failed("The connection is closed.".into(), cx)
+            });
+        }
+    }
+
+    pub fn on_channel_created(&mut self, server_id: i64, name: String, cx: &mut Context<Self>) {
+        if let Some(server) = self
+            .servers
+            .iter_mut()
+            .find(|server| server.id == server_id)
+        {
+            let created = server.channels.len();
+            server.channels.push(model::Channel {
+                name,
+                members: vec![],
+            });
+            server.viewing = created;
+        }
+        self.add_channel.update(cx, |modal, cx| modal.reset(cx));
+        self.adding_channel = false;
+        let focus = self.focus.clone();
+        let entity = cx.entity_id();
+        cx.with_window(entity, |window, cx| window.focus(&focus, cx));
+        cx.notify();
+    }
+
+    pub fn on_channel_create_failed(&mut self, message: String, cx: &mut Context<Self>) {
+        self.add_channel
+            .update(cx, |modal, cx| modal.on_failed(message, cx));
+    }
+
     pub fn on_server_created(
         &mut self,
         id: i64,
@@ -135,9 +231,9 @@ impl MainView {
             name: name.clone(),
             icon: None,
             channels: vec![],
+            viewing: 0,
         });
         self.server = self.servers.len() - 1;
-        self.viewing = 0;
         self.joined = None;
         self.add
             .update(cx, |modal, cx| modal.on_created(name, invite_code, cx));
@@ -152,6 +248,9 @@ impl MainView {
     pub fn on_disconnected(&mut self, cx: &mut Context<Self>) {
         self.control = None;
         self.add.update(cx, |modal, cx| {
+            modal.on_failed("Connection lost.".into(), cx)
+        });
+        self.add_channel.update(cx, |modal, cx| {
             modal.on_failed("Connection lost.".into(), cx)
         });
         cx.notify();
@@ -177,10 +276,30 @@ impl MainView {
     fn set_adding(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.adding = on;
         if on {
+            self.adding_channel = false;
             self.add.update(cx, |modal, cx| modal.reset(cx));
         }
         let target = if on {
             self.add.read(cx).input_focus(cx)
+        } else {
+            self.focus.clone()
+        };
+        window.focus(&target, cx);
+        cx.notify();
+    }
+
+    fn set_adding_channel(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.adding_channel = on;
+        if on {
+            self.adding = false;
+            let types = self.channel_types.clone();
+            self.add_channel.update(cx, |modal, cx| {
+                modal.set_types(types, cx);
+                modal.reset(cx);
+            });
+        }
+        let target = if on {
+            self.add_channel.read(cx).input_focus(cx)
         } else {
             self.focus.clone()
         };
@@ -205,7 +324,8 @@ impl MainView {
     }
 
     fn channel_view(&self) -> Option<&model::Channel> {
-        self.servers.get(self.server)?.channels.get(self.viewing)
+        let server = self.servers.get(self.server)?;
+        server.channels.get(self.viewing())
     }
 }
 
@@ -216,7 +336,8 @@ impl Render for MainView {
             window.focus(&self.focus, cx);
         }
         let t = cx.theme();
-        let modal = self.adding.then(|| self.add.clone());
+        let server_modal = self.adding.then(|| self.add.clone());
+        let channel_modal = self.adding_channel.then(|| self.add_channel.clone());
         tab_nav(div())
             .key_context("Stage")
             .track_focus(&self.focus)
@@ -236,6 +357,7 @@ impl Render for MainView {
                     .child(self.stage(window.viewport_size(), cx)),
             )
             .child(self.status_bar(cx))
-            .children(modal)
+            .children(server_modal)
+            .children(channel_modal)
     }
 }

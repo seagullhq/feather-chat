@@ -5,7 +5,7 @@ use gpui::{prelude::*, *};
 impl super::MainView {
     pub(super) fn stage(&self, viewport: Size<Pixels>, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
-        let joined_here = self.joined == Some((self.server, self.viewing));
+        let joined_here = self.joined == Some((self.server, self.viewing()));
         let mut tiles: Vec<(String, f32, bool, bool)> = self
             .channel_view()
             .map(|c| {

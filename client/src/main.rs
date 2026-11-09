@@ -168,6 +168,12 @@ impl Root {
                 .main
                 .update(cx, |main, cx| main.set_servers(servers, cx)),
             Event::ServersListFailed(m) => eprintln!("could not list servers: {m}"),
+            Event::ChannelTypesListed(types) => self
+                .main
+                .update(cx, |main, cx| main.set_channel_types(types, cx)),
+            Event::ChannelTypesListFailed(m) => {
+                eprintln!("could not list channel types: {m}")
+            }
             Event::ServerCreated {
                 id,
                 name,
@@ -178,6 +184,19 @@ impl Root {
             Event::ServerCreateFailed(m) => self
                 .main
                 .update(cx, |main, cx| main.on_server_create_failed(m, cx)),
+            Event::ChannelCreated { server_id, name } => self
+                .main
+                .update(cx, |main, cx| main.on_channel_created(server_id, name, cx)),
+            Event::ChannelCreateFailed(m) => self
+                .main
+                .update(cx, |main, cx| main.on_channel_create_failed(m, cx)),
+            Event::ChannelsListed { .. } => {}
+            Event::ChannelsListFailed {
+                server_id,
+                message,
+            } => {
+                eprintln!("could not list channels for server {server_id}: {message}")
+            }
             Event::Disconnected => {
                 self.control.take();
                 self.main.update(cx, |main, cx| main.on_disconnected(cx));

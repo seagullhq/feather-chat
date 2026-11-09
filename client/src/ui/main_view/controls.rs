@@ -7,7 +7,7 @@ impl super::MainView {
     /// Right: join, or mic / audio / leave as icon-only buttons (red = off).
     pub(super) fn controls(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let t = cx.theme();
-        let target = (self.server, self.viewing);
+        let target = (self.server, self.viewing());
         self.channel_view()?;
         let joined = self.joined.is_some();
         let mic_off = self.me.muted || self.me.deafened;

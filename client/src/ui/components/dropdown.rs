@@ -5,17 +5,16 @@ use std::rc::Rc;
 
 type DismissHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
+/// A menu entry. The element id is derived from its position in the menu.
 pub struct DropdownItem {
-    id: ElementId,
     icon: Option<&'static str>,
     label: SharedString,
     on_click: Option<ClickHandler>,
 }
 
 impl DropdownItem {
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
+    pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
-            id: id.into(),
             icon: None,
             label: label.into(),
             on_click: None,
@@ -69,6 +68,17 @@ impl Dropdown {
         self
     }
 
+    /// One-line entry: icon, label, click handler.
+    pub fn entry(
+        self,
+        icon: &'static str,
+        label: impl Into<SharedString>,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.item(DropdownItem::new(label).icon(icon).on_click(on_click))
+    }
+
+    /// For the uncommon cases (no icon, no handler, ...).
     pub fn item(mut self, item: DropdownItem) -> Self {
         self.items.push(item);
         self
@@ -101,17 +111,17 @@ impl RenderOnce for Dropdown {
             .rounded(t.radius)
             .border_1()
             .border_color(t.line)
-            .bg(t.panel)
+            .bg(t.opaque_panel())
             .text_size(px(14.))
             .font_weight(FontWeight::NORMAL)
             .when_some(dismiss.clone(), |d, dismiss| {
                 d.on_mouse_down_out(move |_, w, cx| dismiss(w, cx))
             })
-            .children(self.items.into_iter().map(|item| {
+            .children(self.items.into_iter().enumerate().map(|(ix, item)| {
                 let dismiss = dismiss.clone();
                 let on_click = item.on_click;
                 div()
-                    .id(item.id)
+                    .id((self.id.clone(), ix.to_string()))
                     .focusable()
                     .tab_stop(true)
                     .role(Role::Button)

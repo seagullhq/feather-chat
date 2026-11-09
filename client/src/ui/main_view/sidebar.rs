@@ -1,6 +1,6 @@
 use super::super::components::ClickHandler;
+use super::super::components::Dropdown;
 use super::super::components::{Avatar, ToolButton, icon};
-use super::super::components::{Dropdown, DropdownItem};
 use crate::model::Server;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
@@ -161,7 +161,6 @@ impl super::MainView {
                             i == self.server,
                             Box::new(cx.listener(move |this, _, _, cx| {
                                 this.server = i;
-                                this.viewing = 0;
                                 this.server_menu = false;
                                 cx.notify();
                             })),
@@ -207,30 +206,26 @@ impl super::MainView {
                                     })
                                 }
                             })
-                            .item(
-                                DropdownItem::new("menu-invite", "Invita persone")
-                                    .icon("user-plus")
-                                    .on_click(|_, _, _| {
-                                        // TODO: invita persone
-                                    }),
+                            .entry("user-plus", "Invite", |_, _, _| {
+                                // TODO: invita persone
+                            })
+                            .entry(
+                                "plus",
+                                "Add new channel",
+                                cx.listener(|this, _, window, cx| {
+                                    this.set_adding_channel(true, window, cx)
+                                }),
                             )
-                            .item(
-                                DropdownItem::new("menu-settings", "Impostazioni server")
-                                    .icon("gear")
-                                    .on_click(|_, _, _| {
-                                        // TODO: impostazioni server
-                                    }),
-                            )
-                            .item(
-                                DropdownItem::new("menu-leave", "Esci dal server")
-                                    .icon("sign-out")
-                                    .on_click(|_, _, _| {
-                                        // TODO: esci dal server
-                                    }),
-                            ),
+                            .entry("gear", "Settings", |_, _, _| {
+                                // TODO: impostazioni server
+                            })
+                            .entry("sign-out", "Exit", |_, _, _| {
+                                // TODO: esci dal server
+                            }),
                         ),
                 )
-                .child(
+                .child({
+                    let viewing = self.viewing();
                     div()
                         .id("channels")
                         .flex_1()
@@ -239,7 +234,7 @@ impl super::MainView {
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .children(s.channels.iter().enumerate().map(|(i, c)| {
+                        .children(s.channels.iter().enumerate().map(move |(i, c)| {
                             let here = self.joined == Some((self.server, i));
                             let mut members: Vec<_> = c
                                 .members
@@ -258,15 +253,15 @@ impl super::MainView {
                                 id: i,
                                 name: c.name.clone().into(),
                                 members,
-                                viewing: i == self.viewing,
+                                viewing: i == viewing,
                                 joined: here,
                                 on_click: Box::new(cx.listener(move |this, _, _, cx| {
-                                    this.viewing = i;
+                                    this.set_viewing(i);
                                     cx.notify();
                                 })),
                             }
-                        })),
-                )
+                        }))
+                })
             })
     }
 }

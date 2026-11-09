@@ -124,6 +124,37 @@ func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Stor
 				})
 			}
 			session.send(Control{Type: "ACK", ChannelTypeList: summaries})
+		case "LIST_CHANNELS":
+			if !session.authed() {
+				session.send(Control{Type: "ERROR", Error: "authentication required"})
+				continue
+			}
+			if message.ServerID <= 0 {
+				session.send(Control{Type: "ERROR", Error: "invalid server"})
+				continue
+			}
+			userID, err := strconv.Atoi(session.UserID)
+			if err != nil {
+				session.send(Control{Type: "ERROR", Error: "authentication required"})
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			list, err := serverStore.ListChannels(ctx, message.ServerID, userID)
+			cancel()
+			if err != nil {
+				log.Printf("[LIST] failed to list channels for server %d: %v", message.ServerID, err)
+				session.send(Control{Type: "ERROR", Error: "channel listing failed"})
+				continue
+			}
+			summaries := make([]ChannelSummary, 0, len(list))
+			for _, channel := range list {
+				summaries = append(summaries, ChannelSummary{
+					ID:          channel.ID,
+					Name:        channel.Name,
+					ChannelType: channel.ChannelType,
+				})
+			}
+			session.send(Control{Type: "ACK", Channels: summaries})
 		case "CREATE_SERVER":
 			if !session.authed() {
 				session.send(Control{Type: "ERROR", Error: "authentication required"})

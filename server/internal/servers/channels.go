@@ -63,31 +63,4 @@ func (s *ServerStore) CreateChannel(ctx context.Context, channelName string, cha
 	return &channel, nil
 }
 
-func (s *ServerStore) ListChannelType(ctx context.Context) ([]ChannelType, error) {
-	query := `
-		SELECT id, type_name FROM channel_types
-		ORDER BY id
-	`
-
-	rows, err := s.db.QueryContext(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var channelTypes []ChannelType
-	for rows.Next() {
-		var channelType ChannelType
-		if err := rows.Scan(&channelType.ID, &channelType.TypeName); err != nil {
-			return nil, err
-		}
-		channelTypes = append(channelTypes, channelType)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return channelTypes, nil
-}
-
 func DeleteChannel(ctx context.Context, serverId int) {}
