@@ -1,5 +1,6 @@
 use super::super::components::ClickHandler;
 use super::super::components::{Avatar, ToolButton, icon};
+use super::super::components::{Dropdown, DropdownItem};
 use crate::model::Server;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
@@ -136,6 +137,7 @@ impl super::MainView {
     pub(super) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let server = self.servers.get(self.server);
+        let view = cx.entity();
         div()
             .w(px(240.))
             .flex_none()
@@ -160,6 +162,7 @@ impl super::MainView {
                             Box::new(cx.listener(move |this, _, _, cx| {
                                 this.server = i;
                                 this.viewing = 0;
+                                this.server_menu = false;
                                 cx.notify();
                             })),
                         )
@@ -172,9 +175,60 @@ impl super::MainView {
             .when_some(server, |d, s| {
                 d.child(
                     div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
                         .px_1()
                         .font_weight(FontWeight::BOLD)
-                        .child(s.name.clone()),
+                        .child(
+                            div()
+                                .flex_1()
+                                .font_weight(FontWeight::BOLD)
+                                .text_size(px(18.))
+                                .child(s.name.clone()),
+                        )
+                        .child(
+                            Dropdown::new(
+                                "server-menu",
+                                ToolButton::new("server-menu-btn", "", "dots-three").on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.server_menu = !this.server_menu;
+                                        cx.notify();
+                                    }),
+                                ),
+                            )
+                            .open(self.server_menu)
+                            .on_dismiss({
+                                let view = view.clone();
+                                move |_, cx| {
+                                    view.update(cx, |this, cx| {
+                                        this.server_menu = false;
+                                        cx.notify();
+                                    })
+                                }
+                            })
+                            .item(
+                                DropdownItem::new("menu-invite", "Invita persone")
+                                    .icon("user-plus")
+                                    .on_click(|_, _, _| {
+                                        // TODO: invita persone
+                                    }),
+                            )
+                            .item(
+                                DropdownItem::new("menu-settings", "Impostazioni server")
+                                    .icon("gear")
+                                    .on_click(|_, _, _| {
+                                        // TODO: impostazioni server
+                                    }),
+                            )
+                            .item(
+                                DropdownItem::new("menu-leave", "Esci dal server")
+                                    .icon("sign-out")
+                                    .on_click(|_, _, _| {
+                                        // TODO: esci dal server
+                                    }),
+                            ),
+                        ),
                 )
                 .child(
                     div()

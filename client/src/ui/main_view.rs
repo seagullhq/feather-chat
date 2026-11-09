@@ -13,8 +13,6 @@ mod status_bar;
 
 use add_server::{AddServerModal, ModalEvent};
 
-// ------------------------------------------------------------------- MainView
-
 fn default_mic() -> String {
     use cpal::traits::{DeviceTrait, HostTrait};
     cpal::default_host()
@@ -37,6 +35,7 @@ pub struct MainView {
     focused_once: bool,
     add: Entity<AddServerModal>,
     control: Option<Control>,
+    server_menu: bool,
 }
 
 impl MainView {
@@ -78,6 +77,7 @@ impl MainView {
             focused_once: false,
             add,
             control: None,
+            server_menu: false,
         }
     }
 
