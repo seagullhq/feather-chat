@@ -146,7 +146,7 @@ impl RenderOnce for Dropdown {
                         }
                     })
                     .when_some(item.icon, |d, name| d.child(icon(name, 16., t.muted)))
-                    .child(item.label)
+                    .child(div().flex_1().min_w_0().truncate().child(item.label))
             }));
 
         div()

@@ -48,6 +48,13 @@ impl super::MainView {
             .child(self.hostname.clone())
             .child(div().w(px(6.)))
             .child(icon("microphone", 14., t.muted))
-            .child(self.mic_name.clone())
+            .child(
+                crate::media::PREFS
+                    .input
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .map_or_else(|| self.mic_name.clone(), Into::into),
+            )
     }
 }

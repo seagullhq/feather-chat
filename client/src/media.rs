@@ -27,6 +27,56 @@ const OUT_RING: usize = RATE as usize / 2;
 /// Level gain: speech sits around rms 0.03..0.2, the UI wants 0..1.
 const LEVEL_GAIN: f32 = 6.;
 
+/// Device and volume picked in Settings. A global: the settings window and
+/// the voice engine never meet otherwise. `None` = OS default device.
+pub struct Prefs {
+    pub input: Mutex<Option<String>>,
+    pub output: Mutex<Option<String>>,
+    /// Percent, 0..=100.
+    pub volume: AtomicU32,
+    /// Bumped on every device change; the audio thread rebuilds its streams.
+    generation: AtomicU32,
+}
+
+pub static PREFS: Prefs = Prefs {
+    input: Mutex::new(None),
+    output: Mutex::new(None),
+    volume: AtomicU32::new(100),
+    generation: AtomicU32::new(0),
+};
+
+impl Prefs {
+    pub fn set_input(&self, name: String) {
+        *self.input.lock().unwrap() = Some(name);
+        self.generation.fetch_add(1, Relaxed);
+    }
+
+    pub fn set_output(&self, name: String) {
+        *self.output.lock().unwrap() = Some(name);
+        self.generation.fetch_add(1, Relaxed);
+    }
+}
+
+/// The named device, else the OS default.
+fn device(host: &cpal::Host, name: Option<String>, input: bool) -> Option<cpal::Device> {
+    let all = if input {
+        host.input_devices().ok()?.collect::<Vec<_>>()
+    } else {
+        host.output_devices().ok()?.collect()
+    };
+    name.and_then(|n| {
+        all.into_iter()
+            .find(|d| d.name().ok().as_deref() == Some(&n))
+    })
+    .or_else(|| {
+        if input {
+            host.default_input_device()
+        } else {
+            host.default_output_device()
+        }
+    })
+}
+
 /// State shared with the UI. Atomics in, levels out.
 #[derive(Default)]
 pub struct Shared {
@@ -163,33 +213,43 @@ impl Pull {
 // --------------------------------------------------------------- audio thread
 
 fn audio(shared: Arc<Shared>, cap: rtrb::Producer<i16>, out: rtrb::Consumer<f32>) {
+    // ponytail: the rings' ends sit behind a mutex so they outlive a stream
+    // rebuild; uncontended, so the callbacks don't notice.
+    let (cap, out) = (Arc::new(Mutex::new(cap)), Arc::new(Mutex::new(out)));
     let host = cpal::default_host();
-    let _mic = match host.default_input_device().map(|d| mic_stream(&d, cap)) {
-        Some(Ok(s)) => Some(s),
-        Some(Err(e)) => {
-            eprintln!("microphone: {e}");
-            None
-        }
-        None => {
-            eprintln!("microphone: no input device");
-            None
-        }
-    };
-    let _speakers = match host
-        .default_output_device()
-        .map(|d| speaker_stream(&d, out))
-    {
-        Some(Ok(s)) => Some(s),
-        Some(Err(e)) => {
-            eprintln!("speakers: {e}");
-            None
-        }
-        None => {
-            eprintln!("speakers: no output device");
-            None
-        }
-    };
+    let mut built = None;
+    let (mut _mic, mut _speakers) = (None::<Stream>, None::<Stream>);
     while !shared.stop.load(Relaxed) {
+        let generation = PREFS.generation.load(Relaxed);
+        if built != Some(generation) {
+            built = Some(generation);
+            // Release the old devices before opening the new ones.
+            (_mic, _speakers) = (None, None);
+            let name = PREFS.input.lock().unwrap().clone();
+            _mic = match device(&host, name, true).map(|d| mic_stream(&d, cap.clone())) {
+                Some(Ok(s)) => Some(s),
+                Some(Err(e)) => {
+                    eprintln!("microphone: {e}");
+                    None
+                }
+                None => {
+                    eprintln!("microphone: no input device");
+                    None
+                }
+            };
+            let name = PREFS.output.lock().unwrap().clone();
+            _speakers = match device(&host, name, false).map(|d| speaker_stream(&d, out.clone())) {
+                Some(Ok(s)) => Some(s),
+                Some(Err(e)) => {
+                    eprintln!("speakers: {e}");
+                    None
+                }
+                None => {
+                    eprintln!("speakers: no output device");
+                    None
+                }
+            };
+        }
         std::thread::sleep(Duration::from_millis(50));
     }
 }
@@ -216,7 +276,7 @@ fn pick(
         .map_or_else(|| default.map_err(|e| e.to_string()), Ok)
 }
 
-fn mic_stream(dev: &cpal::Device, tx: rtrb::Producer<i16>) -> Result<Stream, String> {
+fn mic_stream(dev: &cpal::Device, tx: Arc<Mutex<rtrb::Producer<i16>>>) -> Result<Stream, String> {
     let sup = pick(
         dev.supported_input_configs().ok().map(|i| i.collect()),
         dev.default_input_config(),
@@ -236,7 +296,7 @@ fn mic_stream(dev: &cpal::Device, tx: rtrb::Producer<i16>) -> Result<Stream, Str
 fn mic<T: SizedSample>(
     dev: &cpal::Device,
     cfg: &StreamConfig,
-    mut tx: rtrb::Producer<i16>,
+    tx: Arc<Mutex<rtrb::Producer<i16>>>,
 ) -> Result<Stream, String>
 where
     f32: FromSample<T>,
@@ -246,6 +306,7 @@ where
     dev.build_input_stream(
         cfg,
         move |data: &[T], _| {
+            let Ok(mut tx) = tx.lock() else { return };
             for frame in data.chunks(ch) {
                 let m = frame.iter().map(|s| f32::from_sample(*s)).sum::<f32>() / ch as f32;
                 rs.push(m, |o| {
@@ -259,7 +320,10 @@ where
     .map_err(|e| e.to_string())
 }
 
-fn speaker_stream(dev: &cpal::Device, rx: rtrb::Consumer<f32>) -> Result<Stream, String> {
+fn speaker_stream(
+    dev: &cpal::Device,
+    rx: Arc<Mutex<rtrb::Consumer<f32>>>,
+) -> Result<Stream, String> {
     let sup = pick(
         dev.supported_output_configs().ok().map(|i| i.collect()),
         dev.default_output_config(),
@@ -279,13 +343,14 @@ fn speaker_stream(dev: &cpal::Device, rx: rtrb::Consumer<f32>) -> Result<Stream,
 fn speaker<T: SizedSample + FromSample<f32>>(
     dev: &cpal::Device,
     cfg: &StreamConfig,
-    mut rx: rtrb::Consumer<f32>,
+    rx: Arc<Mutex<rtrb::Consumer<f32>>>,
 ) -> Result<Stream, String> {
     let ch = cfg.channels as usize;
     let mut rs = Pull::new(cfg.sample_rate.0);
     dev.build_output_stream(
         cfg,
         move |data: &mut [T], _| {
+            let Ok(mut rx) = rx.lock() else { return };
             for frame in data.chunks_mut(ch) {
                 let s = T::from_sample(rs.next(|| rx.pop().unwrap_or(0.)));
                 frame.fill(s);
@@ -432,8 +497,10 @@ fn mix(shared: &Shared, peers: &mut HashMap<u32, Peer>, out: &mut rtrb::Producer
     if shared.deafened.load(Relaxed) || OUT_RING - out.slots() > 4 * FRAME {
         return;
     }
+    let v = PREFS.volume.load(Relaxed) as f32 / 100.;
+    let gain = v * v;
     for s in acc {
-        let _ = out.push(s.clamp(-1., 1.));
+        let _ = out.push((s * gain).clamp(-1., 1.));
     }
 }
 
