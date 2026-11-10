@@ -44,8 +44,6 @@ enum Block {
     Rule,
 }
 
-// ───────────────────────────── parser ─────────────────────────────
-
 #[derive(Default)]
 struct Builder {
     inline: Inline,
@@ -149,7 +147,7 @@ fn blocks<'a, I: Iterator<Item = Event<'a>>>(it: &mut I) -> Vec<Block> {
                     _ => String::new(),
                 };
                 let mut code = String::new();
-                while let Some(e) = it.next() {
+                for e in it.by_ref() {
                     match e {
                         Event::Text(t) => code.push_str(&t),
                         Event::End(TagEnd::CodeBlock) => break,
@@ -193,8 +191,6 @@ fn blocks<'a, I: Iterator<Item = Event<'a>>>(it: &mut I) -> Vec<Block> {
     out
 }
 
-// ───────────────────────────── theme ─────────────────────────────
-
 #[derive(Clone)]
 pub struct MdTheme {
     pub fg: Hsla,
@@ -221,8 +217,6 @@ impl Default for MdTheme {
         }
     }
 }
-
-// ───────────────────────────── rendering ─────────────────────────────
 
 /// gpui's StyledText expects sorted, NON-overlapping highlight ranges,
 /// so nested styles (bold + italic + link…) are flattened into segments.
