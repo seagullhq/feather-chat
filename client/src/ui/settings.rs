@@ -1,3 +1,4 @@
+use super::Markdown;
 use super::components::{Avatar, Button, Dropdown, DropdownItem, Slider, Tab, icon};
 use super::tab_nav;
 use crate::media::PREFS;
@@ -287,7 +288,12 @@ impl Render for CreditsView {
                     .min_h_0()
                     .overflow_y_scroll()
                     .p_5()
-                    .child(div().text_size(px(13.)).line_height(px(19.)).child(CREDITS)),
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .line_height(px(19.))
+                            .child(Markdown::new(CREDITS)),
+                    ),
             )
     }
 }

@@ -28,6 +28,7 @@ keyring = { version = "3", default-features = false, features = [
     "async-io",
     "crypto-rust",
 ] }
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
