@@ -17,12 +17,14 @@ impl Render for NoGhost {
 const THUMB: f32 = 16.;
 const STEP: f32 = 0.05;
 
+type SliderOnChange = Rc<dyn Fn(f32, &mut Window, &mut App)>;
+
 /// Horizontal slider, value in 0..=1. Click or drag the track; arrow keys when focused.
 #[derive(IntoElement)]
 pub struct Slider {
     id: ElementId,
     value: f32,
-    on_change: Rc<dyn Fn(f32, &mut Window, &mut App)>,
+    on_change: SliderOnChange,
 }
 
 impl Slider {
