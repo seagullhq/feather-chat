@@ -6,19 +6,19 @@ use std::rc::Rc;
 
 mod avatar;
 mod button;
-mod device_picker;
 mod dropdown;
 mod field;
 mod modal;
+mod slider;
 mod tab;
 mod tool_button;
 
 pub use avatar::Avatar;
 pub use button::Button;
-pub use device_picker::DevicePicker;
 pub use dropdown::{Dropdown, DropdownItem};
 pub use field::Field;
 pub use modal::{Modal, ModalHeader};
+pub use slider::Slider;
 pub use tab::Tab;
 pub use tool_button::ToolButton;
 

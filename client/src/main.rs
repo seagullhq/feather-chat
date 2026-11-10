@@ -181,6 +181,10 @@ impl Root {
             } => (username, password),
         };
         self.pending = Some((host.clone(), id.clone(), pw.clone()));
+        cx.set_global(ui::Session {
+            host: host.clone(),
+            identifier: id.clone(),
+        });
         self.main.update(cx, |main, _| {
             main.set_hostname(host.clone());
         });

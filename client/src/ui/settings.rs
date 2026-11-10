@@ -1,4 +1,4 @@
-use super::components::{Button, DevicePicker, Tab};
+use super::components::{Avatar, Dropdown, DropdownItem, Slider, Tab, icon};
 use super::tab_nav;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
@@ -25,10 +25,10 @@ pub fn open_settings(cx: &mut App) {
         }),
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
-            size(px(480.), px(360.)),
+            size(px(560.), px(480.)),
             cx,
         ))),
-        window_min_size: Some(size(px(360.), px(280.))),
+        window_min_size: Some(size(px(440.), px(360.))),
         ..Default::default()
     };
     if let Ok(handle) = cx.open_window(opts, |window, cx| {
@@ -40,9 +40,26 @@ pub fn open_settings(cx: &mut App) {
     }
 }
 
+/// Who is logged in, for the Account page. Set by `Root` on login.
+pub struct Session {
+    pub host: String,
+    pub identifier: String,
+}
+
+impl Global for Session {}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Page {
+    Account,
+    Voice,
+    About,
+}
+
 struct SettingsView {
     focus: FocusHandle,
-    voice_tab: bool,
+    page: Page,
+    /// Which device menu is open: "mic" or "out".
+    open: Option<&'static str>,
     mics: Vec<String>,
     outs: Vec<String>,
     mic: usize,
@@ -70,78 +87,213 @@ impl SettingsView {
         };
         Self {
             focus: cx.focus_handle(),
-            voice_tab: false,
+            page: Page::Account,
             mic: pos(&mics, host.default_input_device()),
             out: pos(&outs, host.default_output_device()),
+            open: None,
             mics,
             outs,
             volume: 50,
         }
     }
+}
 
-    fn step_volume(&mut self, delta: i32, cx: &mut Context<Self>) {
-        self.volume = (self.volume + delta).clamp(0, 100);
-        cx.notify();
+/// Titled card; rows go inside.
+fn card(t: &crate::theme::Theme, title: &'static str) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .p_4()
+        .rounded(t.radius)
+        .border_1()
+        .border_color(t.line)
+        .bg(t.panel)
+        .child(div().font_weight(FontWeight::BOLD).child(title))
+}
+
+/// `label ........ value`
+fn row(t: &crate::theme::Theme, label: &'static str, value: impl IntoElement) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .child(div().text_color(t.muted).child(label))
+        .child(value)
+}
+
+impl SettingsView {
+    fn account(&self, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme();
+        let (host, id) = cx
+            .try_global::<Session>()
+            .map(|s| (s.host.clone(), s.identifier.clone()))
+            .unwrap_or_default();
+        let signed = !id.is_empty();
+        div().flex().flex_col().gap_3().child(
+            card(&t, "Account")
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(Avatar::new(if signed { &id } else { "?" }, 48.))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .text_size(px(18.))
+                                        .font_weight(FontWeight::BOLD)
+                                        .child(if signed {
+                                            id.clone()
+                                        } else {
+                                            "Not signed in".into()
+                                        }),
+                                )
+                                .child(div().text_color(t.muted).child(host.clone())),
+                        ),
+                )
+                .when(signed, |d| d.child(row(&t, "Server", host))),
+        )
+    }
+
+    /// Label on the left, dropdown on the right showing the current device.
+    fn device_row(
+        &self,
+        t: &crate::theme::Theme,
+        label: &'static str,
+        id: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let (list, cur) = if id == "mic" {
+            (&self.mics, self.mic)
+        } else {
+            (&self.outs, self.out)
+        };
+        let view = cx.entity();
+        let trigger = div()
+            .id(SharedString::from(format!("{id}-btn")))
+            .focusable()
+            .tab_stop(true)
+            .role(Role::Button)
+            .aria_label(label)
+            .w(px(280.))
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .min_h(px(36.))
+            .rounded(t.radius)
+            .border_1()
+            .border_color(t.line)
+            .bg(t.fill)
+            .hover(|s| s.bg(t.fill_hover))
+            .focus_visible(|s| s.border_color(t.focus))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.open = if this.open == Some(id) {
+                    None
+                } else {
+                    Some(id)
+                };
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .flex_1()
+                    .truncate()
+                    .child(list.get(cur).cloned().unwrap_or_else(|| "No device".into())),
+            )
+            .child(icon("caret-down", 14., t.muted));
+        let mut menu = Dropdown::new(id, trigger)
+            .width(px(280.))
+            .open(self.open == Some(id))
+            .on_dismiss(move |_, cx| {
+                view.update(cx, |this, cx| {
+                    this.open = None;
+                    cx.notify();
+                })
+            });
+        for (i, name) in list.iter().enumerate() {
+            menu = menu.item(DropdownItem::new(name.clone()).on_click(cx.listener(
+                move |this, _, _, cx| {
+                    if id == "mic" {
+                        this.mic = i;
+                    } else {
+                        this.out = i;
+                    }
+                    cx.notify();
+                },
+            )));
+        }
+        row(t, label, menu)
+    }
+
+    fn voice(&self, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme();
+        let this = cx.entity().downgrade();
+        let vol = self.volume;
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                card(&t, "Devices")
+                    .child(self.device_row(&t, "Microphone", "mic", cx))
+                    .child(self.device_row(&t, "Output", "out", cx)),
+            )
+            .child(
+                card(&t, "Output volume").child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(div().flex_1().child(Slider::new(
+                            "volume",
+                            vol as f32 / 100.,
+                            move |v, _, cx| {
+                                this.update(cx, |t, cx| {
+                                    t.volume = (v * 20.).round() as i32 * 5;
+                                    cx.notify();
+                                })
+                                .ok();
+                            },
+                        )))
+                        .child(div().w(px(44.)).text_right().child(format!("{vol}%"))),
+                ),
+            )
+    }
+
+    fn about(&self, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme();
+        div().child(
+            card(&t, "Feather Chat")
+                .child(row(&t, "Version", env!("CARGO_PKG_VERSION")))
+                .child(
+                    div()
+                        .text_color(t.muted)
+                        .child("Open source libraries are credited in CREDITS.md."),
+                ),
+        )
     }
 }
 
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
-        let v = self.voice_tab;
-        let this = cx.entity().downgrade();
-        let (t1, t2) = (this.clone(), this);
-        let body = if v {
-            div()
-                .flex()
-                .flex_col()
-                .gap_3()
-                .p_3()
-                .child(DevicePicker::new(
-                    "mic",
-                    "Microphone:",
-                    &self.mics,
-                    self.mic,
-                    move |i, _, cx| {
-                        t1.update(cx, |t, cx| {
-                            t.mic = i;
-                            cx.notify();
-                        })
-                        .ok();
-                    },
-                ))
-                .child(DevicePicker::new(
-                    "out",
-                    "Audio device:",
-                    &self.outs,
-                    self.out,
-                    move |i, _, cx| {
-                        t2.update(cx, |t, cx| {
-                            t.out = i;
-                            cx.notify();
-                        })
-                        .ok();
-                    },
-                ))
-                .child(
-                    // ponytail: gpui has no slider; step buttons instead.
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child("Volume:")
-                        .child(
-                            Button::new("vol-down", "−")
-                                .on_click(cx.listener(|t, _, _, cx| t.step_volume(-10, cx))),
-                        )
-                        .child(format!("{}%", self.volume))
-                        .child(
-                            Button::new("vol-up", "+")
-                                .on_click(cx.listener(|t, _, _, cx| t.step_volume(10, cx))),
-                        ),
-                )
-        } else {
-            div() // General: no settings yet.
+        let page = self.page;
+        let tab = |id: &'static str, label: &'static str, p: Page, cx: &mut Context<Self>| {
+            Tab::new(id, label, page == p).on_click(cx.listener(move |t, _, _, cx| {
+                t.page = p;
+                cx.notify();
+            }))
+        };
+        let body = match page {
+            Page::Account => self.account(cx),
+            Page::Voice => self.voice(cx),
+            Page::About => self.about(cx),
         };
         tab_nav(div())
             .track_focus(&self.focus)
@@ -155,19 +307,22 @@ impl Render for SettingsView {
             .child(
                 div()
                     .flex()
-                    .child(Tab::new("t-general", "General", !v).on_click(cx.listener(
-                        |t, _, _, cx| {
-                            t.voice_tab = false;
-                            cx.notify();
-                        },
-                    )))
-                    .child(
-                        Tab::new("t-voice", "Voice", v).on_click(cx.listener(|t, _, _, cx| {
-                            t.voice_tab = true;
-                            cx.notify();
-                        })),
-                    ),
+                    .flex_none()
+                    .px_2()
+                    .border_b_1()
+                    .border_color(t.line)
+                    .child(tab("t-account", "Account", Page::Account, cx))
+                    .child(tab("t-voice", "Voice", Page::Voice, cx))
+                    .child(tab("t-about", "About", Page::About, cx)),
             )
-            .child(body)
+            .child(
+                div()
+                    .id("settings-body")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .p_4()
+                    .child(body),
+            )
     }
 }
