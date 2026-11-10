@@ -4,11 +4,12 @@
 mod auth;
 mod components;
 mod main_view;
+
+mod markdown;
 mod settings;
 mod titlebar;
 mod window_frame;
 
-pub use super::utils::markdown::markdown::{Markdown, MdTheme};
 pub use auth::{AuthRequest, AuthView};
 pub use main_view::MainView;
 pub use settings::Session;

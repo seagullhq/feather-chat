@@ -5,7 +5,6 @@ mod model;
 mod store;
 mod theme;
 mod ui;
-mod utils;
 
 use api::{Control, Event, Request};
 use gpui::{prelude::*, *};
