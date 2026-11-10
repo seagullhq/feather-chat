@@ -21,6 +21,13 @@ cpal = "0.15"
 native-theme = { version = "0.7.0", features = ["native", "watch"] }
 opus-rs = "0.1.41"
 rtrb = "0.4.1"
+keyring = { version = "3", default-features = false, features = [
+    "apple-native",
+    "windows-native",
+    "async-secret-service",
+    "async-io",
+    "crypto-rust",
+] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

@@ -2,6 +2,7 @@ mod api;
 mod input;
 mod media;
 mod model;
+mod store;
 mod theme;
 mod ui;
 
@@ -85,6 +86,8 @@ struct Root {
     main: Entity<MainView>,
     focus: FocusHandle,
     logged_in: bool,
+    /// Credentials of the in-flight login, saved to the keyring on success.
+    pending: Option<(String, String, String)>,
     events: async_channel::Sender<Event>,
     control: Option<Control>,
 }
@@ -93,8 +96,7 @@ impl Root {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (events, rx) = async_channel::unbounded();
         let auth = cx.new(AuthView::new);
-        let demo = std::env::var_os("FEATHER_FAKE_LOGIN").is_some();
-        let main = cx.new(|cx| MainView::new(window, cx, demo));
+        let main = cx.new(|cx| MainView::new(window, cx));
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         cx.subscribe(&auth, |this, _, req: &AuthRequest, cx| {
@@ -109,15 +111,26 @@ impl Root {
             }
         })
         .detach();
-        Self {
+        let mut this = Self {
             auth,
             main,
             focus,
-            // Dev shortcut: FEATHER_FAKE_LOGIN=1 skips the login screen.
-            logged_in: std::env::var_os("FEATHER_FAKE_LOGIN").is_some(),
+            pending: None,
+            logged_in: false,
             events,
             control: None,
+        };
+        // Auto-login from the keyring (blocking read, once at startup).
+        if let Some(s) = store::load() {
+            // Optimistic: show the main view now, fall back to login on failure.
+            this.logged_in = true;
+            let req = Request::Login {
+                identifier: s.identifier,
+                password: s.password,
+            };
+            this.start(s.host, req, cx);
         }
+        this
     }
 
     fn on_request(&mut self, req: &AuthRequest, cx: &mut Context<Self>) {
@@ -147,10 +160,24 @@ impl Root {
                 },
             ),
         };
+        self.start(host.clone(), req, cx);
+    }
+
+    fn start(&mut self, host: String, req: Request, cx: &mut Context<Self>) {
+        let (id, pw) = match &req {
+            Request::Login {
+                identifier,
+                password,
+            } => (identifier, password),
+            Request::Register {
+                username, password, ..
+            } => (username, password),
+        };
+        self.pending = Some((host.clone(), id.clone(), pw.clone()));
         self.main.update(cx, |main, _| {
-            main.set_hostname(host.to_string());
+            main.set_hostname(host.clone());
         });
-        let control = api::spawn(host.clone(), req, self.events.clone());
+        let control = api::spawn(host, req, self.events.clone());
         self.control = Some(control.clone());
         self.main
             .update(cx, |main, cx| main.set_control(control, cx));
@@ -161,8 +188,17 @@ impl Root {
             Event::AuthOk => {
                 self.auth.update(cx, |a, cx| a.on_succeeded(cx));
                 self.logged_in = true;
+                if let Some((h, i, p)) = self.pending.take() {
+                    std::thread::spawn(move || store::save(&h, &i, &p));
+                }
             }
             Event::AuthFailed(m) | Event::RegisterFailed(m) => {
+                self.logged_in = false;
+                // ponytail: any failure drops the saved login (also a network
+                // error); the user just types it again.
+                if self.pending.take().is_some() {
+                    std::thread::spawn(store::clear);
+                }
                 self.auth.update(cx, |a, cx| a.on_failed(m, cx))
             }
             Event::ServersListed(servers) => self

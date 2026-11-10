@@ -26,6 +26,8 @@ fn default_mic() -> String {
 
 pub struct MainView {
     servers: Vec<Server>,
+    /// False until the first server list arrives: the sidebar shows a skeleton.
+    servers_loaded: bool,
     server: usize,
     /// (server, channel) you are connected to.
     joined: Option<(usize, usize)>,
@@ -43,11 +45,10 @@ pub struct MainView {
     hostname: String,
     /// Levels and mute flags of the running voice session, while joined.
     media: Option<std::sync::Arc<media::Shared>>,
-    demo: bool,
 }
 
 impl MainView {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>, demo: bool) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let add = cx.new(AddServerModal::new);
         cx.subscribe_in(
             &add,
@@ -72,20 +73,21 @@ impl MainView {
         )
         .detach();
 
-        // Demo mode fakes voice activity; otherwise levels come from the media engine.
+        // Copies mic and speaker levels from the voice engine into the model.
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(80))
                     .await;
-                if this.update(cx, |t, cx| t.tick(cx)).is_err() {
+                if this.update(cx, |t, cx| t.poll_media(cx)).is_err() {
                     break;
                 }
             }
         })
         .detach();
         Self {
-            servers: if demo { model::demo() } else { vec![] },
+            servers: vec![],
+            servers_loaded: false,
             server: 0,
             joined: None,
             me: Member::new("Tu"),
@@ -101,7 +103,6 @@ impl MainView {
             server_menu: false,
             hostname: String::new(),
             media: None,
-            demo,
         }
     }
 
@@ -174,6 +175,7 @@ impl MainView {
                 }
             })
             .collect();
+        self.servers_loaded = true;
         self.server = self.server.min(self.servers.len().saturating_sub(1));
         self.joined = None;
         self.load_channels();
@@ -282,6 +284,7 @@ impl MainView {
 
     pub fn on_disconnected(&mut self, cx: &mut Context<Self>) {
         self.control = None;
+        self.servers_loaded = true;
         self.joined = None;
         self.media = None;
         self.add.update(cx, |modal, cx| {
@@ -290,26 +293,6 @@ impl MainView {
         self.add_channel.update(cx, |modal, cx| {
             modal.on_failed("Connection lost.".into(), cx)
         });
-        cx.notify();
-    }
-
-    fn tick(&mut self, cx: &mut Context<Self>) {
-        if !self.demo {
-            return self.poll_media(cx);
-        }
-        for s in &mut self.servers {
-            for c in &mut s.channels {
-                let mut talking = c.members.iter().filter(|m| m.is_talking()).count();
-                for m in &mut c.members {
-                    let was = m.is_talking();
-                    m.simulate(talking);
-                    talking = talking + m.is_talking() as usize - was as usize;
-                }
-            }
-        }
-        if self.joined.is_some() {
-            self.me.simulate(0);
-        }
         cx.notify();
     }
 

@@ -4,6 +4,7 @@ use super::super::components::{Avatar, ToolButton, icon};
 use crate::model::Server;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
+use std::time::Duration;
 
 /// One voice channel: name, head count and a peek of who is inside.
 #[derive(IntoElement)]
@@ -154,6 +155,22 @@ impl super::MainView {
                     .flex()
                     .items_center()
                     .gap_2()
+                    .when(!self.servers_loaded, |d| {
+                        d.children((0usize..3).map(|i| {
+                            div()
+                                .size(px(32.))
+                                .flex_none()
+                                .rounded(t.radius)
+                                .bg(t.fill)
+                                .with_animation(
+                                    ("server-skeleton", i),
+                                    Animation::new(Duration::from_millis(1200))
+                                        .repeat()
+                                        .with_easing(pulsating_between(0.4, 1.)),
+                                    |d, o| d.opacity(o),
+                                )
+                        }))
+                    })
                     .children(self.servers.iter().enumerate().map(|(i, s)| {
                         server_chip(
                             &t,
