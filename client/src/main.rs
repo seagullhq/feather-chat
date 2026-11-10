@@ -9,7 +9,7 @@ mod ui;
 use api::{Control, Event, Request};
 use gpui::{prelude::*, *};
 use theme::ThemeExt;
-use ui::{AuthRequest, AuthView, MainView};
+use ui::{AuthRequest, AuthView, MainView, Titlebar};
 
 macro_rules! icons {
     ($($n:literal),*) => {
@@ -33,14 +33,18 @@ icons!(
     "gear-six",
     "hash",
     "home",
+    "copy",
     "microphone-slash",
     "microphone",
     "phone-slash",
     "phone",
     "plus",
     "server",
+    "minus",
     "sidebar-simple",
-    "speaker-high"
+    "speaker-high",
+    "square",
+    "x"
 );
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -84,6 +88,7 @@ impl AssetSource for Assets {
 struct Root {
     auth: Entity<AuthView>,
     main: Entity<MainView>,
+    titlebar: Entity<Titlebar>,
     focus: FocusHandle,
     logged_in: bool,
     /// Credentials of the in-flight login, saved to the keyring on success.
@@ -97,6 +102,7 @@ impl Root {
         let (events, rx) = async_channel::unbounded();
         let auth = cx.new(AuthView::new);
         let main = cx.new(|cx| MainView::new(window, cx));
+        let titlebar = cx.new(|_| Titlebar::new("Feather Chat"));
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         cx.subscribe(&auth, |this, _, req: &AuthRequest, cx| {
@@ -114,6 +120,7 @@ impl Root {
         let mut this = Self {
             auth,
             main,
+            titlebar,
             focus,
             pending: None,
             logged_in: false,
@@ -268,20 +275,24 @@ impl Root {
 }
 
 impl Render for Root {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
-        ui::tab_nav(div())
+        let body = ui::tab_nav(div())
             .track_focus(&self.focus)
             .size_full()
+            .flex()
+            .flex_col()
             .bg(t.bg)
             .text_color(t.text)
             .font_family(t.font.clone())
             .text_size(t.font_size)
-            .child(if self.logged_in {
+            .child(self.titlebar.clone())
+            .child(div().flex_1().min_h_0().child(if self.logged_in {
                 self.main.clone().into_any_element()
             } else {
                 self.auth.clone().into_any_element()
-            })
+            }));
+        ui::window_frame(body, t.line, window)
     }
 }
 
@@ -305,10 +316,15 @@ fn main() {
             input::bind_keys(cx);
             ui::bind_keys(cx);
             let opts = WindowOptions {
+                // Custom title bar (ui/titlebar.rs): the OS frame is hidden, on
+                // macOS the native traffic lights stay at this position.
                 titlebar: Some(TitlebarOptions {
                     title: Some("Feather Chat".into()),
-                    ..Default::default()
+                    appears_transparent: true,
+                    traffic_light_position: Some(point(px(9.), px(9.))),
                 }),
+                app_owns_titlebar_drag: true,
+                window_decorations: Some(WindowDecorations::Client),
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
                     size(px(800.), px(600.)),

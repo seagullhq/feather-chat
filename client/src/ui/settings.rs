@@ -32,7 +32,7 @@ pub fn open_settings(cx: &mut App) {
         ..Default::default()
     };
     if let Ok(handle) = cx.open_window(opts, |window, cx| {
-        let view = cx.new(|cx| SettingsView::new(cx));
+        let view = cx.new(SettingsView::new);
         window.focus(&view.read(cx).focus.clone(), cx);
         view
     }) {

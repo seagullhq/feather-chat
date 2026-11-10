@@ -5,9 +5,13 @@ mod auth;
 mod components;
 mod main_view;
 mod settings;
+mod titlebar;
+mod window_frame;
 
 pub use auth::{AuthRequest, AuthView};
 pub use main_view::MainView;
+pub use titlebar::Titlebar;
+pub use window_frame::frame as window_frame;
 
 use gpui::{App, KeyBinding, actions, prelude::*};
 
