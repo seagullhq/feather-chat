@@ -29,6 +29,7 @@ keyring = { version = "3", default-features = false, features = [
     "crypto-rust",
 ] }
 pulldown-cmark = { version = "0.13", default-features = false }
+directories = "6.0.0"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

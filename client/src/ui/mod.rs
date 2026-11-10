@@ -8,6 +8,7 @@ mod main_view;
 mod markdown;
 mod settings;
 mod titlebar;
+mod userfiles;
 mod window_frame;
 
 pub use auth::{AuthRequest, AuthView};

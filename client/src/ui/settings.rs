@@ -1,5 +1,6 @@
 use super::components::{Avatar, Button, Dropdown, DropdownItem, Slider, Tab, icon};
 use super::tab_nav;
+use super::userfiles::{read_user_file, write_user_file};
 use crate::media::PREFS;
 use crate::theme::ThemeExt;
 use crate::ui::markdown::Markdown;
@@ -9,18 +10,30 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::process::Command;
 
 pub fn fetch_credits() -> Result<String, Box<dyn std::error::Error>> {
-    let output = Command::new("curl")
-        .args([
-            "-fsSL",
-            "https://downloads.seagullcode.dev/downloads/CREDITS.txt",
-        ])
-        .output()?;
+    let credits = match read_user_file("CREDITS.txt")? {
+        Some(content) => content,
+        None => {
+            let output = Command::new("curl")
+                .args([
+                    "-fsSL",
+                    "https://downloads.seagullcode.dev/downloads/CREDITS.txt",
+                ])
+                .output()?;
 
-    if !output.status.success() {
-        return Err("Failed to download credits".into());
-    }
+            if !output.status.success() {
+                return Err("Failed to download credits".into());
+            }
 
-    Ok(String::from_utf8(output.stdout)?)
+            let credits = String::from_utf8(output.stdout)?;
+
+            write_user_file("CREDITS.txt", &credits)
+                .map_err(|_| "Failed to create cache file for: CREDITS.txt")?;
+
+            credits
+        }
+    };
+
+    Ok(credits)
 }
 
 use std::sync::LazyLock;
