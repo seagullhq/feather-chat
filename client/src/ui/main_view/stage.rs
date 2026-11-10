@@ -5,7 +5,7 @@ use gpui::{prelude::*, *};
 impl super::MainView {
     pub(super) fn stage(&self, viewport: Size<Pixels>, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
-        let joined_here = self.joined == Some((self.server, self.viewing));
+        let joined_here = self.joined == Some((self.server, self.viewing()));
         let mut tiles: Vec<(String, f32, bool, bool)> = self
             .channel_view()
             .map(|c| {
@@ -38,7 +38,7 @@ impl super::MainView {
         let size = sizes.into_iter().find(|s| fits(*s)).unwrap_or(48.);
         let all_fit = fits(size);
 
-        let body = if self.channel_view().is_none() {
+        let body = if self.servers.get(self.server).is_none() {
             div()
                 .flex_1()
                 .flex()
@@ -53,6 +53,15 @@ impl super::MainView {
                         .primary()
                         .on_click(cx.listener(|this, _, w, cx| this.set_adding(true, w, cx))),
                 )
+                .into_any_element()
+        } else if self.channel_view().is_none() {
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(t.muted)
+                .child("Nessun canale ancora.")
                 .into_any_element()
         } else if tiles.is_empty() {
             div()

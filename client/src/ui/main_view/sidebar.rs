@@ -1,4 +1,5 @@
 use super::super::components::ClickHandler;
+use super::super::components::Dropdown;
 use super::super::components::{Avatar, ToolButton, icon};
 use crate::model::Server;
 use crate::theme::ThemeExt;
@@ -105,13 +106,12 @@ pub(super) fn server_face(
 /// never changes. Flat: no shadow, no gradient.
 fn server_chip(
     t: &crate::theme::Theme,
-    id: usize,
     server: &Server,
     selected: bool,
     on_click: ClickHandler,
 ) -> impl IntoElement {
     div()
-        .id(("server", id))
+        .id(("server", server.id as usize))
         .focusable()
         .tab_stop(true)
         .role(Role::Button)
@@ -137,6 +137,7 @@ impl super::MainView {
     pub(super) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let server = self.servers.get(self.server);
+        let view = cx.entity();
         div()
             .w(px(240.))
             .flex_none()
@@ -156,12 +157,12 @@ impl super::MainView {
                     .children(self.servers.iter().enumerate().map(|(i, s)| {
                         server_chip(
                             &t,
-                            i,
                             s,
                             i == self.server,
                             Box::new(cx.listener(move |this, _, _, cx| {
                                 this.server = i;
-                                this.viewing = 0;
+                                this.server_menu = false;
+                                this.load_channels();
                                 cx.notify();
                             })),
                         )
@@ -174,11 +175,58 @@ impl super::MainView {
             .when_some(server, |d, s| {
                 d.child(
                     div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
                         .px_1()
                         .font_weight(FontWeight::BOLD)
-                        .child(s.name.clone()),
+                        .child(
+                            div()
+                                .flex_1()
+                                .font_weight(FontWeight::BOLD)
+                                .text_size(px(18.))
+                                .child(s.name.clone()),
+                        )
+                        .child(
+                            Dropdown::new(
+                                "server-menu",
+                                ToolButton::new("server-menu-btn", "", "dots-three").on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.server_menu = !this.server_menu;
+                                        cx.notify();
+                                    }),
+                                ),
+                            )
+                            .open(self.server_menu)
+                            .on_dismiss({
+                                let view = view.clone();
+                                move |_, cx| {
+                                    view.update(cx, |this, cx| {
+                                        this.server_menu = false;
+                                        cx.notify();
+                                    })
+                                }
+                            })
+                            .entry("user-plus", "Invite", |_, _, _| {
+                                // TODO: invita persone
+                            })
+                            .entry(
+                                "plus",
+                                "Add new channel",
+                                cx.listener(|this, _, window, cx| {
+                                    this.set_adding_channel(true, window, cx)
+                                }),
+                            )
+                            .entry("gear", "Settings", |_, _, _| {
+                                // TODO: impostazioni server
+                            })
+                            .entry("sign-out", "Exit", |_, _, _| {
+                                // TODO: esci dal server
+                            }),
+                        ),
                 )
-                .child(
+                .child({
+                    let viewing = self.viewing();
                     div()
                         .id("channels")
                         .flex_1()
@@ -187,7 +235,7 @@ impl super::MainView {
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .children(s.channels.iter().enumerate().map(|(i, c)| {
+                        .children(s.channels.iter().enumerate().map(move |(i, c)| {
                             let here = self.joined == Some((self.server, i));
                             let mut members: Vec<_> = c
                                 .members
@@ -206,15 +254,15 @@ impl super::MainView {
                                 id: i,
                                 name: c.name.clone().into(),
                                 members,
-                                viewing: i == self.viewing,
+                                viewing: i == viewing,
                                 joined: here,
                                 on_click: Box::new(cx.listener(move |this, _, _, cx| {
-                                    this.viewing = i;
+                                    this.set_viewing(i);
                                     cx.notify();
                                 })),
                             }
-                        })),
-                )
+                        }))
+                })
             })
     }
 }

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Feather Chat
+Comment=Chat with your friends
+Exec=feather-chat
+Icon=feather-chat
+Terminal=false
+Categories=Network;Chat;
+StartupWMClass=feather-chat

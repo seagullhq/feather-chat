@@ -2,6 +2,8 @@
 //! protocol has no roster messages yet (docs/protocol.md).
 
 pub struct Member {
+    /// Media id from the server; 0 for demo data.
+    pub ssrc: u32,
     pub name: String,
     pub muted: bool,
     pub deafened: bool,
@@ -15,11 +17,21 @@ pub const SPEAKING: f32 = 0.12;
 impl Member {
     pub fn new(name: &str) -> Self {
         Self {
+            ssrc: 0,
             name: name.into(),
             muted: false,
             deafened: false,
             level: 0.,
             talking: false,
+        }
+    }
+
+    pub fn from_roster(r: crate::api::RosterMember) -> Self {
+        Self {
+            ssrc: r.ssrc,
+            muted: r.muted,
+            deafened: r.deafened,
+            ..Self::new(&r.name)
         }
     }
 
@@ -57,19 +69,26 @@ impl Member {
 }
 
 pub struct Channel {
+    /// Channel row ID from the control plane; 0 for demo data.
+    pub id: i64,
     pub name: String,
     pub members: Vec<Member>,
 }
 
 pub struct Server {
+    /// Server row ID from the control plane. 0 until listing exists for old rows.
+    pub id: i64,
     pub name: String,
     /// Profile picture (local file). None = initial on a system-color tint.
     pub icon: Option<std::path::PathBuf>,
     pub channels: Vec<Channel>,
+    /// Index of the channel being watched on this server.
+    pub viewing: usize,
 }
 
 fn channel(name: &str, members: Vec<Member>) -> Channel {
     Channel {
+        id: 0,
         name: name.into(),
         members,
     }
@@ -82,6 +101,7 @@ fn people(names: &[&str]) -> Vec<Member> {
 pub fn demo() -> Vec<Server> {
     vec![
         Server {
+            id: 1,
             name: "Casa".into(),
             icon: None,
             channels: vec![
@@ -104,22 +124,43 @@ pub fn demo() -> Vec<Server> {
                 ),
                 channel("Silenzio", vec![]),
             ],
+            viewing: 0,
         },
         Server {
+            id: 2,
             name: "Band".into(),
             icon: None,
             channels: vec![
                 channel("Prove", people(&["Giulia", "Tommaso"])),
                 channel("Mix", vec![]),
             ],
+            viewing: 0,
         },
         Server {
+            id: 3,
             name: "Uni".into(),
             icon: None,
             channels: vec![channel(
                 "Studio",
                 people(&["Sara", "Paolo", "Nico", "Elena", "Fede"]),
             )],
+            viewing: 0,
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_tracks_viewing_channel() {
+        let mut servers = demo();
+        assert_eq!(servers[0].viewing, 0);
+        assert_eq!(servers[1].viewing, 0);
+
+        servers[0].viewing = 2;
+        assert_eq!(servers[0].viewing, 2);
+        assert_eq!(servers[1].viewing, 0);
+    }
 }
