@@ -57,6 +57,11 @@ impl Prefs {
     }
 }
 
+/// Human-readable device name (what the OS shows), the key for saved choices.
+pub fn dev_name(d: &cpal::Device) -> Option<String> {
+    d.description().ok().map(|d| d.name().to_string())
+}
+
 /// The named device, else the OS default.
 fn device(host: &cpal::Host, name: Option<String>, input: bool) -> Option<cpal::Device> {
     let all = if input {
@@ -64,17 +69,14 @@ fn device(host: &cpal::Host, name: Option<String>, input: bool) -> Option<cpal::
     } else {
         host.output_devices().ok()?.collect()
     };
-    name.and_then(|n| {
-        all.into_iter()
-            .find(|d| d.name().ok().as_deref() == Some(&n))
-    })
-    .or_else(|| {
-        if input {
-            host.default_input_device()
-        } else {
-            host.default_output_device()
-        }
-    })
+    name.and_then(|n| all.into_iter().find(|d| dev_name(d).as_deref() == Some(&n)))
+        .or_else(|| {
+            if input {
+                host.default_input_device()
+            } else {
+                host.default_output_device()
+            }
+        })
 }
 
 /// State shared with the UI. Atomics in, levels out.
@@ -257,9 +259,9 @@ fn audio(shared: Arc<Shared>, cap: rtrb::Producer<i16>, out: rtrb::Consumer<f32>
 /// 48 kHz if the device offers it (no resampling), else the device default.
 fn pick(
     ranges: Option<Vec<cpal::SupportedStreamConfigRange>>,
-    default: Result<SupportedStreamConfig, cpal::DefaultStreamConfigError>,
+    default: Result<SupportedStreamConfig, cpal::Error>,
 ) -> Result<SupportedStreamConfig, String> {
-    let wanted = cpal::SampleRate(RATE);
+    let wanted: cpal::SampleRate = RATE;
     ranges
         .unwrap_or_default()
         .into_iter()
@@ -302,9 +304,9 @@ where
     f32: FromSample<T>,
 {
     let ch = cfg.channels as usize;
-    let mut rs = Push::new(cfg.sample_rate.0);
+    let mut rs = Push::new(cfg.sample_rate);
     dev.build_input_stream(
-        cfg,
+        cfg.clone(),
         move |data: &[T], _| {
             let Ok(mut tx) = tx.lock() else { return };
             for frame in data.chunks(ch) {
@@ -346,9 +348,9 @@ fn speaker<T: SizedSample + FromSample<f32>>(
     rx: Arc<Mutex<rtrb::Consumer<f32>>>,
 ) -> Result<Stream, String> {
     let ch = cfg.channels as usize;
-    let mut rs = Pull::new(cfg.sample_rate.0);
+    let mut rs = Pull::new(cfg.sample_rate);
     dev.build_output_stream(
-        cfg,
+        cfg.clone(),
         move |data: &mut [T], _| {
             let Ok(mut rx) = rx.lock() else { return };
             for frame in data.chunks_mut(ch) {

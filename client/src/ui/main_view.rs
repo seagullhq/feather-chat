@@ -17,10 +17,10 @@ use add_channel::AddChannelModal;
 use add_server::{AddServerModal, ModalEvent};
 
 fn default_mic() -> String {
-    use cpal::traits::{DeviceTrait, HostTrait};
+    use cpal::traits::HostTrait;
     cpal::default_host()
         .default_input_device()
-        .and_then(|d| d.name().ok())
+        .and_then(|d| media::dev_name(&d))
         .unwrap_or_else(|| "No microphone".into())
 }
 

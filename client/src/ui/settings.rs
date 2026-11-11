@@ -146,19 +146,21 @@ struct SettingsView {
 
 impl SettingsView {
     fn new(cx: &mut Context<Self>) -> Self {
-        use cpal::traits::{DeviceTrait, HostTrait};
+        use cpal::traits::HostTrait;
         let host = cpal::default_host();
         let names = |it: Option<Vec<cpal::Device>>| {
             it.unwrap_or_default()
                 .iter()
-                .filter_map(|d| d.name().ok())
+                .filter_map(crate::media::dev_name)
+                // ponytail: PulseAudio lists every output's loopback as a mic.
+                .filter(|n| !n.starts_with("Monitor of "))
                 .collect::<Vec<_>>()
         };
         let mics = names(host.input_devices().ok().map(|i| i.collect()));
         let outs = names(host.output_devices().ok().map(|i| i.collect()));
         // Start on the OS default device.
         let pos = |list: &[String], d: Option<cpal::Device>| {
-            d.and_then(|d| d.name().ok())
+            d.and_then(|d| crate::media::dev_name(&d))
                 .and_then(|n| list.iter().position(|x| *x == n))
                 .unwrap_or(0)
         };
