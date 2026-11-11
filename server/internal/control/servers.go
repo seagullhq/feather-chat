@@ -30,6 +30,7 @@ func (s *Server) handleListServers(c *client, _ protocol.Control) {
 			ID:         server.ID,
 			Name:       server.Name,
 			InviteCode: server.InviteCode,
+			Owner:      server.OwnerID == c.sess.UserID,
 		})
 	}
 	c.send(protocol.Control{Type: "ACK", Servers: summaries})

@@ -108,6 +108,7 @@ impl super::MainView {
             let len = n.chars().count();
             !(3..=32).contains(&len) || n == server.name
         };
+        let owner = server.owner;
         let confirm = self.sheet_ui.confirm_delete;
         let copied = self.sheet_ui.copied;
         let view = cx.entity();
@@ -173,36 +174,48 @@ impl super::MainView {
                                 .clone()
                                 .map(|e| div().text_color(t.danger).child(e)),
                         )
-                        .child(
-                            div()
-                                .flex()
-                                .items_end()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .child(Field::new("Name", &self.sheet_ui.rename)),
-                                )
-                                .child(
-                                    Button::new("rename-server", "Save")
-                                        .primary()
-                                        .disabled(renamed)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            let name = this
-                                                .sheet_ui
-                                                .rename
-                                                .read(cx)
-                                                .text()
-                                                .trim()
-                                                .to_string();
-                                            if let (Some(c), Some(s)) =
-                                                (&this.control, this.servers.get(this.server))
-                                            {
-                                                c.rename_server(s.id, name);
-                                            }
-                                        })),
-                                ),
-                        )
+                        .when(owner, |d| {
+                            d.child(
+                                div()
+                                    .flex()
+                                    .items_end()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .child(Field::new("Name", &self.sheet_ui.rename)),
+                                    )
+                                    .child(
+                                        Button::new("rename-server", "Save")
+                                            .primary()
+                                            .disabled(renamed)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let name = this
+                                                    .sheet_ui
+                                                    .rename
+                                                    .read(cx)
+                                                    .text()
+                                                    .trim()
+                                                    .to_string();
+                                                if let (Some(c), Some(s)) =
+                                                    (&this.control, this.servers.get(this.server))
+                                                {
+                                                    c.rename_server(s.id, name);
+                                                }
+                                            })),
+                                    ),
+                            )
+                        })
+                        .when(!owner, |d| {
+                            d.child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(label("Name"))
+                                    .child(server.name.clone()),
+                            )
+                        })
                         .child(
                             div()
                                 .flex()
@@ -246,17 +259,18 @@ impl super::MainView {
                                         ),
                                 ),
                         )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_2()
-                                .pt_4()
-                                .border_t_1()
-                                .border_color(t.line)
-                                .child(label("Danger zone"))
-                                .child(if confirm {
-                                    div()
+                        .when(owner, |d| {
+                            d.child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .pt_4()
+                                    .border_t_1()
+                                    .border_color(t.line)
+                                    .child(label("Danger zone"))
+                                    .child(if confirm {
+                                        div()
                                         .flex()
                                         .items_center()
                                         .gap_2()
@@ -284,22 +298,23 @@ impl super::MainView {
                                                     cx.notify();
                                                 })),
                                         )
-                                } else {
-                                    div().flex().child(
-                                        Button::new("delete-server", "Delete server").on_click(
-                                            cx.listener(|this, _, _, cx| {
-                                                this.sheet_ui.confirm_delete = true;
-                                                cx.notify();
-                                            }),
-                                        ),
-                                    )
-                                }),
-                        )
+                                    } else {
+                                        div().flex().child(
+                                            Button::new("delete-server", "Delete server").on_click(
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.sheet_ui.confirm_delete = true;
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                        )
+                                    }),
+                            )
+                        })
                     })
                     .when(self.sheet_tab == SheetTab::Members, |d| {
                         d.child(label("People in this server")).children(
                             server.members.iter().enumerate().map(|(i, m)| {
-                                let menu = (!m.owner).then(|| {
+                                let menu = (owner && !m.owner).then(|| {
                                     let toggle = cx.listener(move |this, _, _, cx| {
                                         let ui = &mut this.sheet_ui;
                                         ui.member_menu = (ui.member_menu != Some(i)).then_some(i);

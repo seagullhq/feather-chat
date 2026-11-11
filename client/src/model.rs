@@ -48,6 +48,8 @@ pub struct Server {
     pub id: i64,
     pub name: String,
     pub invite_code: String,
+    /// You own it: rename, delete and member management are yours.
+    pub owner: bool,
     pub members: Vec<crate::api::ServerMember>,
     /// Profile picture (local file). None = initial on a system-color tint.
     pub icon: Option<std::path::PathBuf>,
@@ -65,6 +67,7 @@ mod tests {
             id,
             name: name.into(),
             invite_code: String::new(),
+            owner: false,
             members: vec![],
             icon: None,
             channels: vec![],

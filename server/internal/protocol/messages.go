@@ -39,6 +39,8 @@ type ServerSummary struct {
 	ID         int    `json:"id"`
 	Name       string `json:"name"`
 	InviteCode string `json:"inviteCode"`
+	// Owner is true when the asking user owns the server (may rename/delete it).
+	Owner bool `json:"owner"`
 }
 
 // ChannelTypeSummary is one entry of the channel type catalogue.

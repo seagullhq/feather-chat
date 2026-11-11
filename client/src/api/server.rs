@@ -8,6 +8,8 @@ pub struct ServerSummary {
     pub id: i64,
     pub name: String,
     pub invite_code: String,
+    /// The logged-in user owns it: may rename and delete it.
+    pub owner: bool,
 }
 
 #[derive(Clone)]
@@ -84,6 +86,7 @@ pub(super) fn list_servers(session: &mut Session) -> Result<Vec<ServerSummary>, 
                 .as_str()
                 .unwrap_or_default()
                 .to_string(),
+            owner: server["owner"].as_bool().unwrap_or(false),
         })
         .collect())
 }
