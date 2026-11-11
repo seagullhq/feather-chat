@@ -77,7 +77,7 @@ mod tests {
 
     #[test]
     fn server_tracks_viewing_channel() {
-        let mut servers = vec![server(1, "Casa"), server(2, "Band")];
+        let mut servers = [server(1, "Casa"), server(2, "Band")];
         assert_eq!(servers[0].viewing, 0);
         assert_eq!(servers[1].viewing, 0);
 
