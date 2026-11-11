@@ -1,11 +1,12 @@
-//! Account page: who is logged in, sign out and account deletion.
+//! Account page: who is logged in, account editing, sign out and deletion.
 
 use super::layout::{card, row};
 use crate::api::{Control, Event};
+use crate::input::TextInput;
 use crate::theme::{Theme, ThemeExt};
-use crate::ui::components::{Avatar, Button};
+use crate::ui::components::{Avatar, Button, Field};
+use crate::ui::settings::SettingsView;
 use gpui::{prelude::*, *};
-
 /// Who is logged in, for the Account page. Set by `Root` on login.
 pub struct Session {
     pub host: String,
@@ -17,6 +18,13 @@ pub struct Session {
 }
 
 impl Global for Session {}
+pub(super) fn input(
+    placeholder: &str,
+    masked: bool,
+    cx: &mut Context<SettingsView>,
+) -> Entity<TextInput> {
+    cx.new(|cx| TextInput::new(placeholder, masked, cx))
+}
 
 impl super::SettingsView {
     pub(super) fn account(&self, cx: &mut Context<Self>) -> Div {
@@ -67,6 +75,11 @@ impl super::SettingsView {
                             }),
                         ))
                     }),
+            )
+            .child(
+                card(&t, "Edit account")
+                    .child(Field::new("Username:", &self.edit_user))
+                    .child(Field::new("Password:", &self.edit_pw)),
             )
             .when(signed, |d| d.child(self.delete_account(&t, cx)))
     }

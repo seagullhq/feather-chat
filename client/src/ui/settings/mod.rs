@@ -18,6 +18,7 @@ use super::components::Tab;
 use super::titlebar::Titlebar;
 use super::window_frame::frame as window_frame;
 use super::{Dismiss, tab_nav};
+use crate::input::TextInput;
 use crate::media::PREFS;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
@@ -41,6 +42,9 @@ struct SettingsView {
     out: usize,
     volume: i32,
     titlebar: Entity<Titlebar>,
+    /// Account edit fields: the current username, and a new password.
+    edit_user: Entity<TextInput>,
+    edit_pw: Entity<TextInput>,
     /// Account deletion: asking for confirmation / request in flight / last error.
     confirm_delete: bool,
     deleting: bool,
@@ -84,6 +88,16 @@ impl SettingsView {
                 host.default_output_device(),
             ),
         );
+        // Start from the signed-in user; the password is never shown.
+        let current_user = cx
+            .try_global::<Session>()
+            .map(|s| s.identifier.clone())
+            .unwrap_or_default();
+        let edit_user = account::input("Username", false, cx);
+        if !current_user.is_empty() {
+            edit_user.update(cx, |input, cx| input.set_text(&current_user, cx));
+        }
+        let edit_pw = account::input("New password", true, cx);
         Self {
             focus: cx.focus_handle(),
             page: Page::Account,
@@ -94,6 +108,8 @@ impl SettingsView {
             outs,
             volume: PREFS.volume.load(Relaxed) as i32,
             titlebar: cx.new(|_| Titlebar::new("Settings").sheet()),
+            edit_user,
+            edit_pw,
             confirm_delete: false,
             deleting: false,
             error: None,
