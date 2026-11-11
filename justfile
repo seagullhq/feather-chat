@@ -14,7 +14,7 @@ client_target := "../dist/client"
 default:
     @just --list
 
-# Build the client (release) into dist/client/release/.
+# Build the client for shipping (small, fat LTO, slow) into dist/client/release/.
 [working-directory('client')]
 build:
     cargo build --release --target-dir {{ client_target }}
@@ -24,10 +24,15 @@ build:
 build-debug:
     cargo build --target-dir {{ client_target }}
 
-# Build and run the client.
+# Fast optimized build (no LTO) into dist/client/fast/, for development.
+[working-directory('client')]
+build-fast:
+    cargo build --profile fast --target-dir {{ client_target }}
+
+# Build (fast profile) and run the client.
 [working-directory('client')]
 client:
-    cargo run --release --target-dir {{ client_target }}
+    cargo run --profile fast --target-dir {{ client_target }}
 
 # Install the client, desktop entry and icons for the current user.
 [linux]
