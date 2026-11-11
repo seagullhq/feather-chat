@@ -1,0 +1,41 @@
+# Dokploy / production: the feather-chat server. Postgres lives in another
+# Dokploy service; set POSTGRES_HOST to that service's app name, plus
+# POSTGRES_USER, POSTGRES_PASSWORD and POSTGRES_DB, in the Dokploy environment.
+services:
+  # postgres:
+  #   image: postgres:17
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+  #     POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+  #   volumes:
+  #     - db:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+  server:
+    build: ./server
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST:?set POSTGRES_HOST}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    # Raw TCP + UDP are not HTTP: publish them on the host, not through Traefik.
+    ports:
+      - "7700:7700/tcp"
+      - "7701:7701/udp"
+    # Shared network, so the other Dokploy service's Postgres is reachable by name.
+    networks:
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true
+
+# volumes:
+#   db:
