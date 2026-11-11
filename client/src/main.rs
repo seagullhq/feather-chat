@@ -24,6 +24,7 @@ macro_rules! icons {
 icons!(
     "arrow-left",
     "chats-teardrop",
+    "check",
     "compass",
     "dots-three",
     "ear-slash",
@@ -234,6 +235,15 @@ impl Root {
             Event::ServerCreateFailed(m) => self
                 .main
                 .update(cx, |main, cx| main.on_server_create_failed(m, cx)),
+            Event::ServerRenamed { id, name } => self
+                .main
+                .update(cx, |main, cx| main.on_server_renamed(id, name, cx)),
+            Event::ServerDeleted { id } => self
+                .main
+                .update(cx, |main, cx| main.on_server_deleted(id, cx)),
+            Event::ServerEditFailed(m) => self
+                .main
+                .update(cx, |main, cx| main.on_server_edit_failed(m, cx)),
             Event::ChannelCreated {
                 server_id,
                 id,

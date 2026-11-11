@@ -47,6 +47,7 @@ pub struct MainView {
     server_menu: bool,
     server_sheet: bool,
     sheet_tab: server_sheet::SheetTab,
+    sheet_ui: server_sheet::SheetUi,
     /// Window y of the server title bottom and of the content row top, measured
     /// while painting; the sheet starts between them.
     title_bottom: Rc<Cell<Pixels>>,
@@ -113,6 +114,7 @@ impl MainView {
             server_menu: false,
             server_sheet: false,
             sheet_tab: server_sheet::SheetTab::Settings,
+            sheet_ui: server_sheet::SheetUi::new(cx),
             title_bottom: Rc::default(),
             row_top: Rc::default(),
             sheet_focus: cx.focus_handle(),
@@ -308,6 +310,45 @@ impl MainView {
         self.joined = None;
         self.add
             .update(cx, |modal, cx| modal.on_created(name, invite_code, cx));
+        cx.notify();
+    }
+
+    pub fn on_server_renamed(&mut self, id: i64, name: String, cx: &mut Context<Self>) {
+        if let Some(s) = self.servers.iter_mut().find(|s| s.id == id) {
+            s.name = name;
+        }
+        self.sheet_ui.set_error(None);
+        cx.notify();
+    }
+
+    pub fn on_server_deleted(&mut self, id: i64, cx: &mut Context<Self>) {
+        let Some(i) = self.servers.iter().position(|s| s.id == id) else {
+            return;
+        };
+        self.servers.remove(i);
+        self.joined = match self.joined {
+            Some((s, _)) if s == i => {
+                self.media = None;
+                self.me.level = 0.;
+                None
+            }
+            Some((s, c)) if s > i => Some((s - 1, c)),
+            j => j,
+        };
+        if self.server > i || self.server >= self.servers.len() {
+            self.server = self.server.saturating_sub(1);
+        }
+        self.server_sheet = false;
+        self.sheet_ui.set_error(None);
+        let focus = self.focus.clone();
+        let entity = cx.entity_id();
+        cx.with_window(entity, |window, cx| window.focus(&focus, cx));
+        self.load_channels();
+        cx.notify();
+    }
+
+    pub fn on_server_edit_failed(&mut self, message: String, cx: &mut Context<Self>) {
+        self.sheet_ui.set_error(Some(message));
         cx.notify();
     }
 

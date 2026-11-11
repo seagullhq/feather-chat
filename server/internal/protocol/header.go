@@ -1,4 +1,7 @@
-package main
+// Package protocol defines the feather-chat wire formats: the 5-byte UDP
+// media header (§3), the length-prefixed JSON framing of TCP control
+// messages (§7), and those messages' payload types.
+package protocol
 
 import (
 	"encoding/binary"
@@ -13,6 +16,7 @@ const (
 	KindPing  uint8 = 1
 )
 
+// Header is the decoded UDP media header.
 type Header struct {
 	Version    uint8
 	Terminator bool
@@ -20,17 +24,19 @@ type Header struct {
 	SSRC       uint32
 }
 
-func EncodeHeader(header Header) []byte {
+// EncodeHeader packs h into its 5 wire bytes.
+func EncodeHeader(h Header) []byte {
 	b := make([]byte, HeaderLen)
 	var t byte
-	if header.Terminator {
+	if h.Terminator {
 		t = 0x20
 	}
-	b[0] = header.Version<<6 | t | header.Kind&0x1f
-	binary.BigEndian.PutUint32(b[1:], header.SSRC)
+	b[0] = h.Version<<6 | t | h.Kind&0x1f
+	binary.BigEndian.PutUint32(b[1:], h.SSRC)
 	return b
 }
 
+// DecodeHeader unpacks the first HeaderLen bytes of b.
 func DecodeHeader(b []byte) (Header, error) {
 	if len(b) < HeaderLen {
 		return Header{}, errors.New("short header")

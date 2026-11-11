@@ -158,6 +158,22 @@ pub(super) fn create_server(session: &mut Session, name: String) -> Result<Creat
     })
 }
 
+pub(super) fn rename_server(
+    session: &mut Session,
+    server_id: i64,
+    name: String,
+) -> Result<String, String> {
+    let ack =
+        session.call(json!({"type":"UPDATE_SERVER","serverId":server_id,"serverName":name}))?;
+    Ok(ack["name"].as_str().unwrap_or(&name).to_string())
+}
+
+pub(super) fn delete_server(session: &mut Session, server_id: i64) -> Result<(), String> {
+    session
+        .call(json!({"type":"DELETE_SERVER","serverId":server_id}))
+        .map(|_| ())
+}
+
 pub(super) fn create_channel(
     session: &mut Session,
     server_id: i64,

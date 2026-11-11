@@ -1,3 +1,5 @@
+// Package accounts registers and authenticates users, storing bcrypt
+// password hashes on PostgreSQL.
 package accounts
 
 import (

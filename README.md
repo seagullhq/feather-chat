@@ -62,7 +62,7 @@ development packages. The first client build compiles gpui from source
 |---|---|---|
 | `just build` | build the client | `cd client && cargo build --release` |
 | `just client` | build it, then run it | `cd client && cargo run --release` |
-| `just server` | build and run the server on `:7700` | `cd server && go build -o ../dist/server/feather-chat-server . && ../dist/server/feather-chat-server -tcp :7700` |
+| `just server` | build and run the server on `:7700` | `cd server && go build -o ../dist/server/feather-chat-server ./cmd/server && ../dist/server/feather-chat-server -tcp :7700` |
 | `just test` | run the Go and Rust tests | `cd server && go test -race ./... && cd ../client && cargo test` |
 | `just check` | format, vet, test and build | all of the above |
 | `just clean` | delete build output | `rm -rf client/target dist/server` |

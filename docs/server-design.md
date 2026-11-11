@@ -7,16 +7,18 @@ per room and never decodes. Protocol on the wire:
 ## Architecture
 
 ```
-main ─► control TCP listener ─► session per client ─► RoomManager
-        ▲                                              (map[string]*Room
-        └── UDP socket ◄── goroutine reader            + RWMutex)
+cmd/server ─► internal/control (TCP accept loop) ─► room.Session per client ─► internal/room.Manager
+              ▲                                                                   (map[room]map[ssrc]*Session
+              └── UDP socket ◄── room.ServeUDP goroutine                            + RWMutex)
 ```
 
-- `RoomManager` holds `map[room]map[ssrc]*Session`; TCP joins/leaves mutate
+- `internal/room.Manager` holds `map[room]map[ssrc]*Session`; TCP joins/leaves mutate
   the wiring; UDP sends only update `lastSeen`.
 - One goroutine reads the UDP socket; each packet parses the 5-byte header,
   resolves the session by SSRC, and forwards verbatim to room peers,
   excluding the sender.
+- `internal/protocol` owns the wire formats (UDP header, TCP framing, control
+  messages); `internal/control` routes each control message type to a handler.
 - The server stays entirely opaque to Opus: sequence numbers live on the
   client side and the whole client-side jitter story is client's to own.
 

@@ -1,13 +1,4 @@
-package main
-
-import (
-	"encoding/json"
-	"net"
-	"sync"
-	"time"
-
-	"go.mongodb.org/mongo-driver/v2/bson"
-)
+package protocol
 
 // Control is a TCP control message (§7): HELLO, JOIN, LEAVE, ACK, ROSTER.
 type Control struct {
@@ -21,7 +12,6 @@ type Control struct {
 	Muted           *bool                 `json:"muted,omitempty"`
 	Deafened        *bool                 `json:"deafened,omitempty"`
 	Username        string                `json:"username,omitempty"`
-	OwnerID         bson.ObjectID         `bson:"ownerId,omitempty"`
 	ServerName      string                `json:"serverName,omitempty"`
 	ServerID        int                   `json:"serverId,omitempty"`
 	InviteCode      string                `json:"inviteCode,omitempty"`
@@ -51,6 +41,7 @@ type ServerSummary struct {
 	InviteCode string `json:"inviteCode"`
 }
 
+// ChannelTypeSummary is one entry of the channel type catalogue.
 type ChannelTypeSummary struct {
 	ID       int    `json:"id"`
 	TypeName string `json:"name"`
@@ -71,49 +62,4 @@ type Member struct {
 	Name     string `json:"name"`
 	Muted    bool   `json:"muted"`
 	Deafened bool   `json:"deafened"`
-}
-
-// Session is one connected client (TCP control + UDP media).
-type Session struct {
-	SSRC uint32
-	Room string
-	// ChannelID is the DB channel behind Room; only the control goroutine touches it.
-	ChannelID int
-	UDPAddr   *net.UDPAddr
-
-	tcp      net.Conn
-	wmu      sync.Mutex
-	name     string
-	lastSeen time.Time
-	pinged   bool // Prima ping ricevuta?
-	muted    bool // guarded by RoomManager.mu
-	deafened bool // guarded by RoomManager.mu
-	lastMu   sync.Mutex
-
-	UserID   string
-	Username string
-}
-
-func (s *Session) authed() bool { return s.UserID != "" }
-
-func (session *Session) stale(now time.Time) bool {
-	session.lastMu.Lock()
-	defer session.lastMu.Unlock()
-	return now.Sub(session.lastSeen) > 60*time.Second
-}
-
-func (session *Session) touch() {
-	session.lastMu.Lock()
-	session.lastSeen = time.Now()
-	session.lastMu.Unlock()
-}
-
-func (session *Session) send(control Control) error {
-	b, err := json.Marshal(control)
-	if err != nil {
-		return err
-	}
-	session.wmu.Lock()
-	defer session.wmu.Unlock()
-	return writeFrame(session.tcp, b)
 }

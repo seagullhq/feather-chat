@@ -256,6 +256,19 @@ fn audio(shared: Arc<Shared>, cap: rtrb::Producer<i16>, out: rtrb::Consumer<f32>
     }
 }
 
+/// Stream error callback (runs on the audio thread). An xrun is a dropped
+/// buffer, not a dead stream: the rings and jitter buffer absorb the gap, and
+/// WASAPI also reports one at the start of a fresh stream. It is not actionable
+/// and would flood stderr from the audio thread, so ignore it; other errors
+/// still show.
+fn log_stream_error(prefix: &'static str) -> impl FnMut(cpal::Error) + Send + 'static {
+    move |e| {
+        if e.kind() != cpal::ErrorKind::Xrun {
+            eprintln!("{prefix}: {e}");
+        }
+    }
+}
+
 /// 48 kHz if the device offers it (no resampling), else the device default.
 fn pick(
     ranges: Option<Vec<cpal::SupportedStreamConfigRange>>,
@@ -316,7 +329,7 @@ where
                 });
             }
         },
-        |e| eprintln!("microphone: {e}"),
+        log_stream_error("microphone"),
         None,
     )
     .map_err(|e| e.to_string())
@@ -358,7 +371,7 @@ fn speaker<T: SizedSample + FromSample<f32>>(
                 frame.fill(s);
             }
         },
-        |e| eprintln!("speakers: {e}"),
+        log_stream_error("speakers"),
         None,
     )
     .map_err(|e| e.to_string())

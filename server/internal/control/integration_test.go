@@ -1,10 +1,9 @@
-package main
+package control_test
 
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -12,13 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/postgres"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
+
 	"github.com/seagullhq/feather-chat/server/internal/accounts"
+	"github.com/seagullhq/feather-chat/server/internal/config"
+	"github.com/seagullhq/feather-chat/server/internal/control"
 	"github.com/seagullhq/feather-chat/server/internal/migrations"
+	"github.com/seagullhq/feather-chat/server/internal/protocol"
+	"github.com/seagullhq/feather-chat/server/internal/room"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
 )
 
@@ -28,9 +29,9 @@ import (
 // Postgres.
 func testStore(t *testing.T) (*accounts.Store, *sql.DB) {
 	t.Helper()
-	_ = godotenv.Load("../.env")
+	_ = godotenv.Load("../../../.env")
 
-	db, err := sql.Open("pgx", defaultPostgresURI())
+	db, err := sql.Open("pgx", config.PostgresURI())
 	if err != nil {
 		t.Skipf("postgres open: %v", err)
 	}
@@ -42,32 +43,19 @@ func testStore(t *testing.T) (*accounts.Store, *sql.DB) {
 		t.Skipf("postgres unreachable (%s/%s): %v", os.Getenv("POSTGRES_HOST"), os.Getenv("POSTGRES_DB"), err)
 	}
 
-	if err := runTestMigrations(db); err != nil {
+	if _, err := migrations.Up(db); err != nil {
 		t.Fatalf("migrations: %v", err)
 	}
 	return accounts.NewStore(db), db
 }
 
-// runTestMigrations applies the embedded SQL migrations. It deliberately does
-// not close the migrate instance: the postgres driver wraps the same *sql.DB
-// and closing it would break the stores created right after.
-func runTestMigrations(db *sql.DB) error {
-	sourceDriver, err := iofs.New(migrations.FS, "sql")
-	if err != nil {
-		return err
-	}
-	driver, err := postgres.WithInstance(db, &postgres.Config{})
-	if err != nil {
-		return err
-	}
-	m, err := migrate.NewWithInstance("iofs", sourceDriver, "postgres", driver)
-	if err != nil {
-		return err
-	}
-	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		return err
-	}
-	return nil
+// serveTest starts a whole server (control TCP + media UDP) on the given
+// listeners, the same way main wires it.
+func serveTest(t *testing.T, ltcp net.Listener, ludp net.PacketConn, users *accounts.Store, serverStore *servers.ServerStore) {
+	t.Helper()
+	rooms := room.NewManager()
+	go rooms.ServeUDP(ludp.(*net.UDPConn))
+	go control.New(users, serverStore, rooms).Serve(ltcp)
 }
 
 // dialControl connects a real client over TCP: HELLO, then LOGIN (and REGISTER
@@ -79,15 +67,15 @@ func dialControl(t *testing.T, addr string, ssrc uint32, channelID int, username
 	if err != nil {
 		t.Fatal(err)
 	}
-	sendTest(t, c, Control{Type: "HELLO", SSRC: ssrc, Name: "x"})
+	sendTest(t, c, protocol.Control{Type: "HELLO", SSRC: ssrc, Name: "x"})
 	if register {
-		sendTest(t, c, Control{Type: "REGISTER", Username: username, Email: email, Password: password})
+		sendTest(t, c, protocol.Control{Type: "REGISTER", Username: username, Email: email, Password: password})
 	}
-	sendTest(t, c, Control{Type: "LOGIN", Identifier: username, Password: password})
+	sendTest(t, c, protocol.Control{Type: "LOGIN", Identifier: username, Password: password})
 	// LOGIN ACK carries the username; waiting keeps REGISTER/LOGIN ordered across clients.
-	awaitControl(t, c, "LOGIN ACK", func(m Control) bool { return m.Type == "ACK" && m.Name != "" })
+	awaitControl(t, c, "LOGIN ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.Name != "" })
 	if channelID != 0 {
-		sendTest(t, c, Control{Type: "JOIN", ChannelID: channelID})
+		sendTest(t, c, protocol.Control{Type: "JOIN", ChannelID: channelID})
 		awaitRoom(t, c)
 	}
 	return c
@@ -102,11 +90,11 @@ func awaitRoom(t *testing.T, c net.Conn) {
 	c.SetReadDeadline(time.Now().Add(10 * time.Second))
 	defer c.SetReadDeadline(time.Time{})
 	for {
-		payload, err := readFrame(c)
+		payload, err := protocol.ReadFrame(c)
 		if err != nil {
 			t.Fatalf("awaiting JOIN ACK: %v", err)
 		}
-		var m Control
+		var m protocol.Control
 		if json.Unmarshal(payload, &m) != nil {
 			continue
 		}
@@ -119,13 +107,37 @@ func awaitRoom(t *testing.T, c net.Conn) {
 	}
 }
 
-func sendTest(t *testing.T, w net.Conn, c Control) {
+func sendTest(t *testing.T, w net.Conn, c protocol.Control) {
 	t.Helper()
 	b, err := json.Marshal(c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFrame(w, b)
+	protocol.WriteFrame(w, b)
+}
+
+// awaitControl reads whole control frames until one satisfies want, failing on a
+// read timeout or on an unexpected ERROR (unless the caller waits for one).
+func awaitControl(t *testing.T, c net.Conn, what string, want func(protocol.Control) bool) protocol.Control {
+	t.Helper()
+	c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	defer c.SetReadDeadline(time.Time{})
+	for {
+		payload, err := protocol.ReadFrame(c)
+		if err != nil {
+			t.Fatalf("awaiting %s: %v", what, err)
+		}
+		var m protocol.Control
+		if json.Unmarshal(payload, &m) != nil {
+			continue
+		}
+		if m.Type == "ERROR" && what != "ERROR" {
+			t.Fatalf("awaiting %s: server returned ERROR %q", what, m.Error)
+		}
+		if want(m) {
+			return m
+		}
+	}
 }
 
 func TestIntegrationTwoClients(t *testing.T) {
@@ -148,7 +160,7 @@ func TestIntegrationTwoClients(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	go serve(ltcp, ludp.(*net.UDPConn), store, servers.NewStore(db))
+	serveTest(t, ltcp, ludp, store, servers.NewStore(db))
 
 	udpAddr := ludp.LocalAddr().String()
 
@@ -157,26 +169,26 @@ func TestIntegrationTwoClients(t *testing.T) {
 	b := dialControl(t, ltcp.Addr().String(), 0x2222, 0, username, email, password, false)
 	defer a.Close()
 	defer b.Close()
-	sendTest(t, a, Control{Type: "CREATE_SERVER", ServerName: "v" + username})
-	srv := awaitControl(t, a, "CREATE_SERVER ACK", func(m Control) bool { return m.Type == "ACK" && m.InviteCode != "" })
+	sendTest(t, a, protocol.Control{Type: "CREATE_SERVER", ServerName: "v" + username})
+	srv := awaitControl(t, a, "CREATE_SERVER ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.InviteCode != "" })
 	var voiceType int
 	if err := db.QueryRow("SELECT id FROM channel_types WHERE type_name = 'voice'").Scan(&voiceType); err != nil {
 		t.Fatal(err)
 	}
-	sendTest(t, a, Control{Type: "CREATE_CHANNEL", ServerID: srv.ServerID, ChannelName: "voice-room", ChannelType: strconv.Itoa(voiceType)})
-	ch := awaitControl(t, a, "CREATE_CHANNEL ACK", func(m Control) bool { return m.Type == "ACK" && m.ChannelName != "" })
+	sendTest(t, a, protocol.Control{Type: "CREATE_CHANNEL", ServerID: srv.ServerID, ChannelName: "voice-room", ChannelType: strconv.Itoa(voiceType)})
+	ch := awaitControl(t, a, "CREATE_CHANNEL ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.ChannelName != "" })
 	_ = ch
 	var channelID int
 	if err := db.QueryRow("SELECT id FROM server_channels WHERE server_id = $1", srv.ServerID).Scan(&channelID); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range []net.Conn{a, b} {
-		sendTest(t, c, Control{Type: "JOIN", ChannelID: channelID})
+		sendTest(t, c, protocol.Control{Type: "JOIN", ChannelID: channelID})
 		awaitRoom(t, c)
 	}
 	// A channel that is not theirs (or missing) must be refused.
-	sendTest(t, a, Control{Type: "JOIN", ChannelID: channelID + 1000000})
-	if e := awaitControl(t, a, "ERROR", func(m Control) bool { return m.Type == "ERROR" }); e.Error != "channel not found" {
+	sendTest(t, a, protocol.Control{Type: "JOIN", ChannelID: channelID + 1000000})
+	if e := awaitControl(t, a, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != "channel not found" {
 		t.Fatalf("bad JOIN error = %q", e.Error)
 	}
 	t.Log("both clients registered/logged in and joined room")
@@ -187,11 +199,11 @@ func TestIntegrationTwoClients(t *testing.T) {
 	// PING echo). The sockets stay open: the server forwards to these addrs.
 	audp, _ := net.Dial("udp", udpAddr)
 	defer audp.Close()
-	audp.Write(append(EncodeHeader(Header{Kind: KindPing, SSRC: 0x1111}), make([]byte, 8)...))
+	audp.Write(append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindPing, SSRC: 0x1111}), make([]byte, 8)...))
 
 	budp, _ := net.Dial("udp", udpAddr)
 	defer budp.Close()
-	budp.Write(append(EncodeHeader(Header{Kind: KindPing, SSRC: 0x2222}), make([]byte, 8)...))
+	budp.Write(append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindPing, SSRC: 0x2222}), make([]byte, 8)...))
 
 	for _, u := range []net.Conn{audp, budp} {
 		u.SetReadDeadline(time.Now().Add(time.Second))
@@ -200,7 +212,7 @@ func TestIntegrationTwoClients(t *testing.T) {
 	}
 
 	// A sends an AUDIO frame; server forwards verbatim to B.
-	audp.Write(append(EncodeHeader(Header{Kind: KindAudio, SSRC: 0x1111}), []byte("opusframe")...))
+	audp.Write(append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindAudio, SSRC: 0x1111}), []byte("opusframe")...))
 
 	budp.SetReadDeadline(time.Now().Add(time.Second))
 	buf := make([]byte, 1024)
@@ -208,9 +220,9 @@ func TestIntegrationTwoClients(t *testing.T) {
 	if err != nil {
 		t.Fatal("B did not receive forwarded audio:", err)
 	}
-	h, _ := DecodeHeader(buf[:n])
+	h, _ := protocol.DecodeHeader(buf[:n])
 	t.Logf("B received %d bytes: %+v", n, h)
-	if h.SSRC != 0x1111 || h.Kind != KindAudio {
+	if h.SSRC != 0x1111 || h.Kind != protocol.KindAudio {
 		t.Fatalf("B got header %+v, want SSRC 0x1111 audio", h)
 	}
 	if string(buf[n-len("opusframe"):n]) != "opusframe" {
@@ -219,36 +231,12 @@ func TestIntegrationTwoClients(t *testing.T) {
 
 	// B leaves the room; A's next audio must not reach it. Before the fix LEAVE
 	// was deferred until the connection closed, so B kept receiving media.
-	sendTest(t, b, Control{Type: "LEAVE"})
+	sendTest(t, b, protocol.Control{Type: "LEAVE"})
 	time.Sleep(100 * time.Millisecond)
-	audp.Write(append(EncodeHeader(Header{Kind: KindAudio, SSRC: 0x1111}), []byte("afterleave")...))
+	audp.Write(append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindAudio, SSRC: 0x1111}), []byte("afterleave")...))
 	budp.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
 	if n, err := budp.Read(buf); err == nil {
 		t.Fatalf("B received %d bytes after leaving the room", n)
-	}
-}
-
-// awaitControl reads whole control frames until one satisfies want, failing on a
-// read timeout or on an unexpected ERROR (unless the caller waits for one).
-func awaitControl(t *testing.T, c net.Conn, what string, want func(Control) bool) Control {
-	t.Helper()
-	c.SetReadDeadline(time.Now().Add(10 * time.Second))
-	defer c.SetReadDeadline(time.Time{})
-	for {
-		payload, err := readFrame(c)
-		if err != nil {
-			t.Fatalf("awaiting %s: %v", what, err)
-		}
-		var m Control
-		if json.Unmarshal(payload, &m) != nil {
-			continue
-		}
-		if m.Type == "ERROR" && what != "ERROR" {
-			t.Fatalf("awaiting %s: server returned ERROR %q", what, m.Error)
-		}
-		if want(m) {
-			return m
-		}
 	}
 }
 
@@ -305,7 +293,7 @@ func TestIntegrationCreateServer(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	go serve(ltcp, ludp.(*net.UDPConn), store, serverStore)
+	serveTest(t, ltcp, ludp, store, serverStore)
 
 	// CREATE_SERVER before LOGIN must be refused.
 	anon, err := net.Dial("tcp", ltcp.Addr().String())
@@ -313,17 +301,17 @@ func TestIntegrationCreateServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer anon.Close()
-	sendTest(t, anon, Control{Type: "HELLO", SSRC: 0x3333, Name: "anon"})
-	sendTest(t, anon, Control{Type: "CREATE_SERVER", ServerName: "refused"})
-	if e := awaitControl(t, anon, "ERROR", func(m Control) bool { return m.Type == "ERROR" }); e.Error != "authentication required" {
+	sendTest(t, anon, protocol.Control{Type: "HELLO", SSRC: 0x3333, Name: "anon"})
+	sendTest(t, anon, protocol.Control{Type: "CREATE_SERVER", ServerName: "refused"})
+	if e := awaitControl(t, anon, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != "authentication required" {
 		t.Fatalf("anonymous CREATE_SERVER error = %q, want %q", e.Error, "authentication required")
 	}
 
 	// An authenticated session gets the server identity and invite code back.
 	c := dialControl(t, ltcp.Addr().String(), 0x4444, 0, username, email, password, false)
 	defer c.Close()
-	sendTest(t, c, Control{Type: "CREATE_SERVER", ServerName: authedName})
-	ack := awaitControl(t, c, "CREATE_SERVER ACK", func(m Control) bool {
+	sendTest(t, c, protocol.Control{Type: "CREATE_SERVER", ServerName: authedName})
+	ack := awaitControl(t, c, "CREATE_SERVER ACK", func(m protocol.Control) bool {
 		return m.Type == "ACK" && m.InviteCode != ""
 	})
 	if ack.ServerID == 0 {
@@ -390,7 +378,7 @@ func TestIntegrationListServers(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	go serve(ltcp, ludp.(*net.UDPConn), store, serverStore)
+	serveTest(t, ltcp, ludp, store, serverStore)
 
 	// LIST_SERVERS before LOGIN must be refused.
 	anon, err := net.Dial("tcp", ltcp.Addr().String())
@@ -398,15 +386,15 @@ func TestIntegrationListServers(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer anon.Close()
-	sendTest(t, anon, Control{Type: "LIST_SERVERS"})
-	if e := awaitControl(t, anon, "ERROR", func(m Control) bool { return m.Type == "ERROR" }); e.Error != "authentication required" {
+	sendTest(t, anon, protocol.Control{Type: "LIST_SERVERS"})
+	if e := awaitControl(t, anon, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != "authentication required" {
 		t.Fatalf("anonymous LIST_SERVERS error = %q, want %q", e.Error, "authentication required")
 	}
 
 	c := dialControl(t, ltcp.Addr().String(), 0x5555, 0, owner, owner+"@example.test", password, false)
 	defer c.Close()
-	sendTest(t, c, Control{Type: "LIST_SERVERS"})
-	ack := awaitControl(t, c, "LIST_SERVERS ACK", func(m Control) bool {
+	sendTest(t, c, protocol.Control{Type: "LIST_SERVERS"})
+	ack := awaitControl(t, c, "LIST_SERVERS ACK", func(m protocol.Control) bool {
 		return m.Type == "ACK" && m.Servers != nil
 	})
 
@@ -442,7 +430,7 @@ func TestIntegrationRoster(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	go serve(ltcp, ludp.(*net.UDPConn), store, servers.NewStore(db))
+	serveTest(t, ltcp, ludp, store, servers.NewStore(db))
 	addr := ltcp.Addr().String()
 
 	a := dialControl(t, addr, 0x1111, 0, username, username+"@example.test", password, true)
@@ -453,52 +441,52 @@ func TestIntegrationRoster(t *testing.T) {
 	// A second client asking for A's SSRC must be refused: the ACK has none.
 	dup := dialControl(t, addr, 0x1111, 0, username, "", password, false)
 	defer dup.Close()
-	sendTest(t, dup, Control{Type: "HELLO", SSRC: 0x1111, Name: "dup"})
-	if ack := awaitControl(t, dup, "dup HELLO ACK", func(m Control) bool { return m.Type == "ACK" }); ack.SSRC != 0 {
+	sendTest(t, dup, protocol.Control{Type: "HELLO", SSRC: 0x1111, Name: "dup"})
+	if ack := awaitControl(t, dup, "dup HELLO ACK", func(m protocol.Control) bool { return m.Type == "ACK" }); ack.SSRC != 0 {
 		t.Fatalf("duplicate SSRC was granted: %+v", ack)
 	}
 
-	sendTest(t, a, Control{Type: "CREATE_SERVER", ServerName: "r" + username})
-	srv := awaitControl(t, a, "CREATE_SERVER ACK", func(m Control) bool { return m.Type == "ACK" && m.InviteCode != "" })
+	sendTest(t, a, protocol.Control{Type: "CREATE_SERVER", ServerName: "r" + username})
+	srv := awaitControl(t, a, "CREATE_SERVER ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.InviteCode != "" })
 	var voice int
 	if err := db.QueryRow("SELECT id FROM channel_types WHERE type_name = 'voice'").Scan(&voice); err != nil {
 		t.Fatal(err)
 	}
-	sendTest(t, a, Control{Type: "CREATE_CHANNEL", ServerID: srv.ServerID, ChannelName: "roster-room", ChannelType: strconv.Itoa(voice)})
-	ch := awaitControl(t, a, "CREATE_CHANNEL ACK", func(m Control) bool { return m.Type == "ACK" && m.ChannelName != "" })
+	sendTest(t, a, protocol.Control{Type: "CREATE_CHANNEL", ServerID: srv.ServerID, ChannelName: "roster-room", ChannelType: strconv.Itoa(voice)})
+	ch := awaitControl(t, a, "CREATE_CHANNEL ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.ChannelName != "" })
 	if ch.ChannelID == 0 {
 		t.Fatal("CREATE_CHANNEL ACK has no channelId")
 	}
 
-	sendTest(t, a, Control{Type: "JOIN", ChannelID: ch.ChannelID})
-	ackA := awaitControl(t, a, "A JOIN ACK", func(m Control) bool { return m.Type == "ACK" && m.Room != "" })
+	sendTest(t, a, protocol.Control{Type: "JOIN", ChannelID: ch.ChannelID})
+	ackA := awaitControl(t, a, "A JOIN ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.Room != "" })
 	if len(ackA.Members) != 0 {
 		t.Fatalf("A joined an empty room but sees %v", ackA.Members)
 	}
-	sendTest(t, b, Control{Type: "JOIN", ChannelID: ch.ChannelID})
-	ackB := awaitControl(t, b, "B JOIN ACK", func(m Control) bool { return m.Type == "ACK" && m.Room != "" })
+	sendTest(t, b, protocol.Control{Type: "JOIN", ChannelID: ch.ChannelID})
+	ackB := awaitControl(t, b, "B JOIN ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.Room != "" })
 	if len(ackB.Members) != 1 || ackB.Members[0].SSRC != 0x1111 || ackB.Members[0].Name != username {
 		t.Fatalf("B should see A in the roster, got %+v", ackB.Members)
 	}
-	if j := awaitControl(t, a, "MEMBER_JOINED", func(m Control) bool { return m.Type == "MEMBER_JOINED" }); j.Member == nil || j.Member.SSRC != 0x2222 || j.ChannelID != ch.ChannelID {
+	if j := awaitControl(t, a, "MEMBER_JOINED", func(m protocol.Control) bool { return m.Type == "MEMBER_JOINED" }); j.Member == nil || j.Member.SSRC != 0x2222 || j.ChannelID != ch.ChannelID {
 		t.Fatalf("A got %+v", j)
 	}
 
 	// LIST_CHANNELS shows the live roster too.
-	sendTest(t, dup, Control{Type: "LIST_CHANNELS", ServerID: srv.ServerID})
-	list := awaitControl(t, dup, "LIST_CHANNELS", func(m Control) bool { return m.Type == "ACK" && m.Channels != nil })
+	sendTest(t, dup, protocol.Control{Type: "LIST_CHANNELS", ServerID: srv.ServerID})
+	list := awaitControl(t, dup, "LIST_CHANNELS", func(m protocol.Control) bool { return m.Type == "ACK" && m.Channels != nil })
 	if len(list.Channels) != 1 || len(list.Channels[0].Members) != 2 {
 		t.Fatalf("LIST_CHANNELS roster = %+v", list.Channels)
 	}
 
 	yes := true
-	sendTest(t, b, Control{Type: "STATE", Muted: &yes})
-	if s := awaitControl(t, a, "MEMBER_STATE", func(m Control) bool { return m.Type == "MEMBER_STATE" }); s.Member == nil || !s.Member.Muted || s.Member.SSRC != 0x2222 {
+	sendTest(t, b, protocol.Control{Type: "STATE", Muted: &yes})
+	if s := awaitControl(t, a, "MEMBER_STATE", func(m protocol.Control) bool { return m.Type == "MEMBER_STATE" }); s.Member == nil || !s.Member.Muted || s.Member.SSRC != 0x2222 {
 		t.Fatalf("A got %+v", s)
 	}
 
 	b.Close() // a dropped TCP link must clear the roster too
-	if l := awaitControl(t, a, "MEMBER_LEFT", func(m Control) bool { return m.Type == "MEMBER_LEFT" }); l.SSRC != 0x2222 || l.ChannelID != ch.ChannelID {
+	if l := awaitControl(t, a, "MEMBER_LEFT", func(m protocol.Control) bool { return m.Type == "MEMBER_LEFT" }); l.SSRC != 0x2222 || l.ChannelID != ch.ChannelID {
 		t.Fatalf("A got %+v", l)
 	}
 }

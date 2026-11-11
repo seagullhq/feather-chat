@@ -58,13 +58,13 @@ bundle-client: build
 [working-directory('server')]
 build-server:
     mkdir -p ../dist/server
-    go build -o ../dist/server/feather-chat-server .
+    go build -o ../dist/server/feather-chat-server ./cmd/server
 
 [windows]
 [working-directory('server')]
 build-server:
     if (!(Test-Path ../dist/server)) { New-Item -ItemType Directory -Path ../dist/server }
-    go build -o ../dist/server/feather-chat-server.exe .
+    go build -o ../dist/server/feather-chat-server.exe ./cmd/server
 
 # Build and run the server.
 [unix]

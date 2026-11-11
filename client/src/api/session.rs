@@ -37,6 +37,15 @@ pub enum Event {
         invite_code: String,
     },
     ServerCreateFailed(String),
+    ServerRenamed {
+        id: i64,
+        name: String,
+    },
+    ServerDeleted {
+        id: i64,
+    },
+    /// Rename or delete refused (not the owner, name taken, ...).
+    ServerEditFailed(String),
     ChannelCreated {
         server_id: i64,
         id: i64,
@@ -87,6 +96,13 @@ enum Command {
     CreateServer {
         name: String,
     },
+    RenameServer {
+        server_id: i64,
+        name: String,
+    },
+    DeleteServer {
+        server_id: i64,
+    },
     CreateChannel {
         server_id: i64,
         name: String,
@@ -102,6 +118,18 @@ pub struct Control {
 }
 
 impl Control {
+    pub fn rename_server(&self, server_id: i64, name: String) -> bool {
+        self.tx
+            .try_send(Command::RenameServer { server_id, name })
+            .is_ok()
+    }
+
+    pub fn delete_server(&self, server_id: i64) -> bool {
+        self.tx
+            .try_send(Command::DeleteServer { server_id })
+            .is_ok()
+    }
+
     pub fn create_server(&self, name: String) -> bool {
         self.tx.try_send(Command::CreateServer { name }).is_ok()
     }
@@ -327,6 +355,24 @@ fn commands(
                     let _ = events.send_blocking(Event::ServerCreateFailed(e));
                 }
             },
+            Command::RenameServer { server_id, name } => {
+                let _ = events.send_blocking(
+                    match server::rename_server(&mut session, server_id, name) {
+                        Ok(name) => Event::ServerRenamed {
+                            id: server_id,
+                            name,
+                        },
+                        Err(e) => Event::ServerEditFailed(e),
+                    },
+                );
+            }
+            Command::DeleteServer { server_id } => {
+                let _ =
+                    events.send_blocking(match server::delete_server(&mut session, server_id) {
+                        Ok(()) => Event::ServerDeleted { id: server_id },
+                        Err(e) => Event::ServerEditFailed(e),
+                    });
+            }
             Command::CreateChannel {
                 server_id,
                 name,
