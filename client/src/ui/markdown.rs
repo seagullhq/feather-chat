@@ -218,6 +218,22 @@ impl Default for MdTheme {
     }
 }
 
+impl MdTheme {
+    /// Follow the app theme so markdown stays readable in light mode too.
+    pub fn from_theme(t: &crate::theme::Theme) -> Self {
+        Self {
+            fg: t.text,
+            link: t.accent,
+            code_fg: t.text,
+            code_bg: t.fill,
+            quote_bar: t.line,
+            rule: t.line,
+            border: t.line,
+            mono: "monospace".into(),
+        }
+    }
+}
+
 /// gpui's StyledText expects sorted, NON-overlapping highlight ranges,
 /// so nested styles (bold + italic + link…) are flattened into segments.
 fn highlights(i: &Inline, t: &MdTheme) -> Vec<(Range<usize>, HighlightStyle)> {

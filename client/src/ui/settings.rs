@@ -5,7 +5,7 @@ use super::userfiles::{read_user_file, write_user_file};
 use super::window_frame::frame as window_frame;
 use crate::media::PREFS;
 use crate::theme::ThemeExt;
-use crate::ui::markdown::Markdown;
+use crate::ui::markdown::{Markdown, MdTheme};
 use gpui::{prelude::*, *};
 use std::sync::atomic::Ordering::Relaxed;
 
@@ -256,7 +256,7 @@ impl Render for CreditsView {
                         div()
                             .text_size(px(13.))
                             .line_height(px(19.))
-                            .child(Markdown::new(&CREDITS)),
+                            .child(Markdown::new(&CREDITS).theme(MdTheme::from_theme(&t))),
                     ),
             );
         window_frame(body, t.line, window)
