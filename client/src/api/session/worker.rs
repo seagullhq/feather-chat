@@ -45,13 +45,13 @@ fn commands(
                 muted,
                 deafened,
             } => {
-                engine = None; // moving channels: stop the old voice session first
+                drop(engine.take()); // moving channels: stop the old voice session first
                 match server::join_channel(&mut session, channel_id) {
                     Ok(j) => {
                         let media = match media::Engine::start(&host, ssrc, muted, deafened) {
                             Ok(e) => {
                                 let shared = e.shared();
-                                engine = Some(e);
+                                drop(engine.replace(e));
                                 Some(shared)
                             }
                             Err(e) => {
@@ -77,7 +77,7 @@ fn commands(
                 }
             }
             Command::Leave => {
-                engine = None;
+                drop(engine.take());
                 let _ = session.conn.write(&json!({"type":"LEAVE"}));
             }
             Command::State { muted, deafened } => {

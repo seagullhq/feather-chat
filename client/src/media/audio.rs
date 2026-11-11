@@ -131,7 +131,7 @@ where
         }
         let plain = StreamConfig {
             buffer_size: cpal::BufferSize::Default,
-            ..cfg.clone()
+            ..*cfg
         };
         mic_with::<T>(dev, &plain, tx)
     })
@@ -148,7 +148,7 @@ where
     let ch = cfg.channels as usize;
     let mut rs = Push::new(cfg.sample_rate);
     dev.build_input_stream(
-        cfg.clone(),
+        *cfg,
         move |data: &[T], _| {
             let Ok(mut tx) = tx.lock() else { return };
             for frame in data.chunks(ch) {
@@ -196,7 +196,7 @@ fn speaker<T: SizedSample + FromSample<f32>>(
         }
         let plain = StreamConfig {
             buffer_size: cpal::BufferSize::Default,
-            ..cfg.clone()
+            ..*cfg
         };
         speaker_with::<T>(dev, &plain, rx)
     })
@@ -210,7 +210,7 @@ fn speaker_with<T: SizedSample + FromSample<f32>>(
     let ch = cfg.channels as usize;
     let mut rs = Pull::new(cfg.sample_rate);
     dev.build_output_stream(
-        cfg.clone(),
+        *cfg,
         move |data: &mut [T], _| {
             let Ok(mut rx) = rx.lock() else { return };
             for frame in data.chunks_mut(ch) {

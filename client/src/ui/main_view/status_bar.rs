@@ -79,7 +79,8 @@ impl super::MainView {
                     .clone()
                     .map_or_else(|| self.mic_name.clone(), Into::into),
             )
-            .child(icon("speaker-high", 14., t.muted)).child(
+            .child(icon("speaker-high", 14., t.muted))
+            .child(
                 crate::media::PREFS
                     .output
                     .lock()
