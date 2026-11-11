@@ -4,7 +4,9 @@ use serde_json::{Value, json};
 use std::net::TcpStream;
 
 use super::auth::{self, Request};
-use super::server::{self, ChannelSummary, ChannelTypeSummary, RosterMember, ServerSummary};
+use super::server::{
+    self, ChannelSummary, ChannelTypeSummary, RosterMember, ServerMember, ServerSummary,
+};
 use super::transport::Connection;
 use crate::media;
 use std::sync::Arc;
@@ -25,6 +27,10 @@ pub enum Event {
         server_id: i64,
         message: String,
     },
+    MembersListed {
+        server_id: i64,
+        members: Vec<ServerMember>,
+    },
     ServerCreated {
         id: i64,
         name: String,
@@ -35,6 +41,7 @@ pub enum Event {
         server_id: i64,
         id: i64,
         name: String,
+        channel_type: i32,
     },
     ChannelCreateFailed(String),
     /// JOIN accepted. `media` is None if the voice engine could not start.
@@ -72,6 +79,9 @@ enum Command {
         deafened: bool,
     },
     ListChannels {
+        server_id: i64,
+    },
+    ListMembers {
         server_id: i64,
     },
     CreateServer {
@@ -118,6 +128,10 @@ impl Control {
         self.tx
             .try_send(Command::ListChannels { server_id })
             .is_ok()
+    }
+
+    pub fn list_members(&self, server_id: i64) -> bool {
+        self.tx.try_send(Command::ListMembers { server_id }).is_ok()
     }
 
     pub fn create_channel(&self, server_id: i64, name: String, channel_type: i32) -> bool {
@@ -295,6 +309,12 @@ fn commands(
                         Err(message) => Event::ChannelsListFailed { server_id, message },
                     });
             }
+            Command::ListMembers { server_id } => {
+                // ponytail: a failed refresh keeps the old list; no error event.
+                if let Ok(members) = server::list_members(&mut session, server_id) {
+                    let _ = events.send_blocking(Event::MembersListed { server_id, members });
+                }
+            }
             Command::CreateServer { name } => match server::create_server(&mut session, name) {
                 Ok(created) => {
                     let _ = events.send_blocking(Event::ServerCreated {
@@ -317,6 +337,7 @@ fn commands(
                         server_id: created.server_id,
                         id: created.id,
                         name: created.name,
+                        channel_type: created.channel_type,
                     });
                 }
                 Err(e) => {

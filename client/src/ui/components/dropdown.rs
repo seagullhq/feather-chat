@@ -1,6 +1,7 @@
 use super::{ClickHandler, icon};
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
+use std::cell::Cell;
 use std::rc::Rc;
 
 type DismissHandler = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -96,6 +97,9 @@ impl RenderOnce for Dropdown {
         let t = cx.theme();
         let dismiss = self.on_dismiss;
         let open = self.open;
+        // Where the trigger is, measured in prepaint. A click on it while open must
+        // reach its own toggle: dismissing here first would make it reopen.
+        let trigger_bounds = Rc::new(Cell::new(Bounds::<Pixels>::default()));
 
         let menu = div()
             .id((self.id.clone(), "popup"))
@@ -115,7 +119,12 @@ impl RenderOnce for Dropdown {
             .text_size(px(14.))
             .font_weight(FontWeight::NORMAL)
             .when_some(dismiss.clone(), |d, dismiss| {
-                d.on_mouse_down_out(move |_, w, cx| dismiss(w, cx))
+                let trigger = trigger_bounds.clone();
+                d.on_mouse_down_out(move |e, w, cx| {
+                    if !trigger.get().contains(&e.position) {
+                        dismiss(w, cx)
+                    }
+                })
             })
             .children(self.items.into_iter().enumerate().map(|(ix, item)| {
                 let dismiss = dismiss.clone();
@@ -154,6 +163,16 @@ impl RenderOnce for Dropdown {
             .relative()
             .flex_none()
             .child(self.trigger)
+            .child({
+                let trigger = trigger_bounds.clone();
+                canvas(move |bounds, _, _| trigger.set(bounds), |_, _, _, _| {})
+                    // Pinned to the corner: without insets an absolute child sits at
+                    // its static position, i.e. below the trigger.
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+            })
             .when(open, |d| d.child(deferred(menu).with_priority(1)))
     }
 }

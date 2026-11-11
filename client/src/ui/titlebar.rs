@@ -2,6 +2,8 @@
 //! macOS: native traffic lights (window option `traffic_light_position`), we
 //! only reserve space for them. Windows: caption buttons handled by the OS via
 //! `WindowControlArea`. Linux: our own buttons, laid out as the desktop asks.
+//! macOS sheet (a `WindowKind::Dialog` window): AppKit draws no traffic lights
+//! on sheets, so no reserved space and our own close button instead.
 
 use super::components::icon;
 use crate::theme::ThemeExt;
@@ -22,6 +24,7 @@ pub fn height(window: &Window) -> Pixels {
 pub struct Titlebar {
     title: SharedString,
     should_move: bool,
+    sheet: bool,
 }
 
 impl Titlebar {
@@ -29,7 +32,14 @@ impl Titlebar {
         Self {
             title: title.into(),
             should_move: false,
+            sheet: false,
         }
+    }
+
+    /// For a window opened as a `WindowKind::Dialog`. Only matters on macOS.
+    pub fn sheet(mut self) -> Self {
+        self.sheet = true;
+        self
     }
 }
 
@@ -42,6 +52,7 @@ impl Render for Titlebar {
         let fullscreen = window.is_fullscreen() || window.is_simple_fullscreen();
         let linux = cfg!(any(target_os = "linux", target_os = "freebsd"));
         let mac = cfg!(target_os = "macos");
+        let sheet = mac && self.sheet;
         let layout = (linux && matches!(decorations, Decorations::Client { .. }))
             .then(|| cx.button_layout())
             .flatten();
@@ -75,7 +86,7 @@ impl Render for Titlebar {
                     window.start_window_move();
                 }
             }))
-            .when(mac, |d| {
+            .when(mac && !sheet, |d| {
                 d.on_click(|e, window, _| {
                     if e.click_count() == 2 {
                         window.titlebar_double_click();
@@ -100,7 +111,7 @@ impl Render for Titlebar {
             .map(|d| {
                 if fullscreen {
                     d.pl_2()
-                } else if mac {
+                } else if mac && !sheet {
                     d.pl(px(TRAFFIC_LIGHT_PADDING))
                 } else if let Some(c) =
                     layout.and_then(|l| linux_controls("left-controls", l.left, window, cx))
@@ -121,6 +132,9 @@ impl Render for Titlebar {
             .when(!fullscreen, |d| {
                 if cfg!(target_os = "windows") {
                     d.child(windows_controls(h, cx))
+                } else if sheet {
+                    let close = [Some(WindowButton::Close), None, None];
+                    d.children(linux_controls("sheet-controls", close, window, cx))
                 } else {
                     d.children(
                         layout.and_then(|l| linux_controls("right-controls", l.right, window, cx)),

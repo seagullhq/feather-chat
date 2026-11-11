@@ -4,11 +4,14 @@ use crate::media;
 use crate::model::{self, Member, Server};
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::Duration;
 
 mod add_channel;
 mod add_server;
 mod controls;
+mod server_sheet;
 mod sidebar;
 mod stage;
 mod status_bar;
@@ -42,6 +45,13 @@ pub struct MainView {
     channel_types: Vec<ChannelTypeSummary>,
     control: Option<Control>,
     server_menu: bool,
+    server_sheet: bool,
+    sheet_tab: server_sheet::SheetTab,
+    /// Window y of the server title bottom and of the content row top, measured
+    /// while painting; the sheet starts between them.
+    title_bottom: Rc<Cell<Pixels>>,
+    row_top: Rc<Cell<Pixels>>,
+    sheet_focus: FocusHandle,
     hostname: String,
     /// Levels and mute flags of the running voice session, while joined.
     media: Option<std::sync::Arc<media::Shared>>,
@@ -101,6 +111,11 @@ impl MainView {
             channel_types: Vec::new(),
             control: None,
             server_menu: false,
+            server_sheet: false,
+            sheet_tab: server_sheet::SheetTab::Settings,
+            title_bottom: Rc::default(),
+            row_top: Rc::default(),
+            sheet_focus: cx.focus_handle(),
             hostname: String::new(),
             media: None,
         }
@@ -142,9 +157,22 @@ impl MainView {
                 .map(|c| model::Channel {
                     id: c.id,
                     name: c.name,
+                    channel_type: c.channel_type,
                     members: c.members.into_iter().map(Member::from_roster).collect(),
                 })
                 .collect();
+            cx.notify();
+        }
+    }
+
+    pub fn set_members(
+        &mut self,
+        server_id: i64,
+        members: Vec<crate::api::ServerMember>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(s) = self.servers.iter_mut().find(|s| s.id == server_id) {
+            s.members = members;
             cx.notify();
         }
     }
@@ -169,6 +197,8 @@ impl MainView {
                 Server {
                     id: server.id,
                     name: server.name,
+                    invite_code: server.invite_code,
+                    members: vec![],
                     icon: None,
                     channels: vec![],
                     viewing,
@@ -228,6 +258,7 @@ impl MainView {
         server_id: i64,
         id: i64,
         name: String,
+        channel_type: i32,
         cx: &mut Context<Self>,
     ) {
         if let Some(server) = self
@@ -239,6 +270,7 @@ impl MainView {
             server.channels.push(model::Channel {
                 id,
                 name,
+                channel_type,
                 members: vec![],
             });
             server.viewing = created;
@@ -266,6 +298,8 @@ impl MainView {
         self.servers.push(Server {
             id,
             name: name.clone(),
+            invite_code: invite_code.clone(),
+            members: vec![],
             icon: None,
             channels: vec![],
             viewing: 0,
@@ -494,8 +528,19 @@ impl Render for MainView {
                     .flex_1()
                     .flex()
                     .min_h_0()
+                    .relative()
+                    .child({
+                        let row_top = self.row_top.clone();
+                        canvas(
+                            move |bounds, _, _| row_top.set(bounds.origin.y),
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full()
+                    })
                     .child(self.sidebar(cx))
-                    .child(self.stage(window.viewport_size(), cx)),
+                    .child(self.stage(window.viewport_size(), cx))
+                    .children(self.server_sheet(window, cx)),
             )
             .child(self.status_bar(cx))
             .children(server_modal)

@@ -35,6 +35,7 @@ icons!(
     "home",
     "copy",
     "microphone-slash",
+    "microphone-stage",
     "microphone",
     "phone-slash",
     "phone",
@@ -42,6 +43,7 @@ icons!(
     "server",
     "minus",
     "sidebar-simple",
+    "sliders-horizontal",
     "speaker-high",
     "square",
     "x"
@@ -236,8 +238,9 @@ impl Root {
                 server_id,
                 id,
                 name,
+                channel_type,
             } => self.main.update(cx, |main, cx| {
-                main.on_channel_created(server_id, id, name, cx)
+                main.on_channel_created(server_id, id, name, channel_type, cx)
             }),
             Event::Joined {
                 server_id,
@@ -269,6 +272,9 @@ impl Root {
             Event::ChannelsListFailed { server_id, message } => {
                 eprintln!("could not list channels for server {server_id}: {message}")
             }
+            Event::MembersListed { server_id, members } => self
+                .main
+                .update(cx, |main, cx| main.set_members(server_id, members, cx)),
             Event::Disconnected => {
                 self.control.take();
                 self.main.update(cx, |main, cx| main.on_disconnected(cx));
@@ -340,10 +346,13 @@ fn main() {
                 icon: window_icon(),
                 ..Default::default()
             };
-            cx.open_window(opts, |window, cx| cx.new(|cx| Root::new(window, cx)))
-                .unwrap();
-            cx.on_window_closed(|cx, _| {
-                if cx.windows().is_empty() {
+            let main = cx
+                .open_window(opts, |window, cx| cx.new(|cx| Root::new(window, cx)))
+                .unwrap()
+                .window_id();
+            // Settings and Credits are children of the main window: closing it ends the app.
+            cx.on_window_closed(move |cx, id| {
+                if id == main || cx.windows().is_empty() {
                     cx.quit();
                 }
             })

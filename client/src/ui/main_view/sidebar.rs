@@ -1,6 +1,7 @@
 use super::super::components::ClickHandler;
 use super::super::components::Dropdown;
 use super::super::components::{Avatar, ToolButton, icon};
+use super::server_sheet::SheetTab;
 use crate::model::Server;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
@@ -11,6 +12,7 @@ use std::time::Duration;
 struct ChannelRow {
     id: usize,
     name: SharedString,
+    channel_type: i32,
     members: Vec<(String, f32, bool, bool)>,
     viewing: bool,
     joined: bool,
@@ -46,7 +48,11 @@ impl RenderOnce for ChannelRow {
                     .items_center()
                     .gap_2()
                     .child(icon(
-                        "speaker-high",
+                        match self.channel_type {
+                            1 => "hash",
+                            3 => "microphone-stage",
+                            _ => "speaker-high",
+                        },
                         16.,
                         if self.joined { t.success } else { t.muted },
                     ))
@@ -134,13 +140,15 @@ fn server_chip(
         .child(server_face(t, &server.name, server.icon.as_ref()))
 }
 
+pub(super) const WIDTH: f32 = 240.;
+
 impl super::MainView {
     pub(super) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let server = self.servers.get(self.server);
         let view = cx.entity();
         div()
-            .w(px(240.))
+            .w(px(WIDTH))
             .flex_none()
             .h_full()
             .flex()
@@ -192,11 +200,21 @@ impl super::MainView {
             .when_some(server, |d, s| {
                 d.child(
                     div()
+                        .relative()
                         .flex()
                         .items_center()
                         .gap_2()
                         .px_1()
                         .font_weight(FontWeight::BOLD)
+                        .child({
+                            let title_bottom = self.title_bottom.clone();
+                            canvas(
+                                move |bounds, _, _| title_bottom.set(bounds.bottom()),
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_full()
+                        })
                         .child(
                             div()
                                 .flex_1()
@@ -234,9 +252,14 @@ impl super::MainView {
                                     this.set_adding_channel(true, window, cx)
                                 }),
                             )
-                            .entry("gear", "Settings", |_, _, _| {
-                                // TODO: impostazioni server
-                            })
+                            .entry(
+                                "sliders-horizontal",
+                                "Manage server",
+                                cx.listener(|this, _, window, cx| {
+                                    this.server_menu = false;
+                                    this.open_sheet(SheetTab::Settings, window, cx)
+                                }),
+                            )
                             .entry("sign-out", "Exit", |_, _, _| {
                                 // TODO: esci dal server
                             }),
@@ -270,6 +293,7 @@ impl super::MainView {
                             ChannelRow {
                                 id: i,
                                 name: c.name.clone().into(),
+                                channel_type: c.channel_type,
                                 members,
                                 viewing: i == viewing,
                                 joined: here,

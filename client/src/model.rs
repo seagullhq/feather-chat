@@ -38,6 +38,8 @@ pub struct Channel {
     /// Channel row ID from the control plane.
     pub id: i64,
     pub name: String,
+    /// `channel_types` row: 1 thread, 2 voice, 3 stage.
+    pub channel_type: i32,
     pub members: Vec<Member>,
 }
 
@@ -45,6 +47,8 @@ pub struct Server {
     /// Server row ID from the control plane. 0 until listing exists for old rows.
     pub id: i64,
     pub name: String,
+    pub invite_code: String,
+    pub members: Vec<crate::api::ServerMember>,
     /// Profile picture (local file). None = initial on a system-color tint.
     pub icon: Option<std::path::PathBuf>,
     pub channels: Vec<Channel>,
@@ -60,6 +64,8 @@ mod tests {
         Server {
             id,
             name: name.into(),
+            invite_code: String::new(),
+            members: vec![],
             icon: None,
             channels: vec![],
             viewing: 0,

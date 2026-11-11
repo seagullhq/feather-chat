@@ -20,6 +20,7 @@ pub struct ChannelTypeSummary {
 pub struct ChannelSummary {
     pub id: i64,
     pub name: String,
+    pub channel_type: i32,
     pub members: Vec<RosterMember>,
 }
 
@@ -67,6 +68,7 @@ pub(super) struct CreatedChannel {
     pub id: i64,
     pub server_id: i64,
     pub name: String,
+    pub channel_type: i32,
 }
 
 pub(super) fn list_servers(session: &mut Session) -> Result<Vec<ServerSummary>, String> {
@@ -101,6 +103,31 @@ pub(super) fn list_channel_types(session: &mut Session) -> Result<Vec<ChannelTyp
         .collect())
 }
 
+/// One person of a server, as returned by `LIST_MEMBERS`.
+#[derive(Clone)]
+pub struct ServerMember {
+    pub name: String,
+    pub owner: bool,
+}
+
+pub(super) fn list_members(
+    session: &mut Session,
+    server_id: i64,
+) -> Result<Vec<ServerMember>, String> {
+    let ack = session.call(json!({"type":"LIST_MEMBERS","serverId":server_id}))?;
+    Ok(ack["serverMembers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| {
+            Some(ServerMember {
+                name: m["username"].as_str()?.to_string(),
+                owner: m["owner"].as_bool().unwrap_or(false),
+            })
+        })
+        .collect())
+}
+
 pub(super) fn list_channels(
     session: &mut Session,
     server_id: i64,
@@ -114,6 +141,7 @@ pub(super) fn list_channels(
             Some(ChannelSummary {
                 id: channel["id"].as_i64()?,
                 name: channel["name"].as_str()?.to_string(),
+                channel_type: channel["channelType"].as_i64().unwrap_or(0) as i32,
                 members: RosterMember::list(&channel["members"]),
             })
         })
@@ -147,6 +175,10 @@ pub(super) fn create_channel(
         id: ack["channelId"].as_i64().unwrap_or(0),
         server_id: ack["serverId"].as_i64().unwrap_or(server_id),
         name: ack["channelName"].as_str().unwrap_or(&name).to_string(),
+        channel_type: ack["channelType"]
+            .as_str()
+            .and_then(|t| t.parse().ok())
+            .unwrap_or(channel_type),
     })
 }
 

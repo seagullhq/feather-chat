@@ -1,6 +1,8 @@
 use super::components::{Avatar, Button, Dropdown, DropdownItem, Slider, Tab, icon};
 use super::tab_nav;
+use super::titlebar::Titlebar;
 use super::userfiles::{read_user_file, write_user_file};
+use super::window_frame::frame as window_frame;
 use crate::media::PREFS;
 use crate::theme::ThemeExt;
 use crate::ui::markdown::Markdown;
@@ -48,6 +50,34 @@ struct SettingsWindow(AnyWindowHandle);
 
 impl Global for SettingsWindow {}
 
+/// Secondary window with the app's custom title bar (see `titlebar.rs`).
+fn window_opts(
+    title: &'static str,
+    (w, h): (f32, f32),
+    (min_w, min_h): (f32, f32),
+    kind: WindowKind,
+    cx: &App,
+) -> WindowOptions {
+    WindowOptions {
+        titlebar: Some(TitlebarOptions {
+            title: Some(title.into()),
+            appears_transparent: true,
+            traffic_light_position: Some(point(px(9.), px(9.))),
+        }),
+        app_owns_titlebar_drag: true,
+        window_decorations: Some(WindowDecorations::Client),
+        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+            None,
+            size(px(w), px(h)),
+            cx,
+        ))),
+        window_min_size: Some(size(px(min_w), px(min_h))),
+        app_id: Some("feather-chat".into()),
+        kind,
+        ..Default::default()
+    }
+}
+
 pub fn open_settings(cx: &mut App) {
     if let Some(SettingsWindow(handle)) = cx.try_global::<SettingsWindow>() {
         // Err means the window was closed since; fall through and open a new one.
@@ -58,19 +88,15 @@ pub fn open_settings(cx: &mut App) {
             return;
         }
     }
-    let opts = WindowOptions {
-        titlebar: Some(TitlebarOptions {
-            title: Some("Settings".into()),
-            ..Default::default()
-        }),
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-            None,
-            size(px(560.), px(480.)),
-            cx,
-        ))),
-        window_min_size: Some(size(px(440.), px(360.))),
-        ..Default::default()
-    };
+    let opts = // Dialog: owned by the main window and blocks it while open (these are
+    // the app's important settings). Credits stays a plain window.
+    window_opts(
+        "Settings",
+        (560., 480.),
+        (440., 360.),
+        WindowKind::Dialog,
+        cx,
+    );
     if let Ok(handle) = cx.open_window(opts, |window, cx| {
         let view = cx.new(SettingsView::new);
         window.focus(&view.read(cx).focus.clone(), cx);
@@ -95,19 +121,13 @@ fn open_credits(cx: &mut App) {
             return;
         }
     }
-    let opts = WindowOptions {
-        titlebar: Some(TitlebarOptions {
-            title: Some("Credits".into()),
-            ..Default::default()
-        }),
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-            None,
-            size(px(720.), px(640.)),
-            cx,
-        ))),
-        window_min_size: Some(size(px(480.), px(420.))),
-        ..Default::default()
-    };
+    let opts = window_opts(
+        "Credits",
+        (720., 640.),
+        (480., 420.),
+        WindowKind::Normal,
+        cx,
+    );
     if let Ok(handle) = cx.open_window(opts, |window, cx| {
         let view = cx.new(CreditsView::new);
         window.focus(&view.read(cx).focus.clone(), cx);
@@ -142,6 +162,7 @@ struct SettingsView {
     mic: usize,
     out: usize,
     volume: i32,
+    titlebar: Entity<Titlebar>,
 }
 
 impl SettingsView {
@@ -190,6 +211,7 @@ impl SettingsView {
             mics,
             outs,
             volume: PREFS.volume.load(Relaxed) as i32,
+            titlebar: cx.new(|_| Titlebar::new("Settings").sheet()),
         }
     }
 }
@@ -197,21 +219,23 @@ impl SettingsView {
 /// A separate window for the contents of `CREDITS.md`.
 struct CreditsView {
     focus: FocusHandle,
+    titlebar: Entity<Titlebar>,
 }
 
 impl CreditsView {
     fn new(cx: &mut Context<Self>) -> Self {
         Self {
             focus: cx.focus_handle(),
+            titlebar: cx.new(|_| Titlebar::new("Credits")),
         }
     }
 }
 
 impl Render for CreditsView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
 
-        tab_nav(div())
+        let body = tab_nav(div())
             .track_focus(&self.focus)
             .size_full()
             .bg(t.bg)
@@ -220,6 +244,7 @@ impl Render for CreditsView {
             .text_size(t.font_size)
             .flex()
             .flex_col()
+            .child(self.titlebar.clone())
             .child(
                 div()
                     .id("credits-body")
@@ -233,7 +258,8 @@ impl Render for CreditsView {
                             .line_height(px(19.))
                             .child(Markdown::new(&CREDITS)),
                     ),
-            )
+            );
+        window_frame(body, t.line, window)
     }
 }
 
@@ -425,7 +451,7 @@ impl SettingsView {
 }
 
 impl Render for SettingsView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let page = self.page;
         let tab = |id: &'static str, label: &'static str, p: Page, cx: &mut Context<Self>| {
@@ -439,8 +465,11 @@ impl Render for SettingsView {
             Page::Voice => self.voice(cx),
             Page::About => self.about(cx),
         };
-        tab_nav(div())
+        let root = tab_nav(div())
             .track_focus(&self.focus)
+            // Esc closes it: a macOS sheet has no window buttons of its own.
+            .key_context("Modal")
+            .on_action(|_: &super::Dismiss, window, _| window.remove_window())
             .size_full()
             .bg(t.bg)
             .text_color(t.text)
@@ -448,6 +477,7 @@ impl Render for SettingsView {
             .text_size(t.font_size)
             .flex()
             .flex_col()
+            .child(self.titlebar.clone())
             .child(
                 div()
                     .flex()
@@ -467,6 +497,7 @@ impl Render for SettingsView {
                     .overflow_y_scroll()
                     .p_4()
                     .child(body),
-            )
+            );
+        window_frame(root, t.line, window)
     }
 }

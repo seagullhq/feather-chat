@@ -169,6 +169,29 @@ func handleControl(conn net.Conn, roomManager *RoomManager, users *accounts.Stor
 				})
 			}
 			session.send(Control{Type: "ACK", Channels: summaries})
+		case "LIST_MEMBERS":
+			if !session.authed() {
+				session.send(Control{Type: "ERROR", Error: "authentication required"})
+				continue
+			}
+			userID, err := strconv.Atoi(session.UserID)
+			if err != nil || message.ServerID <= 0 {
+				session.send(Control{Type: "ERROR", Error: "invalid request"})
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			list, err := serverStore.ListMembers(ctx, message.ServerID, userID)
+			cancel()
+			if err != nil {
+				log.Printf("[LIST] failed to list members for server %d: %v", message.ServerID, err)
+				session.send(Control{Type: "ERROR", Error: "member listing failed"})
+				continue
+			}
+			summaries := make([]ServerMemberSummary, 0, len(list))
+			for _, m := range list {
+				summaries = append(summaries, ServerMemberSummary{ID: m.ID, Username: m.Username, Owner: m.Owner})
+			}
+			session.send(Control{Type: "ACK", ServerMembers: summaries})
 		case "CREATE_SERVER":
 			if !session.authed() {
 				session.send(Control{Type: "ERROR", Error: "authentication required"})
