@@ -186,6 +186,11 @@ pub(super) fn delete_server(session: &mut Session, server_id: i64) -> Result<(),
         .map(|_| ())
 }
 
+/// Deletes the logged-in account for good.
+pub(super) fn delete_user(session: &mut Session) -> Result<(), String> {
+    session.call(json!({"type":"DELETE_USER"})).map(|_| ())
+}
+
 pub(super) fn create_channel(
     session: &mut Session,
     server_id: i64,

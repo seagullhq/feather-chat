@@ -16,6 +16,7 @@ import (
 var (
 	ErrTaken          = errors.New("username or email already registered")
 	ErrBadCredentials = errors.New("invalid credentials")
+	ErrNotFound = errors.New("user not found")
 )
 
 type User struct {
@@ -61,6 +62,27 @@ func (s *Store) Register(ctx context.Context, username, email, password string) 
 	}
 	return nil
 }
+
+func (s *Store) Delete(ctx context.Context, userID int) error {
+	const query = `DELETE FROM users WHERE id = $1`
+
+	res, err := s.db.ExecContext(ctx, query, userID)
+	if err != nil {
+		return err
+	}
+
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
+
 
 func (s *Store) Authenticate(ctx context.Context, identifier string, password string) (*User, error) {
 	identifier = strings.TrimSpace(identifier)

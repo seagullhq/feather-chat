@@ -13,7 +13,7 @@ mod window_frame;
 
 pub use auth::{AuthRequest, AuthView};
 pub use main_view::MainView;
-pub use settings::Session;
+pub use settings::{Session, close_settings, on_user_delete_failed};
 pub use titlebar::Titlebar;
 pub use window_frame::{frame as window_frame, round_inner, round_inner_bl};
 

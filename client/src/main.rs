@@ -11,45 +11,6 @@ use gpui::{prelude::*, *};
 use theme::ThemeExt;
 use ui::{AuthRequest, AuthView, MainView, Titlebar};
 
-macro_rules! icons {
-    ($($n:literal),*) => {
-        fn icon_bytes(path: &str) -> Option<&'static [u8]> {
-            match path {
-                $(concat!("icons/", $n, ".svg") => Some(include_bytes!(concat!("../assets/icons/", $n, ".svg"))),)*
-                _ => None,
-            }
-        }
-    };
-}
-icons!(
-    "arrow-left",
-    "chats-teardrop",
-    "check",
-    "compass",
-    "dots-three",
-    "ear-slash",
-    "ear",
-    "eye-slash",
-    "eye",
-    "gear-six",
-    "hash",
-    "home",
-    "copy",
-    "microphone-slash",
-    "microphone-stage",
-    "microphone",
-    "phone-slash",
-    "phone",
-    "plus",
-    "server",
-    "minus",
-    "sidebar-simple",
-    "sliders-horizontal",
-    "speaker-high",
-    "square",
-    "x"
-);
-
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn window_icon() -> Option<std::sync::Arc<image::RgbaImage>> {
     let icon = image::load_from_memory_with_format(
@@ -78,13 +39,21 @@ fn set_app_icon() {
     unsafe { app.setApplicationIconImage(Some(&icon)) };
 }
 
+/// Every `assets/icons/*.svg`, embedded in release and read from disk in debug.
+#[derive(rust_embed::RustEmbed)]
+#[folder = "assets/"]
+#[include = "icons/*.svg"]
 struct Assets;
+
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<std::borrow::Cow<'static, [u8]>>> {
-        Ok(icon_bytes(path).map(std::borrow::Cow::Borrowed))
+        Ok(Self::get(path).map(|f| f.data))
     }
-    fn list(&self, _: &str) -> Result<Vec<SharedString>> {
-        Ok(vec![])
+    fn list(&self, path: &str) -> Result<Vec<SharedString>> {
+        Ok(Self::iter()
+            .filter(|p| p.starts_with(path))
+            .map(|p| p.into())
+            .collect())
     }
 }
 
@@ -187,14 +156,27 @@ impl Root {
         cx.set_global(ui::Session {
             host: host.clone(),
             identifier: id.clone(),
+            control: None,
+            events: self.events.clone(),
         });
         self.main.update(cx, |main, _| {
             main.set_hostname(host.clone());
         });
         let control = api::spawn(host, req, self.events.clone());
         self.control = Some(control.clone());
+        cx.global_mut::<ui::Session>().control = Some(control.clone());
         self.main
             .update(cx, |main, cx| main.set_control(control, cx));
+    }
+
+    /// Forgets the saved login, drops the connection and shows the login screen.
+    fn sign_out(&mut self, cx: &mut Context<Self>) {
+        std::thread::spawn(store::clear);
+        self.logged_in = false;
+        self.control.take();
+        cx.global_mut::<ui::Session>().control = None;
+        self.main.update(cx, |main, cx| main.on_disconnected(cx));
+        ui::close_settings(cx);
     }
 
     fn on_event(&mut self, ev: Event, cx: &mut Context<Self>) {
@@ -254,6 +236,8 @@ impl Root {
             Event::ServerEditFailed(m) => self
                 .main
                 .update(cx, |main, cx| main.on_server_edit_failed(m, cx)),
+            Event::UserDeleted | Event::LoggedOut => self.sign_out(cx),
+            Event::UserDeleteFailed(m) => ui::on_user_delete_failed(m, cx),
             Event::ChannelCreated {
                 server_id,
                 id,

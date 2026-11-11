@@ -52,6 +52,11 @@ pub enum Event {
     },
     /// Rename or delete refused (not the owner, name taken, ...).
     ServerEditFailed(String),
+    /// The account is gone: the login must be forgotten.
+    UserDeleted,
+    /// The user chose to sign out (sent by the settings window).
+    LoggedOut,
+    UserDeleteFailed(String),
     ChannelCreated {
         server_id: i64,
         id: i64,
@@ -112,6 +117,7 @@ enum Command {
     DeleteServer {
         server_id: i64,
     },
+    DeleteUser,
     CreateChannel {
         server_id: i64,
         name: String,
@@ -141,6 +147,10 @@ impl Control {
         self.tx
             .try_send(Command::DeleteServer { server_id })
             .is_ok()
+    }
+
+    pub fn delete_user(&self) -> bool {
+        self.tx.try_send(Command::DeleteUser).is_ok()
     }
 
     pub fn create_server(&self, name: String) -> bool {
@@ -395,6 +405,12 @@ fn commands(
                         Ok(()) => Event::ServerDeleted { id: server_id },
                         Err(e) => Event::ServerEditFailed(e),
                     });
+            }
+            Command::DeleteUser => {
+                let _ = events.send_blocking(match server::delete_user(&mut session) {
+                    Ok(()) => Event::UserDeleted,
+                    Err(e) => Event::UserDeleteFailed(e),
+                });
             }
             Command::CreateChannel {
                 server_id,

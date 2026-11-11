@@ -66,3 +66,18 @@ func (s *Server) handleLogin(c *client, msg protocol.Control) {
 	c.sess.Username = user.Username
 	c.send(protocol.Control{Type: "ACK", Name: user.Username})
 }
+
+func (s* Server) handleDeleteUser(c* client, msg protocol.Control){
+	if !c.requireAuth() {
+		return
+	}
+	ctx, cancel := storeCtx()
+	err := s.users.Delete(ctx, int(c.sess.UserID))
+	cancel()
+
+	if err != nil {
+		log.Printf("[DELETE] failed to delete user %d: %v", c.sess.UserID, err)
+		c.sendError("member deletion failed")
+	}
+	c.send(protocol.Control{Type: "ACK"})
+}

@@ -48,6 +48,7 @@ keyring = { version = "3", default-features = false, features = [
 ] }
 pulldown-cmark = { version = "0.13", default-features = false }
 directories = "6.0.0"
+rust-embed = { version = "8", default-features = false, features = ["include-exclude"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

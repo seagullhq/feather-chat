@@ -3,6 +3,7 @@ use super::tab_nav;
 use super::titlebar::Titlebar;
 use super::userfiles::{read_user_file, write_user_file};
 use super::window_frame::frame as window_frame;
+use crate::api::{Control, Event};
 use crate::media::PREFS;
 use crate::theme::ThemeExt;
 use crate::ui::markdown::{Markdown, MdTheme};
@@ -141,6 +142,10 @@ fn open_credits(cx: &mut App) {
 pub struct Session {
     pub host: String,
     pub identifier: String,
+    /// Handle to the live connection, for account actions.
+    pub control: Option<Control>,
+    /// The app's event queue: lets this window ask the root to sign out.
+    pub events: async_channel::Sender<Event>,
 }
 
 impl Global for Session {}
@@ -163,6 +168,37 @@ struct SettingsView {
     out: usize,
     volume: i32,
     titlebar: Entity<Titlebar>,
+    /// Account deletion: asking for confirmation / request in flight / last error.
+    confirm_delete: bool,
+    deleting: bool,
+    error: Option<String>,
+}
+
+/// Runs `f` on the open settings window, if any.
+fn with_settings(
+    cx: &mut App,
+    f: impl FnOnce(&mut SettingsView, &mut Window, &mut Context<SettingsView>),
+) {
+    let Some(handle) = cx.try_global::<SettingsWindow>().map(|s| s.0) else {
+        return;
+    };
+    if let Some(handle) = handle.downcast::<SettingsView>() {
+        let _ = handle.update(cx, |view, window, cx| f(view, window, cx));
+    }
+}
+
+/// Closes the settings window (after sign-out or account deletion).
+pub fn close_settings(cx: &mut App) {
+    with_settings(cx, |_, window, _| window.remove_window());
+}
+
+pub fn on_user_delete_failed(message: String, cx: &mut App) {
+    with_settings(cx, |view, _, cx| {
+        view.deleting = false;
+        view.confirm_delete = false;
+        view.error = Some(message);
+        cx.notify();
+    });
 }
 
 impl SettingsView {
@@ -212,6 +248,9 @@ impl SettingsView {
             outs,
             volume: PREFS.volume.load(Relaxed) as i32,
             titlebar: cx.new(|_| Titlebar::new("Settings").sheet()),
+            confirm_delete: false,
+            deleting: false,
+            error: None,
         }
     }
 }
@@ -296,33 +335,110 @@ impl SettingsView {
             .map(|s| (s.host.clone(), s.identifier.clone()))
             .unwrap_or_default();
         let signed = !id.is_empty();
-        div().flex().flex_col().gap_3().child(
-            card(&t, "Account")
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                card(&t, "Account")
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(Avatar::new(if signed { &id } else { "?" }, 48.))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .text_size(px(18.))
+                                            .font_weight(FontWeight::BOLD)
+                                            .child(if signed {
+                                                id.clone()
+                                            } else {
+                                                "Not signed in".into()
+                                            }),
+                                    )
+                                    .child(div().text_color(t.muted).child(host.clone())),
+                            ),
+                    )
+                    .when(signed, |d| d.child(row(&t, "Server", host)))
+                    .when(signed, |d| {
+                        d.child(row(
+                            &t,
+                            "Session",
+                            Button::new("logout", "Log out").on_click(|_, _, cx| {
+                                if let Some(s) = cx.try_global::<Session>() {
+                                    let _ = s.events.try_send(Event::LoggedOut);
+                                }
+                            }),
+                        ))
+                    }),
+            )
+            .when(signed, |d| d.child(self.delete_account(&t, cx)))
+    }
+
+    /// "Delete account" with an inline confirmation, like the server sheet.
+    fn delete_account(&self, t: &crate::theme::Theme, cx: &mut Context<Self>) -> Div {
+        let deleting = self.deleting;
+        let body = if self.confirm_delete {
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
                 .child(
                     div()
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .child(Avatar::new(if signed { &id } else { "?" }, 48.))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .child(
-                                    div()
-                                        .text_size(px(18.))
-                                        .font_weight(FontWeight::BOLD)
-                                        .child(if signed {
-                                            id.clone()
-                                        } else {
-                                            "Not signed in".into()
-                                        }),
-                                )
-                                .child(div().text_color(t.muted).child(host.clone())),
-                        ),
+                        .flex_1()
+                        .child("Delete your account for good? This cannot be undone."),
                 )
-                .when(signed, |d| d.child(row(&t, "Server", host))),
-        )
+                .child(
+                    Button::new("account-cancel", "Cancel")
+                        .disabled(deleting)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirm_delete = false;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new(
+                        "account-delete",
+                        if deleting { "Deleting..." } else { "Delete" },
+                    )
+                    .primary()
+                    .disabled(deleting)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let sent = cx
+                            .try_global::<Session>()
+                            .and_then(|s| s.control.as_ref())
+                            .is_some_and(|c| c.delete_user());
+                        if sent {
+                            this.deleting = true;
+                            this.error = None;
+                        } else {
+                            this.confirm_delete = false;
+                            this.error = Some("Not connected.".into());
+                        }
+                        cx.notify();
+                    })),
+                )
+        } else {
+            div().flex().child(
+                Button::new("account-delete-ask", "Delete account").on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.confirm_delete = true;
+                        this.error = None;
+                        cx.notify();
+                    },
+                )),
+            )
+        };
+        card(t, "Danger zone")
+            .when_some(self.error.clone(), |d, e| {
+                d.child(div().text_color(t.danger).child(e))
+            })
+            .child(body)
     }
 
     /// Label on the left, dropdown on the right showing the current device.
