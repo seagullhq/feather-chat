@@ -27,6 +27,39 @@ fn rounded<E: Styled>(mut el: E, t: Tiling) -> E {
     el
 }
 
+/// Rounds the outer corners of a child that paints its own background: GPUI
+/// clips content to rectangles, so without this a square `bg` covers the
+/// frame's rounded corners. `top` / `bottom` pick which edge the child touches.
+pub fn round_inner<E: Styled>(mut el: E, window: &Window, top: bool, bottom: bool) -> E {
+    let Decorations::Client { tiling: t } = window.window_decorations() else {
+        return el;
+    };
+    let r = ROUNDING - BORDER;
+    if top && !t.top && !t.left {
+        el = el.rounded_tl(r);
+    }
+    if top && !t.top && !t.right {
+        el = el.rounded_tr(r);
+    }
+    if bottom && !t.bottom && !t.left {
+        el = el.rounded_bl(r);
+    }
+    if bottom && !t.bottom && !t.right {
+        el = el.rounded_br(r);
+    }
+    el
+}
+
+/// Rounds only the bottom-left corner, for an element flush in that corner.
+pub fn round_inner_bl<E: Styled>(el: E, window: &Window) -> E {
+    match window.window_decorations() {
+        Decorations::Client { tiling } if !tiling.bottom && !tiling.left => {
+            el.rounded_bl(ROUNDING - BORDER)
+        }
+        _ => el,
+    }
+}
+
 pub fn frame(element: impl IntoElement, border: Hsla, window: &mut Window) -> Stateful<Div> {
     let decorations = window.window_decorations();
     let resizable = window.is_resizable();

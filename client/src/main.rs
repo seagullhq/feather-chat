@@ -307,7 +307,7 @@ impl Root {
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
-        let body = ui::tab_nav(div())
+        let body = ui::round_inner(ui::tab_nav(div()), window, true, true)
             .track_focus(&self.focus)
             .size_full()
             .flex()

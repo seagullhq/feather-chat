@@ -15,7 +15,7 @@ pub use auth::{AuthRequest, AuthView};
 pub use main_view::MainView;
 pub use settings::Session;
 pub use titlebar::Titlebar;
-pub use window_frame::frame as window_frame;
+pub use window_frame::{frame as window_frame, round_inner, round_inner_bl};
 
 use gpui::{App, KeyBinding, actions, prelude::*};
 

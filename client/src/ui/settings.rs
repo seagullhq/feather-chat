@@ -235,7 +235,7 @@ impl Render for CreditsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
 
-        let body = tab_nav(div())
+        let body = super::round_inner(tab_nav(div()), window, true, true)
             .track_focus(&self.focus)
             .size_full()
             .bg(t.bg)
@@ -465,7 +465,7 @@ impl Render for SettingsView {
             Page::Voice => self.voice(cx),
             Page::About => self.about(cx),
         };
-        let root = tab_nav(div())
+        let root = super::round_inner(tab_nav(div()), window, true, true)
             .track_focus(&self.focus)
             // Esc closes it: a macOS sheet has no window buttons of its own.
             .key_context("Modal")

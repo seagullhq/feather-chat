@@ -628,7 +628,7 @@ impl Render for MainView {
                     .child(self.stage(window.viewport_size(), cx))
                     .children(self.server_sheet(window, cx)),
             )
-            .child(self.status_bar(cx))
+            .child(self.status_bar(window, cx))
             .children(server_modal)
             .children(channel_modal)
     }

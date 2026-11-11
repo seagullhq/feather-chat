@@ -6,7 +6,7 @@ use gpui::{prelude::*, *};
 impl super::MainView {
     /// Settings on the left; connected server and microphone on the right.
     /// Deliberately small and muted: it is not the focus.
-    pub(super) fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn status_bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
 
         let _server = match self.joined {
@@ -25,7 +25,7 @@ impl super::MainView {
             .text_size(t.font_size * 0.92)
             .text_color(t.muted)
             .child(
-                div()
+                super::super::round_inner_bl(div(), window)
                     .id("settings")
                     .focusable()
                     .tab_stop(true)

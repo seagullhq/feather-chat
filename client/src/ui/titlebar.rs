@@ -58,7 +58,7 @@ impl Render for Titlebar {
             .flatten();
         let active = window.is_window_active();
 
-        div()
+        super::round_inner(div(), window, true, false)
             .id("titlebar")
             .window_control_area(WindowControlArea::Drag)
             .flex()
