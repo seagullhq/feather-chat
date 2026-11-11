@@ -37,6 +37,12 @@ pub enum Event {
         invite_code: String,
     },
     ServerCreateFailed(String),
+    ServerJoined {
+        id: i64,
+        name: String,
+        invite_code: String,
+    },
+    ServerJoinFailed(String),
     ServerRenamed {
         id: i64,
         name: String,
@@ -96,6 +102,9 @@ enum Command {
     CreateServer {
         name: String,
     },
+    JoinServer {
+        code: String,
+    },
     RenameServer {
         server_id: i64,
         name: String,
@@ -118,6 +127,10 @@ pub struct Control {
 }
 
 impl Control {
+    pub fn join_server(&self, code: String) -> bool {
+        self.tx.try_send(Command::JoinServer { code }).is_ok()
+    }
+
     pub fn rename_server(&self, server_id: i64, name: String) -> bool {
         self.tx
             .try_send(Command::RenameServer { server_id, name })
@@ -355,6 +368,16 @@ fn commands(
                     let _ = events.send_blocking(Event::ServerCreateFailed(e));
                 }
             },
+            Command::JoinServer { code } => {
+                let _ = events.send_blocking(match server::join_server(&mut session, code) {
+                    Ok(s) => Event::ServerJoined {
+                        id: s.id,
+                        name: s.name,
+                        invite_code: s.invite_code,
+                    },
+                    Err(e) => Event::ServerJoinFailed(e),
+                });
+            }
             Command::RenameServer { server_id, name } => {
                 let _ = events.send_blocking(
                     match server::rename_server(&mut session, server_id, name) {

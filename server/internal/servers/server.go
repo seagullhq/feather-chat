@@ -168,3 +168,24 @@ func (s *ServerStore) CreateServer(ctx context.Context, ownerID int, serverName 
 
 	return &server, nil
 }
+
+// JoinServer adds the user to the server that owns code. Joining twice is a no-op.
+func (s *ServerStore) JoinServer(ctx context.Context, userID int, code string) (*Server, error) {
+	var srv Server
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, name, invite_code FROM servers WHERE invite_code = $1`, code,
+	).Scan(&srv.ID, &srv.Name, &srv.InviteCode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrBadInvite
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO server_members (server_id, user_id) VALUES ($1, $2)
+		ON CONFLICT DO NOTHING`, srv.ID, userID,
+	); err != nil {
+		return nil, err
+	}
+	return &srv, nil
+}

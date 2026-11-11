@@ -49,6 +49,7 @@ var handlers = map[string]func(*Server, *client, protocol.Control){
 	"LEAVE":              (*Server).handleLeave,
 	"LIST_SERVERS":       (*Server).handleListServers,
 	"CREATE_SERVER":      (*Server).handleCreateServer,
+	"JOIN_SERVER":        (*Server).handleJoinServer,
 	"UPDATE_SERVER":      (*Server).handleUpdateServer,
 	"DELETE_SERVER":      (*Server).handleDeleteServer,
 	"LIST_CHANNEL_TYPES": (*Server).handleListChannelTypes,

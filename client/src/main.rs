@@ -235,6 +235,16 @@ impl Root {
             Event::ServerCreateFailed(m) => self
                 .main
                 .update(cx, |main, cx| main.on_server_create_failed(m, cx)),
+            Event::ServerJoined {
+                id,
+                name,
+                invite_code,
+            } => self.main.update(cx, |main, cx| {
+                main.on_server_joined(id, name, invite_code, cx)
+            }),
+            Event::ServerJoinFailed(m) => self
+                .main
+                .update(cx, |main, cx| main.on_server_create_failed(m, cx)),
             Event::ServerRenamed { id, name } => self
                 .main
                 .update(cx, |main, cx| main.on_server_renamed(id, name, cx)),

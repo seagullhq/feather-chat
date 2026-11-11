@@ -10,6 +10,7 @@ import (
 // Errors surfaced to the control plane and, through it, to clients.
 var (
 	ErrTaken        = errors.New("server name already taken")
+	ErrBadInvite    = errors.New("invalid invite code")
 	ErrForbidden    = errors.New("forbidden")
 	ErrCantDelete   = errors.New("only the owner can delete this server")
 	ErrFailedDelete = errors.New("server deletion failed")

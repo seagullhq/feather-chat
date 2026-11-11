@@ -8,6 +8,7 @@ use gpui::{prelude::*, *};
 pub(super) enum ModalEvent {
     Close,
     Create { name: String },
+    Join { code: String },
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -95,7 +96,19 @@ impl AddServerModal {
         }
         match self.mode {
             Mode::Join => {
-                self.error = Some("Joining with an invite is not available yet.".into());
+                let typed = self.invite.read(cx).text().trim().to_string();
+                // Accept a pasted link too: the code is its last path segment.
+                let code = typed.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+                if code.is_empty() {
+                    self.error = Some("Enter an invite code.".into());
+                    cx.notify();
+                    return;
+                }
+                self.busy = true;
+                self.error = None;
+                cx.emit(ModalEvent::Join {
+                    code: code.to_string(),
+                });
                 cx.notify();
             }
             Mode::Create => {
@@ -245,7 +258,7 @@ impl Render for AddServerModal {
                         move |_, w, cx| close(w, cx)
                     }))
                     .child(
-                        Button::new("confirm", if self.busy { "Creating..." } else { action })
+                        Button::new("confirm", if self.busy { "Working..." } else { action })
                             .primary()
                             .disabled(!can_submit)
                             .on_click(cx.listener(|this, _, _, cx| this.submit(cx))),

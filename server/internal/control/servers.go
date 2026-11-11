@@ -126,3 +126,34 @@ func (s *Server) handleDeleteServer(c *client, msg protocol.Control) {
 	}
 	c.send(protocol.Control{Type: "ACK", ServerID: msg.ServerID})
 }
+
+// handleJoinServer answers JOIN_SERVER by adding the user to the server
+// that owns the invite code.
+func (s *Server) handleJoinServer(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	code := strings.TrimSpace(msg.InviteCode)
+	if code == "" || len(code) > 32 {
+		c.sendError(servers.ErrBadInvite.Error())
+		return
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	server, err := s.servers.JoinServer(ctx, c.sess.UserID, code)
+	if err != nil {
+		if errors.Is(err, servers.ErrBadInvite) {
+			c.sendError(err.Error())
+			return
+		}
+		log.Printf("[JOIN] failed to join server: %v", err)
+		c.sendError("join failed")
+		return
+	}
+	c.send(protocol.Control{
+		Type:       "ACK",
+		ServerID:   server.ID,
+		Name:       server.Name,
+		InviteCode: server.InviteCode,
+	})
+}

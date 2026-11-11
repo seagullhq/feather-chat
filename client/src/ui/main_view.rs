@@ -67,6 +67,7 @@ impl MainView {
             |this, _, event: &ModalEvent, window, cx| match event {
                 ModalEvent::Close => this.set_adding(false, window, cx),
                 ModalEvent::Create { name } => this.create_server(name.clone(), cx),
+                ModalEvent::Join { code } => this.join_server(code.clone(), cx),
             },
         )
         .detach();
@@ -233,6 +234,47 @@ impl MainView {
                 modal.on_failed("The connection is closed.".into(), cx)
             });
         }
+    }
+
+    fn join_server(&mut self, code: String, cx: &mut Context<Self>) {
+        let sent = self.control.as_ref().is_some_and(|c| c.join_server(code));
+        if !sent {
+            self.add.update(cx, |modal, cx| {
+                modal.on_failed("Not connected to a server.".into(), cx)
+            });
+        }
+    }
+
+    pub fn on_server_joined(
+        &mut self,
+        id: i64,
+        name: String,
+        invite_code: String,
+        cx: &mut Context<Self>,
+    ) {
+        let i = match self.servers.iter().position(|s| s.id == id) {
+            Some(i) => i,
+            None => {
+                self.servers.push(Server {
+                    id,
+                    name,
+                    invite_code,
+                    members: vec![],
+                    icon: None,
+                    channels: vec![],
+                    viewing: 0,
+                });
+                self.servers.len() - 1
+            }
+        };
+        self.server = i;
+        self.add.update(cx, |modal, cx| modal.reset(cx));
+        self.adding = false;
+        let focus = self.focus.clone();
+        let entity = cx.entity_id();
+        cx.with_window(entity, |window, cx| window.focus(&focus, cx));
+        self.load_channels();
+        cx.notify();
     }
 
     fn create_channel(&mut self, name: String, channel_type: i32, cx: &mut Context<Self>) {

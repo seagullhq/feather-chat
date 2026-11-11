@@ -158,6 +158,15 @@ pub(super) fn create_server(session: &mut Session, name: String) -> Result<Creat
     })
 }
 
+pub(super) fn join_server(session: &mut Session, code: String) -> Result<CreatedServer, String> {
+    let ack = session.call(json!({"type":"JOIN_SERVER","inviteCode":code}))?;
+    Ok(CreatedServer {
+        id: ack["serverId"].as_i64().unwrap_or(0),
+        name: ack["name"].as_str().unwrap_or_default().to_string(),
+        invite_code: ack["inviteCode"].as_str().unwrap_or(&code).to_string(),
+    })
+}
+
 pub(super) fn rename_server(
     session: &mut Session,
     server_id: i64,
