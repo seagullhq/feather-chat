@@ -37,6 +37,13 @@ fn default_mic() -> String {
         .unwrap_or_else(|| "No microphone".into())
 }
 
+fn default_audio_device() -> String {
+    use cpal::traits::HostTrait;
+    cpal::default_host()
+        .default_output_device()
+        .and_then(|d| media::dev_name(&d))
+        .unwrap_or_else(|| "No audio device".into())
+}
 pub struct MainView {
     servers: Vec<Server>,
     /// False until the first server list arrives: the sidebar shows a skeleton.
@@ -46,6 +53,7 @@ pub struct MainView {
     joined: Option<(usize, usize)>,
     me: Member,
     mic_name: SharedString,
+    audio_name: SharedString,
     adding: bool,
     adding_channel: bool,
     focus: FocusHandle,
@@ -114,6 +122,7 @@ impl MainView {
             joined: None,
             me: Member::new("Tu"),
             mic_name: default_mic().into(),
+            audio_name: default_audio_device().into(),
             adding: false,
             adding_channel: false,
             focus: cx.focus_handle(),
