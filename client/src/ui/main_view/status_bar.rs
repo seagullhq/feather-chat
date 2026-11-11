@@ -44,6 +44,24 @@ impl super::MainView {
                     .child(icon("gear-six", 16., t.text)),
             )
             .child(div().flex_1())
+            .children(self.media.as_ref().and_then(|m| m.ping_ms()).map(|ms| {
+                // Green below 80 ms, red from 200 ms, plain in between.
+                let color = if ms < 80 {
+                    t.success
+                } else if ms < 200 {
+                    t.muted
+                } else {
+                    t.danger
+                };
+                div()
+                    .id("ping")
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(div().size(px(7.)).rounded_full().bg(color))
+                    .child(format!("{ms} ms"))
+                    .mr_2()
+            }))
             .child(icon("server", 14., t.muted))
             .child(self.hostname.clone())
             .child(div().w(px(6.)))

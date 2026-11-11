@@ -18,10 +18,12 @@ pub const MEDIA_PORT: u16 = 7701;
 const RATE: u32 = 48_000;
 /// 20 ms mono at 48 kHz.
 const FRAME: usize = 960;
-/// Frames a speaker's buffer must hold before playback starts (60 ms).
-const PRIME: usize = 3;
+/// Frames a speaker's buffer holds before playback starts: 2 (40 ms) on a clean
+/// link, up to MAX_PRIME when the measured jitter asks for it.
+const PRIME: usize = 2;
+const MAX_PRIME: usize = 6;
 /// Past this many queued frames the buffer skips ahead instead of lagging.
-const MAX_QUEUED: usize = 12;
+const MAX_QUEUED: usize = 8;
 const PEER_TIMEOUT: Duration = Duration::from_secs(2);
 const OUT_RING: usize = RATE as usize / 2;
 /// Level gain: speech sits around rms 0.03..0.2, the UI wants 0..1.
@@ -85,6 +87,8 @@ pub struct Shared {
     pub muted: AtomicBool,
     pub deafened: AtomicBool,
     mic: AtomicU32,
+    /// Last round trip to the server in microseconds; 0 = no echo yet.
+    rtt_us: AtomicU32,
     peers: Mutex<HashMap<u32, f32>>,
     stop: AtomicBool,
 }
@@ -92,6 +96,14 @@ pub struct Shared {
 impl Shared {
     pub fn mic_level(&self) -> f32 {
         f32::from_bits(self.mic.load(Relaxed))
+    }
+
+    /// Round trip to the media server (PING echo), in ms.
+    pub fn ping_ms(&self) -> Option<u32> {
+        match self.rtt_us.load(Relaxed) {
+            0 => None,
+            us => Some(us.div_ceil(1000)),
+        }
     }
 
     /// Smoothed level 0..1 per speaking SSRC.
@@ -291,13 +303,25 @@ fn pick(
         .map_or_else(|| default.map_err(|e| e.to_string()), Ok)
 }
 
+/// ~10 ms device buffer instead of the backend default, which can be 100 ms
+/// or more (cpal docs). Falls back to the default if the device refuses it.
+fn small_buffer(sup: &SupportedStreamConfig) -> cpal::BufferSize {
+    match sup.buffer_size() {
+        cpal::SupportedBufferSize::Range { min, max } => {
+            cpal::BufferSize::Fixed((sup.sample_rate() / 100).clamp(*min, *max))
+        }
+        _ => cpal::BufferSize::Default,
+    }
+}
+
 fn mic_stream(dev: &cpal::Device, tx: Arc<Mutex<rtrb::Producer<i16>>>) -> Result<Stream, String> {
     let sup = pick(
         dev.supported_input_configs().ok().map(|i| i.collect()),
         dev.default_input_config(),
     )?;
     let fmt = sup.sample_format();
-    let cfg = sup.config();
+    let mut cfg = sup.config();
+    cfg.buffer_size = small_buffer(&sup);
     let stream = match fmt {
         cpal::SampleFormat::F32 => mic::<f32>(dev, &cfg, tx),
         cpal::SampleFormat::I16 => mic::<i16>(dev, &cfg, tx),
@@ -309,6 +333,26 @@ fn mic_stream(dev: &cpal::Device, tx: Arc<Mutex<rtrb::Producer<i16>>>) -> Result
 }
 
 fn mic<T: SizedSample>(
+    dev: &cpal::Device,
+    cfg: &StreamConfig,
+    tx: Arc<Mutex<rtrb::Producer<i16>>>,
+) -> Result<Stream, String>
+where
+    f32: FromSample<T>,
+{
+    mic_with::<T>(dev, cfg, tx.clone()).or_else(|e| {
+        if matches!(cfg.buffer_size, cpal::BufferSize::Default) {
+            return Err(e);
+        }
+        let plain = StreamConfig {
+            buffer_size: cpal::BufferSize::Default,
+            ..cfg.clone()
+        };
+        mic_with::<T>(dev, &plain, tx)
+    })
+}
+
+fn mic_with<T: SizedSample>(
     dev: &cpal::Device,
     cfg: &StreamConfig,
     tx: Arc<Mutex<rtrb::Producer<i16>>>,
@@ -344,7 +388,8 @@ fn speaker_stream(
         dev.default_output_config(),
     )?;
     let fmt = sup.sample_format();
-    let cfg = sup.config();
+    let mut cfg = sup.config();
+    cfg.buffer_size = small_buffer(&sup);
     let stream = match fmt {
         cpal::SampleFormat::F32 => speaker::<f32>(dev, &cfg, rx),
         cpal::SampleFormat::I16 => speaker::<i16>(dev, &cfg, rx),
@@ -356,6 +401,23 @@ fn speaker_stream(
 }
 
 fn speaker<T: SizedSample + FromSample<f32>>(
+    dev: &cpal::Device,
+    cfg: &StreamConfig,
+    rx: Arc<Mutex<rtrb::Consumer<f32>>>,
+) -> Result<Stream, String> {
+    speaker_with::<T>(dev, cfg, rx.clone()).or_else(|e| {
+        if matches!(cfg.buffer_size, cpal::BufferSize::Default) {
+            return Err(e);
+        }
+        let plain = StreamConfig {
+            buffer_size: cpal::BufferSize::Default,
+            ..cfg.clone()
+        };
+        speaker_with::<T>(dev, &plain, rx)
+    })
+}
+
+fn speaker_with<T: SizedSample + FromSample<f32>>(
     dev: &cpal::Device,
     cfg: &StreamConfig,
     rx: Arc<Mutex<rtrb::Consumer<f32>>>,
@@ -439,7 +501,17 @@ fn worker(
             }
             let from = u32::from_be_bytes([rx[1], rx[2], rx[3], rx[4]]);
             match rx[0] & 0x1f {
-                KIND_PING => echoed = true,
+                KIND_PING => {
+                    echoed = true;
+                    // The server echoes our datagram: bytes 5..13 are the send time.
+                    if n >= 13 {
+                        let sent = u64::from_be_bytes(rx[5..13].try_into().unwrap());
+                        let rtt = (t0.elapsed().as_micros() as u64).saturating_sub(sent);
+                        shared
+                            .rtt_us
+                            .store(rtt.clamp(1, u32::MAX as u64) as u32, Relaxed);
+                    }
+                }
                 KIND_AUDIO if n > 9 && from != ssrc => {
                     let seq = u32::from_be_bytes([rx[5], rx[6], rx[7], rx[8]]);
                     peers.entry(from).or_insert_with(Peer::new).insert(
@@ -492,7 +564,8 @@ fn worker(
             }
             mix(&shared, &mut peers, &mut out);
         }
-        std::thread::sleep(Duration::from_millis(5));
+        // Poll fast: every ms of sleep is added to packet latency both ways.
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
@@ -529,6 +602,9 @@ struct Peer {
     missed: u32,
     level: f32,
     last: Instant,
+    /// Newest seq seen, and the smoothed interarrival jitter (RFC 3550) in ms.
+    newest: Option<u32>,
+    jitter_ms: f32,
 }
 
 impl Peer {
@@ -541,11 +617,34 @@ impl Peer {
             missed: 0,
             level: 0.,
             last: Instant::now(),
+            newest: None,
+            jitter_ms: 0.,
         }
     }
 
+    /// Frames to hold before playback: grows with the measured jitter so a
+    /// clean link stays at the minimum delay and a bad one stops stuttering.
+    fn target(&self) -> usize {
+        ((3. * self.jitter_ms / 20.).ceil() as usize + 1).clamp(PRIME, MAX_PRIME)
+    }
+
     fn insert(&mut self, seq: u32, frame: Vec<u8>, term: bool) {
-        self.last = Instant::now();
+        let now = Instant::now();
+        if let Some(prev) = self.newest {
+            let step = seq.wrapping_sub(prev) as i32;
+            let gap = now.duration_since(self.last).as_secs_f32() * 1000.;
+            // Only consecutive packets of one talkspurt say something about the network.
+            if (1..50).contains(&step) && gap < 200. {
+                let d = (gap - 20. * step as f32).abs().min(100.);
+                self.jitter_ms += (d - self.jitter_ms) / 16.;
+            }
+            if step > 0 {
+                self.newest = Some(seq);
+            }
+        } else {
+            self.newest = Some(seq);
+        }
+        self.last = now;
         // Late == lost (wrapping compare, docs/wire-format.md §4).
         if self.primed && (seq.wrapping_sub(self.next) as i32) < 0 {
             return;
@@ -557,7 +656,7 @@ impl Peer {
     // ponytail: BTreeMap order breaks when seq wraps u32 (~2.7 years of talking).
     fn step(&mut self, acc: &mut [f32; FRAME]) {
         if !self.primed {
-            if self.queue.len() < PRIME {
+            if self.queue.len() < self.target() {
                 self.level *= 0.55;
                 return;
             }
