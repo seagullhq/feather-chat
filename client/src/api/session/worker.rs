@@ -183,10 +183,16 @@ fn commands(
                 }
             },
             Command::KickUser { server_id, user_id } => {
-                let _ = server::kick_user(&mut session, server_id, user_id);
-            }
+                if server::kick_user(&mut session, server_id, user_id).is_ok() {
+                    let members = server::list_members(&mut session, server_id).unwrap();
+                    let _ = events.send_blocking(Event::MembersListed { server_id, members });
+                }
+            },
             Command::BanUser { server_id, user_id } => {
-                let _ = server::ban_user(&mut session, server_id, user_id);
+                if server::ban_user(&mut session, server_id, user_id).is_ok(){
+                    let members = server::list_members(&mut session, server_id).unwrap();
+                    let _ = events.send_blocking(Event::MembersListed { server_id, members });
+                }
             }
         }
     }

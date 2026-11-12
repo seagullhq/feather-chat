@@ -142,10 +142,8 @@ impl Root {
         identifier: Option<String>,
         password: Option<String>,
     ) {
-        if let Some(identifier) = &identifier {
-            if cx.has_global::<ui::Session>() {
-                cx.global_mut::<ui::Session>().identifier = identifier.clone();
-            }
+        if let Some(identifier) = &identifier && cx.has_global::<ui::Session>(){
+            cx.global_mut::<ui::Session>().identifier = identifier.clone();
         }
 
         let Some((host, id, pw)) = self.saved.as_mut() else {
