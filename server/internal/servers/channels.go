@@ -64,11 +64,10 @@ func (s *ServerStore) CreateChannel(ctx context.Context, channelName string, cha
 	return &channel, nil
 }
 
-func DeleteChannel(ctx context.Context, serverId int) {}
-
 // ErrNotFound: the channel does not exist, is not a voice channel, or the
 // user is not a member of its server. One error for all three so a probe
 // cannot tell which channels exist.
+
 var ErrNotFound = errors.New("channel not found")
 
 // VoiceChannelForUser returns the voice channel only if the user owns or

@@ -6,6 +6,7 @@ use gpui::{prelude::*, *};
 enum Tone {
     Normal,
     Primary,
+    Danger,
 }
 
 #[derive(IntoElement)]
@@ -39,6 +40,12 @@ impl Button {
         self
     }
 
+    /// Destructive action (delete).
+    pub fn danger(mut self) -> Self {
+        self.tone = Tone::Danger;
+        self
+    }
+
     pub fn on_click(mut self, f: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Box::new(f));
         self
@@ -52,6 +59,7 @@ impl RenderOnce for Button {
         let (bg, hover, fg) = match self.tone {
             Tone::Normal => (t.fill, t.fill_hover, t.text),
             Tone::Primary => (t.accent, t.accent.opacity(0.85), t.on_accent),
+            Tone::Danger => (t.danger, t.danger.opacity(0.85), t.on_accent),
         };
         div()
             .id(self.id)

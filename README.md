@@ -16,9 +16,9 @@ engine. feather-chat does what Discord does for voice — rooms you drop into an
 talk — as a native binary, on a server you own.
 
 > [!NOTE]
-> **Early.** Both sides are a hello world today. What is settled is the
-> toolchain and the [wire format](docs/wire-format.md), not the code. No audio
-> flows yet. See the [roadmap](#roadmap).
+> **Early.** Voice works end to end, but the wire protocol is plaintext.
+> What is settled is the [wire format](docs/wire-format.md); what is
+> missing is on the [roadmap](#roadmap).
 
 ## Quick start
 
@@ -28,15 +28,15 @@ With Rust (stable), Go and [just](https://github.com/casey/just) in place:
 git clone https://github.com/seagullhq/feather-chat
 cd feather-chat
 
-cp .env.example .env     # local MongoDB credentials (docker compose reads it)
-docker compose up -d     # the MongoDB the server stores accounts and servers in
+cp .env.example .env     # local PostgreSQL credentials (docker compose reads it)
+docker compose up -d     # the PostgreSQL the server stores accounts and servers in
 
 just server              # control on :7700, media on :7701
 just client              # builds and opens the desktop client
 ```
 
-They do not talk to each other yet — that is the
-[audio path](#roadmap), and it is the next thing to build.
+They talk now: register from the client, create a server, drop into a voice
+channel. What is missing is on the [roadmap](#roadmap).
 
 No `just`? Every recipe is a plain command, listed [below](#commands).
 
@@ -49,7 +49,7 @@ development packages. The first client build compiles gpui from source
 | | |
 |---|---|
 | `client/` | Rust + gpui desktop client (Linux, Windows, macOS) |
-| `server/` | Go backend — MongoDB for accounts and servers |
+| `server/` | Go backend — PostgreSQL for accounts and servers |
 | `docs/` | [docs index](docs/README.md) — protocol, wire format, audio path, server design, security model, ADR |
 
 ## Commands
@@ -62,38 +62,38 @@ development packages. The first client build compiles gpui from source
 |---|---|---|
 | `just build` | build the client | `cd client && cargo build --release` |
 | `just client` | build it, then run it | `cd client && cargo run --release` |
-| `just server` | build and run the server on `:7700` | `cd server && go build -o ../dist/server/feather-chat-server . && ../dist/server/feather-chat-server -tcp :7700` |
+| `just server` | build and run the server on `:7700` | `cd server && go build -o ../dist/server/feather-chat-server ./cmd/server && ../dist/server/feather-chat-server -tcp :7700` |
 | `just test` | run the Go and Rust tests | `cd server && go test -race ./... && cd ../client && cargo test` |
 | `just check` | format, vet, test and build | all of the above |
 | `just clean` | delete build output | `rm -rf client/target dist/server` |
 
 `just server :5000` picks another control port for the server; the client always
-dials `7700` (`CONTROL_PORT` in `client/src/net.rs`).
+dials `7700` (`CONTROL_PORT` in `client/src/api/transport.rs`).
 
 `just fmt` runs `cargo fmt` and `gofmt`.
 
 ## Roadmap
 
-In rough order:
+Tracked in the [project board](https://github.com/orgs/seagullhq/projects/1),
+in rough order:
 
-- **Audio path.** Opus capture and playback over the UDP protocol in
-  [`docs/wire-format.md`](docs/wire-format.md), and a server that forwards
-  frames per room. 
-- **Jitter buffer**, so packet reordering stops turning into clicks.
-- Accounts, persistent rooms, a device picker, push to talk.
+Voice works end to end today — Opus capture and playback over the UDP
+protocol in [`docs/wire-format.md`](docs/wire-format.md), a server that
+forwards frames per room, a jitter buffer per speaker, accounts, persistent
+servers and channels, a device picker, a remembered login. What is left:
+
+- **Push to talk.** The only missing input mode.
 - **Encryption — the last item.** The wire format is shaped for it already
-  (`docs/wire-format.md` reserves the layout), so everything above lands on
-  plaintext first; encryption goes in right before the first public-internet
+  (`docs/wire-format.md` reserves the layout), so everything today runs
+  plaintext; encryption goes in right before the first public-internet
   deployment. Nothing ship-ready goes public until this is done.
 
 ## Security
 
-There is no audio yet, so there is nothing to intercept today. What matters is
-what the design does *not* have: the protocol in
-[`docs/wire-format.md`](docs/wire-format.md) has no encryption and no
-authentication, so once audio flows, anyone on the network path could record a
-call and anyone who reaches the server's port could join a room whose name they
-guess.
+Audio flows now, and it is plaintext. The control channel has accounts — you
+must register and log in before joining a channel — but both it and the media
+path in [`docs/wire-format.md`](docs/wire-format.md) are unencrypted: anyone
+on the network path can record a call and read your password as you log in.
 
 Encryption lands before this is worth pointing at the public internet. Until
 then, treat any deployment as a trusted-network toy.

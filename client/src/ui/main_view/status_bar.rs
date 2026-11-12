@@ -6,7 +6,7 @@ use gpui::{prelude::*, *};
 impl super::MainView {
     /// Settings on the left; connected server and microphone on the right.
     /// Deliberately small and muted: it is not the focus.
-    pub(super) fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn status_bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
 
         let _server = match self.joined {
@@ -25,7 +25,7 @@ impl super::MainView {
             .text_size(t.font_size * 0.92)
             .text_color(t.muted)
             .child(
-                div()
+                super::super::round_inner_bl(div(), window)
                     .id("settings")
                     .focusable()
                     .tab_stop(true)
@@ -44,10 +44,49 @@ impl super::MainView {
                     .child(icon("gear-six", 16., t.text)),
             )
             .child(div().flex_1())
+            .children(self.media.as_ref().and_then(|m| m.ping_ms()).map(|ms| {
+                // Green below 80 ms,yellow > 80 and < 200, red from 200 ms.
+                let color = if ms < 80 {
+                    gpui::hsla(120.0 / 360.0, 1.0, 0.5, 1.0)
+                } else if ms < 200 {
+                    gpui::hsla(60.0 / 360.0, 1.0, 0.5, 1.0)
+                } else {
+                    gpui::Hsla {
+                        h: 0.0,
+                        s: 1.0,
+                        l: 0.5,
+                        a: 1.0,
+                    }
+                };
+                div()
+                    .id("ping")
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(div().size(px(7.)).rounded_full().bg(color))
+                    .child(format!("{ms} ms"))
+                    .mr_2()
+            }))
             .child(icon("server", 14., t.muted))
             .child(self.hostname.clone())
             .child(div().w(px(6.)))
             .child(icon("microphone", 14., t.muted))
-            .child(self.mic_name.clone())
+            .child(
+                crate::media::PREFS
+                    .input
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .map_or_else(|| self.mic_name.clone(), Into::into),
+            )
+            .child(icon("speaker-high", 14., t.muted))
+            .child(
+                crate::media::PREFS
+                    .output
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .map_or_else(|| self.audio_name.clone(), Into::into),
+            )
     }
 }

@@ -19,6 +19,9 @@ pub struct Theme {
     pub fill_hover: Hsla,
     pub text: Hsla,
     pub muted: Hsla,
+    /// Dividers: text at low alpha, so it contrasts on `bg` and `panel` too.
+    /// WinUI's border token is a near-invisible card stroke (black in both
+    /// modes), so the OS border colour is not used here.
     pub line: Hsla,
     pub accent: Hsla,
     pub on_accent: Hsla,
@@ -60,6 +63,16 @@ impl Theme {
         };
         let d = &sys.pick(mode).defaults;
         let text = c(d.text_color);
+        // The OS border is a card stroke: WinUI's is a faint black hairline in
+        // both modes, which disappears as a divider over `bg`/`panel`. Use text
+        // at low alpha instead, unless the platform states a solid line
+        // (GNOME/KDE separators, high contrast).
+        let border = c(d.border.color);
+        let line = if border.a >= 0.5 {
+            border
+        } else {
+            text.opacity(0.15)
+        };
         Self {
             bg: c(d.background_color),
             panel: c(d.surface_color),
@@ -67,7 +80,7 @@ impl Theme {
             fill_hover: text.opacity(0.15),
             text,
             muted: c(d.muted_color),
-            line: c(d.border.color).opacity(0.6),
+            line,
             accent: c(d.accent_color),
             on_accent: c(d.accent_text_color),
             danger: c(d.danger_color),
