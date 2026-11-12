@@ -39,6 +39,101 @@ func inviteCode(length int) (string, error) {
 	return string(b), nil
 }
 
+// KickUser removes a user from a server.
+func (s *ServerStore) KickUser(ctx context.Context, requesterID int, serverID int, targetUserID int) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var ownerID int
+	err = tx.QueryRowContext(ctx,
+		`SELECT owner_id FROM servers WHERE id = $1 FOR UPDATE`,
+		serverID,
+	).Scan(&ownerID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+
+	if requesterID != ownerID {
+		return ErrCantDelete
+	}
+
+	if targetUserID == ownerID {
+		return ErrCantDelete
+	}
+
+	res, err := tx.ExecContext(ctx,
+		`DELETE FROM server_members WHERE server_id = $1 AND user_id = $2`,
+		serverID, targetUserID,
+	)
+	if err != nil {
+		return err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+
+	return tx.Commit()
+}
+
+// BanUser bans a user from a server.
+func (s *ServerStore) BanUser(ctx context.Context, requesterID int, serverID int, targetUserID int) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var ownerID int
+	err = tx.QueryRowContext(ctx,
+		`SELECT owner_id FROM servers WHERE id = $1 FOR UPDATE`,
+		serverID,
+	).Scan(&ownerID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+
+	if requesterID != ownerID {
+		return ErrCantDelete
+	}
+
+	if targetUserID == ownerID {
+		return ErrCantDelete
+	}
+
+	res, err := tx.ExecContext(ctx,
+		`DELETE FROM server_members WHERE server_id = $1 AND user_id = $2`,
+		serverID, targetUserID,
+	)
+	if err != nil {
+		return err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+
+	return tx.Commit()
+}
+
+
 // DeleteServer removes a server, but only when userID owns it.
 func (s *ServerStore) DeleteServer(ctx context.Context, userID int, serverID int) error {
 	tx, err := s.db.BeginTx(ctx, nil)

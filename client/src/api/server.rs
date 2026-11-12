@@ -109,6 +109,7 @@ pub(super) fn list_channel_types(session: &mut Session) -> Result<Vec<ChannelTyp
 /// One person of a server, as returned by `LIST_MEMBERS`.
 #[derive(Clone)]
 pub struct ServerMember {
+    pub id: i64,
     pub name: String,
     pub owner: bool,
 }
@@ -124,11 +125,40 @@ pub(super) fn list_members(
         .flatten()
         .filter_map(|m| {
             Some(ServerMember {
+                id: m["id"].as_i64().unwrap_or(0),
                 name: m["username"].as_str()?.to_string(),
                 owner: m["owner"].as_bool().unwrap_or(false),
             })
         })
         .collect())
+}
+
+pub(super) fn kick_user(
+    session: &mut Session,
+    server_id: i64,
+    user_id: i64,
+) -> Result<(), String> {
+    session
+        .call(json!({
+            "type": "KICK_USER_FROM_SERVER",
+            "serverId": server_id,
+            "userId": user_id
+        }))
+        .map(|_| ())
+}
+
+pub(super) fn ban_user(
+    session: &mut Session,
+    server_id: i64,
+    user_id: i64,
+) -> Result<(), String> {
+    session
+        .call(json!({
+            "type": "BAN_USER_FROM_SERVER",
+            "serverId": server_id,
+            "userId": user_id
+        }))
+        .map(|_| ())
 }
 
 pub(super) fn list_channels(

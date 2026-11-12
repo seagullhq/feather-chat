@@ -133,11 +133,82 @@ func (s *Server) handleDeleteServer(c *client, msg protocol.Control) {
 }
 
 func (s *Server) handleServerKick(c *client, msg protocol.Control) {
-
+	if !c.requireAuth() {
+		return
+	}
+	if msg.ServerID <= 0 {
+		c.sendError("server id required")
+		return
+	}
+	targetUserID := msg.UserID
+	if targetUserID == 0 {
+		targetUserID = msg.TargetUserID
+	}
+	if targetUserID == 0 {
+		targetUserID = msg.User
+	}
+	if targetUserID == 0 && msg.Member != nil {
+		// no ID in Member struct
+	}
+	if targetUserID == 0 && len(msg.ServerMembers) > 0 {
+		targetUserID = msg.ServerMembers[0].ID
+	}
+	// Members must be looked up before the rows are gone.
+	peers := s.serverSessions(msg.ServerID, c.sess)
+	ctx, cancel := storeCtx()
+	defer cancel()
+	if err := s.servers.KickUser(ctx, c.sess.UserID, msg.ServerID, targetUserID); err != nil {
+		switch {
+		case errors.Is(err, servers.ErrNotFound),
+			errors.Is(err, servers.ErrCantDelete),
+			errors.Is(err, servers.ErrFailedDelete):
+			c.sendError(err.Error())
+		default:
+			log.Printf("[KICK] failed to kick %d from server %d: %v", targetUserID, msg.ServerID, err)
+			c.sendError("user kick failed")
+		}
+		return
+	}
+	notify(peers, protocol.Control{Type: "USER_KICKED", ServerID: msg.ServerID})
+	c.send(protocol.Control{Type: "ACK"})
 }
 
 func (s *Server) handleServerBan(c *client, msg protocol.Control) {
-
+	if !c.requireAuth() {
+		return
+	}
+	if msg.ServerID <= 0 {
+		c.sendError("server id required")
+		return
+	}
+	targetUserID := msg.UserID
+	if targetUserID == 0 {
+		targetUserID = msg.TargetUserID
+	}
+	if targetUserID == 0 {
+		targetUserID = msg.User
+	}
+	if targetUserID == 0 && len(msg.ServerMembers) > 0 {
+		targetUserID = msg.ServerMembers[0].ID
+	}
+	// Members must be looked up before the rows are gone.
+	peers := s.serverSessions(msg.ServerID, c.sess)
+	ctx, cancel := storeCtx()
+	defer cancel()
+	if err := s.servers.BanUser(ctx, c.sess.UserID, msg.ServerID, targetUserID); err != nil {
+		switch {
+		case errors.Is(err, servers.ErrNotFound),
+			errors.Is(err, servers.ErrCantDelete),
+			errors.Is(err, servers.ErrFailedDelete):
+			c.sendError(err.Error())
+		default:
+			log.Printf("[BAN] failed to ban %d from server %d: %v", targetUserID, msg.ServerID, err)
+			c.sendError("user kick failed")
+		}
+		return
+	}
+	notify(peers, protocol.Control{Type: "USER_KICKED", ServerID: msg.ServerID})
+	c.send(protocol.Control{Type: "ACK"})
 }
 
 // handleJoinServer answers JOIN_SERVER by adding the user to the server

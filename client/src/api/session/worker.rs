@@ -182,6 +182,12 @@ fn commands(
                     let _ = events.send_blocking(Event::ChannelCreateFailed(e));
                 }
             },
+            Command::KickUser { server_id, user_id } => {
+                let _ = server::kick_user(&mut session, server_id, user_id);
+            }
+            Command::BanUser { server_id, user_id } => {
+                let _ = server::ban_user(&mut session, server_id, user_id);
+            }
         }
     }
     session.shutdown();

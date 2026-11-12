@@ -21,15 +21,18 @@ impl super::super::MainView {
             .gap_4()
             .child(label(t, "People in this server"))
             .children(server.members.iter().enumerate().map(|(i, m)| {
+                let member_id = m.id;
+
                 let menu = (owner && !m.owner).then(|| {
                     let toggle = cx.listener(move |this, _, _, cx| {
                         let ui = &mut this.sheet_ui;
                         ui.member_menu = (ui.member_menu != Some(i)).then_some(i);
                         cx.notify();
                     });
+
                     let view = view.clone();
-                    // TODO: collegare al backend
                     let item = |l: &'static str| DropdownItem::new(l).on_click(|_, _, _| {});
+
                     Dropdown::new(
                         ElementId::from(("member-menu", i)),
                         ToolButton::new(
@@ -48,9 +51,26 @@ impl super::super::MainView {
                     })
                     .item(item("Make admin"))
                     .item(item("Make member"))
-                    .item(item("Kick"))
-                    .item(item("Ban"))
+                    .item(item("Kick").on_click(cx.listener({
+                        move |this, _, _, _| {
+                            if let (Some(c), Some(s)) =
+                                (&this.control, this.servers.get(this.server))
+                            {
+                                c.kick_user(s.id, member_id);
+                            }
+                        }
+                    })))
+                    .item(item("Ban").on_click(cx.listener({
+                        move |this, _, _, _| {
+                            if let (Some(c), Some(s)) =
+                                (&this.control, this.servers.get(this.server))
+                            {
+                                c.ban_user(s.id, member_id);
+                            }
+                        }
+                    })))
                 });
+
                 div()
                     .flex()
                     .items_center()

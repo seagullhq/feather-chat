@@ -26,6 +26,9 @@ type Control struct {
 	ChannelTypeList []ChannelTypeSummary  `json:"channelTypes,omitempty"`
 	Channels        []ChannelSummary      `json:"channels,omitempty"`
 	ServerMembers   []ServerMemberSummary `json:"serverMembers,omitempty"`
+	UserID          int                   `json:"userId,omitempty"`
+	TargetUserID    int                   `json:"targetUserId,omitempty"`
+	User            int                   `json:"user,omitempty"`
 }
 
 // ServerMemberSummary is one person of a server, for the members list.
