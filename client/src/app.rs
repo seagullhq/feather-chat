@@ -257,6 +257,17 @@ impl Root {
             Event::MemberState { channel_id, member } => self
                 .main
                 .update(cx, |main, cx| main.on_member_state(channel_id, member, cx)),
+            Event::ChannelAdded {
+                server_id,
+                id,
+                name,
+                channel_type,
+            } => self.main.update(cx, |main, cx| {
+                main.on_channel_added(server_id, id, name, channel_type, cx)
+            }),
+            Event::MembersChanged { server_id } => self
+                .main
+                .update(cx, |main, _| main.refresh_members(server_id)),
             Event::ChannelCreateFailed(m) => self
                 .main
                 .update(cx, |main, cx| main.on_channel_create_failed(m, cx)),

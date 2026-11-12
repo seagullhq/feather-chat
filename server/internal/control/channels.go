@@ -117,5 +117,7 @@ func (s *Server) handleCreateChannel(c *client, msg protocol.Control) {
 		c.sendError("channel creation failed")
 		return
 	}
+	s.notifyServer(msg.ServerID, c.sess, protocol.Control{Type: "CHANNEL_CREATED", ServerID: msg.ServerID,
+		ChannelName: channel.Name, ChannelType: strconv.Itoa(channel.ChannelType), ChannelID: channel.ID})
 	c.send(protocol.Control{Type: "ACK", ServerID: msg.ServerID, ChannelName: channel.Name, ChannelType: strconv.Itoa(channel.ChannelType), ChannelID: channel.ID})
 }

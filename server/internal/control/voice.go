@@ -43,12 +43,12 @@ func (s *Server) handleJoin(c *client, msg protocol.Control) {
 	roomName := "ch:" + strconv.Itoa(channel.ID)
 	s.leaveRoom(c) // a session belongs to one room at a time
 	s.rooms.Join(c.sess, roomName)
-	c.sess.ChannelID = channel.ID
+	c.sess.ChannelID, c.sess.ServerID = channel.ID, channel.ServerID
 	c.sess.Touch() // lastSeen starts at TCP connect; a late JOIN must not look stale
 	c.send(protocol.Control{Type: "ACK", Room: roomName, ChannelID: channel.ID, ServerID: channel.ServerID,
 		Members: s.rooms.Members(roomName, c.sess)})
 	me := s.rooms.MemberOf(c.sess)
-	notify(s.rooms.Others(c.sess), protocol.Control{Type: "MEMBER_JOINED", ChannelID: channel.ID, Member: &me})
+	s.notifyServer(channel.ServerID, c.sess, protocol.Control{Type: "MEMBER_JOINED", ChannelID: channel.ID, Member: &me})
 }
 
 // handleState answers STATE by updating mute/deafen and telling the room.
@@ -57,7 +57,7 @@ func (s *Server) handleState(c *client, msg protocol.Control) {
 		return
 	}
 	me := s.rooms.SetState(c.sess, msg.Muted, msg.Deafened)
-	notify(s.rooms.Others(c.sess), protocol.Control{Type: "MEMBER_STATE", ChannelID: c.sess.ChannelID, Member: &me})
+	s.notifyServer(c.sess.ServerID, c.sess, protocol.Control{Type: "MEMBER_STATE", ChannelID: c.sess.ChannelID, Member: &me})
 }
 
 // handleLeave answers LEAVE by leaving the current room.
@@ -71,6 +71,6 @@ func (s *Server) leaveRoom(c *client) {
 	if c.sess.Room == "" {
 		return
 	}
-	peers := s.rooms.Leave(c.sess)
-	notify(peers, protocol.Control{Type: "MEMBER_LEFT", ChannelID: c.sess.ChannelID, SSRC: c.sess.SSRC})
+	s.rooms.Leave(c.sess)
+	s.notifyServer(c.sess.ServerID, c.sess, protocol.Control{Type: "MEMBER_LEFT", ChannelID: c.sess.ChannelID, SSRC: c.sess.SSRC})
 }

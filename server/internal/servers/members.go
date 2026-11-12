@@ -39,3 +39,21 @@ func (s *ServerStore) ListMembers(ctx context.Context, serverID, userID int) ([]
 	}
 	return members, rows.Err()
 }
+
+// MemberIDs returns the user ids of everyone in a server.
+func (s *ServerStore) MemberIDs(ctx context.Context, serverID int) ([]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT user_id FROM server_members WHERE server_id = $1`, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}

@@ -45,6 +45,19 @@ func (m *Manager) Claim(s *Session, ssrc uint32, name string) bool {
 	return true
 }
 
+// SessionsOf returns the HELLO'd sessions that belong to the given users.
+func (m *Manager) SessionsOf(userIDs map[int]bool) []*Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []*Session
+	for _, s := range m.claimed {
+		if userIDs[s.UserID] {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // Release frees the session's SSRC when its control connection ends.
 func (m *Manager) Release(s *Session) {
 	m.mu.Lock()

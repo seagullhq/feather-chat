@@ -199,6 +199,34 @@ impl MainView {
         cx.notify();
     }
 
+    /// Channel created by someone else: just list it.
+    pub fn on_channel_added(
+        &mut self,
+        server_id: i64,
+        id: i64,
+        name: String,
+        channel_type: i32,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(s) = self.servers.iter_mut().find(|s| s.id == server_id)
+            && !s.channels.iter().any(|c| c.id == id)
+        {
+            s.channels.push(model::Channel {
+                id,
+                name,
+                channel_type,
+                members: vec![],
+            });
+            cx.notify();
+        }
+    }
+
+    pub fn refresh_members(&self, server_id: i64) {
+        if let Some(c) = &self.control {
+            c.list_members(server_id);
+        }
+    }
+
     pub fn on_channel_create_failed(&mut self, message: String, cx: &mut Context<Self>) {
         self.add_channel
             .update(cx, |modal, cx| modal.on_failed(message, cx));

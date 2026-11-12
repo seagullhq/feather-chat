@@ -93,6 +93,7 @@ func (s *Server) handleUpdateServer(c *client, msg protocol.Control) {
 		}
 		return
 	}
+	s.notifyServer(server.ID, c.sess, protocol.Control{Type: "SERVER_RENAMED", ServerID: server.ID, Name: server.Name})
 	c.send(protocol.Control{
 		Type:       "ACK",
 		ServerID:   server.ID,
@@ -111,6 +112,8 @@ func (s *Server) handleDeleteServer(c *client, msg protocol.Control) {
 		c.sendError("server id required")
 		return
 	}
+	// Members must be looked up before the rows are gone.
+	peers := s.serverSessions(msg.ServerID, c.sess)
 	ctx, cancel := storeCtx()
 	defer cancel()
 	if err := s.servers.DeleteServer(ctx, c.sess.UserID, msg.ServerID); err != nil {
@@ -125,7 +128,16 @@ func (s *Server) handleDeleteServer(c *client, msg protocol.Control) {
 		}
 		return
 	}
+	notify(peers, protocol.Control{Type: "SERVER_DELETED", ServerID: msg.ServerID})
 	c.send(protocol.Control{Type: "ACK", ServerID: msg.ServerID})
+}
+
+func (s *Server) handleServerKick(c *client, msg protocol.Control) {
+
+}
+
+func (s *Server) handleServerBan(c *client, msg protocol.Control) {
+
 }
 
 // handleJoinServer answers JOIN_SERVER by adding the user to the server
@@ -151,6 +163,7 @@ func (s *Server) handleJoinServer(c *client, msg protocol.Control) {
 		c.sendError("join failed")
 		return
 	}
+	s.notifyServer(server.ID, c.sess, protocol.Control{Type: "SERVER_MEMBERS_CHANGED", ServerID: server.ID})
 	c.send(protocol.Control{
 		Type:       "ACK",
 		ServerID:   server.ID,

@@ -65,6 +65,17 @@ pub enum Event {
         channel_type: i32,
     },
     ChannelCreateFailed(String),
+    /// Someone else created a channel (push): no modal or selection to touch.
+    ChannelAdded {
+        server_id: i64,
+        id: i64,
+        name: String,
+        channel_type: i32,
+    },
+    /// Someone joined or left a server: its member list is stale.
+    MembersChanged {
+        server_id: i64,
+    },
     /// JOIN accepted. `media` is None if the voice engine could not start.
     Joined {
         server_id: i64,

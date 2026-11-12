@@ -8,8 +8,28 @@ use super::super::server::RosterMember;
 use super::super::transport;
 use super::Event;
 
-/// MEMBER_* roster pushes from the server.
+/// Unsolicited pushes from the server: roster, channel and server changes.
 fn push(frame: &Value) -> Option<Event> {
+    let server_id = frame["serverId"].as_i64().unwrap_or(0);
+    match frame["type"].as_str()? {
+        "SERVER_RENAMED" => {
+            return Some(Event::ServerRenamed {
+                id: server_id,
+                name: frame["name"].as_str()?.to_string(),
+            });
+        }
+        "SERVER_DELETED" => return Some(Event::ServerDeleted { id: server_id }),
+        "SERVER_MEMBERS_CHANGED" => return Some(Event::MembersChanged { server_id }),
+        "CHANNEL_CREATED" => {
+            return Some(Event::ChannelAdded {
+                server_id,
+                id: frame["channelId"].as_i64()?,
+                name: frame["channelName"].as_str()?.to_string(),
+                channel_type: frame["channelType"].as_str()?.parse().ok()?,
+            });
+        }
+        _ => {}
+    }
     let channel_id = frame["channelId"].as_i64()?;
     match frame["type"].as_str()? {
         "MEMBER_JOINED" => Some(Event::MemberJoined {

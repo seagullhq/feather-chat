@@ -15,7 +15,9 @@ type Session struct {
 	Room string
 	// ChannelID is the DB channel behind Room; only the control goroutine touches it.
 	ChannelID int
-	UDPAddr   *net.UDPAddr
+	// ServerID owns ChannelID; kept after leaving so MEMBER_LEFT can still reach the server.
+	ServerID int
+	UDPAddr  *net.UDPAddr
 
 	// UserID and Username are bound at LOGIN; UserID doubles as the
 	// logged-in marker (DB ids start at 1).

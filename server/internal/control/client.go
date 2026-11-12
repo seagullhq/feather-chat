@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net"
 	"time"
 
@@ -52,6 +53,34 @@ func notify(peers []*room.Session, msg protocol.Control) {
 	for _, p := range peers {
 		_ = p.Send(msg)
 	}
+}
+
+// serverSessions lists the live sessions of every member of a server, minus
+// except. ponytail: one DB query per push, cache per-server members if it hurts.
+func (s *Server) serverSessions(serverID int, except *room.Session) []*room.Session {
+	ctx, cancel := storeCtx()
+	defer cancel()
+	ids, err := s.servers.MemberIDs(ctx, serverID)
+	if err != nil {
+		log.Printf("[PUSH] member lookup for server %d failed: %v", serverID, err)
+		return nil
+	}
+	set := make(map[int]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	var out []*room.Session
+	for _, p := range s.rooms.SessionsOf(set) {
+		if p != except {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// notifyServer pushes msg to every member of a server except the sender.
+func (s *Server) notifyServer(serverID int, except *room.Session, msg protocol.Control) {
+	notify(s.serverSessions(serverID, except), msg)
 }
 
 // send delivers one control message, ignoring errors: the read loop notices
