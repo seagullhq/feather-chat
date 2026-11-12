@@ -115,7 +115,9 @@ func (s *ServerStore) BanUser(ctx context.Context, requesterID int, serverID int
 	}
 
 	res, err := tx.ExecContext(ctx,
-		`DELETE FROM server_members WHERE server_id = $1 AND user_id = $2`,
+		`UPDATE server_members
+		SET banned = true
+		WHERE server_id = $1 AND user_id = $2;`,
 		serverID, targetUserID,
 	)
 	if err != nil {
