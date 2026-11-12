@@ -53,6 +53,11 @@ pub enum Event {
     /// The user chose to sign out (sent by the settings window).
     LoggedOut,
     UserDeleteFailed(String),
+    /// Credentials changed: keep the session alive and refresh the keyring.
+    UsernameUpdated(String),
+    UsernameUpdateFailed(String),
+    PasswordUpdated(String),
+    PasswordUpdateFailed(String),
     ChannelCreated {
         server_id: i64,
         id: i64,

@@ -191,6 +191,27 @@ pub(super) fn delete_user(session: &mut Session) -> Result<(), String> {
     session.call(json!({"type":"DELETE_USER"})).map(|_| ())
 }
 
+/// Changes the account's username and returns the stored one.
+pub(super) fn update_username(session: &mut Session, username: &str) -> Result<String, String> {
+    let ack = session.call(json!({"type":"UPDATE_USERNAME","username":username}))?;
+    Ok(ack["name"].as_str().unwrap_or(username).to_string())
+}
+
+/// Changes the account's password after checking the current one.
+pub(super) fn change_password(
+    session: &mut Session,
+    old_password: &str,
+    new_password: &str,
+) -> Result<(), String> {
+    session
+        .call(json!({
+            "type":"UPDATE_PASSWORD",
+            "oldPassword":old_password,
+            "password":new_password
+        }))
+        .map(|_| ())
+}
+
 pub(super) fn create_channel(
     session: &mut Session,
     server_id: i64,

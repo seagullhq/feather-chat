@@ -16,7 +16,7 @@ import (
 var (
 	ErrTaken          = errors.New("username or email already registered")
 	ErrBadCredentials = errors.New("invalid credentials")
-	ErrNotFound = errors.New("user not found")
+	ErrNotFound       = errors.New("user not found")
 )
 
 type User struct {
@@ -82,8 +82,6 @@ func (s *Store) Delete(ctx context.Context, userID int) error {
 	return nil
 }
 
-
-
 func (s *Store) Authenticate(ctx context.Context, identifier string, password string) (*User, error) {
 	identifier = strings.TrimSpace(identifier)
 
@@ -116,4 +114,62 @@ func (s *Store) Authenticate(ctx context.Context, identifier string, password st
 	}
 
 	return &user, nil
+}
+
+// UpdateUsername changes the username of userID and returns the refreshed user.
+func (s *Store) UpdateUsername(ctx context.Context, userID int, username string) (*User, error) {
+	query := `
+		UPDATE users
+		SET username = $1, updated_at = now()
+		WHERE id = $2
+		RETURNING id, username, email, password_hash, created_at, updated_at
+	`
+
+	var user User
+	err := s.db.QueryRowContext(ctx, query, strings.TrimSpace(username), userID).Scan(
+		&user.ID,
+		&user.Username,
+		&user.Email,
+		&user.PasswordHash,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, ErrTaken
+		}
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+// ChangePassword replaces the password of userID after checking oldPassword.
+func (s *Store) ChangePassword(ctx context.Context, userID int, oldPassword, newPassword string) error {
+	var stored string
+	err := s.db.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE id = $1`, userID).Scan(&stored)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if bcrypt.CompareHashAndPassword([]byte(stored), []byte(oldPassword)) != nil {
+		return ErrBadCredentials
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2`,
+		string(hash), userID,
+	)
+	return err
 }

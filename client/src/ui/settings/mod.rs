@@ -42,15 +42,25 @@ struct SettingsView {
     out: usize,
     volume: i32,
     titlebar: Entity<Titlebar>,
-    /// Account edit fields: the current username, and a new password.
+    /// Change-username field.
     edit_user: Entity<TextInput>,
+    /// Change-password fields: current password, and the new one twice.
+    edit_old_pw: Entity<TextInput>,
     edit_pw: Entity<TextInput>,
     conf_pass: Entity<TextInput>,
     /// Account deletion: asking for confirmation / request in flight / last error.
     confirm_delete: bool,
     deleting: bool,
-    editing: bool,
-    confirm_edit: bool,
+    /// Username change: confirmation / request in flight / last error.
+    confirm_username: bool,
+    saving_username: bool,
+    username_saved: bool,
+    username_error: Option<String>,
+    /// Password change: confirmation / request in flight / last error.
+    confirm_password: bool,
+    saving_password: bool,
+    password_saved: bool,
+    password_error: Option<String>,
     error: Option<String>,
 }
 
@@ -100,6 +110,7 @@ impl SettingsView {
         if !current_user.is_empty() {
             edit_user.update(cx, |input, cx| input.set_text(&current_user, cx));
         }
+        let edit_old_pw = account::input("Current password", true, cx);
         let edit_pw = account::input("New password", true, cx);
         let conf_pass: Entity<TextInput> = account::input("Confirm new password", true, cx);
         Self {
@@ -113,12 +124,19 @@ impl SettingsView {
             volume: PREFS.volume.load(Relaxed) as i32,
             titlebar: cx.new(|_| Titlebar::new("Settings").sheet()),
             edit_user,
+            edit_old_pw,
             edit_pw,
             conf_pass,
             confirm_delete: false,
             deleting: false,
-            editing: false,
-            confirm_edit: false,
+            confirm_username: false,
+            saving_username: false,
+            username_saved: false,
+            username_error: None,
+            confirm_password: false,
+            saving_password: false,
+            password_saved: false,
+            password_error: None,
             error: None,
         }
     }
@@ -134,6 +152,56 @@ pub fn on_user_delete_failed(message: String, cx: &mut App) {
         view.deleting = false;
         view.confirm_delete = false;
         view.error = Some(message);
+        cx.notify();
+    });
+}
+
+pub fn on_username_update_failed(message: String, cx: &mut App) {
+    window::with_settings(cx, |view, _, cx| {
+        view.saving_username = false;
+        view.confirm_username = false;
+        view.username_saved = false;
+        view.username_error = Some(message);
+        cx.notify();
+    });
+}
+
+pub fn on_password_update_failed(message: String, cx: &mut App) {
+    window::with_settings(cx, |view, _, cx| {
+        view.saving_password = false;
+        view.confirm_password = false;
+        view.password_saved = false;
+        view.password_error = Some(message);
+        cx.notify();
+    });
+}
+
+pub fn on_username_updated(username: String, cx: &mut App) {
+    window::with_settings(cx, |view, _, cx| {
+        view.saving_username = false;
+        view.confirm_username = false;
+        view.username_saved = true;
+        view.username_error = None;
+        let field = view.edit_user.clone();
+        field.update(cx, |input, cx| input.set_text(&username, cx));
+        cx.notify();
+    });
+}
+
+pub fn on_password_updated(cx: &mut App) {
+    window::with_settings(cx, |view, _, cx| {
+        view.saving_password = false;
+        view.confirm_password = false;
+        view.password_saved = true;
+        view.password_error = None;
+        // Never keep the typed passwords around after a successful change.
+        for field in [
+            view.edit_old_pw.clone(),
+            view.edit_pw.clone(),
+            view.conf_pass.clone(),
+        ] {
+            field.update(cx, |input, cx| input.set_text("", cx));
+        }
         cx.notify();
     });
 }

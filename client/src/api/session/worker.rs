@@ -147,6 +147,24 @@ fn commands(
                     Err(e) => Event::UserDeleteFailed(e),
                 });
             }
+            Command::UpdateUsername { username } => {
+                let _ =
+                    events.send_blocking(match server::update_username(&mut session, &username) {
+                        Ok(name) => Event::UsernameUpdated(name),
+                        Err(e) => Event::UsernameUpdateFailed(e),
+                    });
+            }
+            Command::ChangePassword {
+                old_password,
+                new_password,
+            } => {
+                let _ = events.send_blocking(
+                    match server::change_password(&mut session, &old_password, &new_password) {
+                        Ok(()) => Event::PasswordUpdated(new_password),
+                        Err(e) => Event::PasswordUpdateFailed(e),
+                    },
+                );
+            }
             Command::CreateChannel {
                 server_id,
                 name,

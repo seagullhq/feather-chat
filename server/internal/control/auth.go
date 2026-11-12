@@ -67,7 +67,68 @@ func (s *Server) handleLogin(c *client, msg protocol.Control) {
 	c.send(protocol.Control{Type: "ACK", Name: user.Username})
 }
 
-func (s* Server) handleDeleteUser(c* client, msg protocol.Control){
+// handleUpdateUsername answers UPDATE_USERNAME by renaming the session user.
+func (s *Server) handleUpdateUsername(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	username := strings.TrimSpace(msg.Username)
+	if n := utf8.RuneCountInString(username); n < 3 || n > 32 {
+		c.sendError("username must be 3-32 characters")
+		return
+	}
+
+	ctx, cancel := storeCtx()
+	defer cancel()
+	user, err := s.users.UpdateUsername(ctx, c.sess.UserID, username)
+	if err != nil {
+		switch {
+		case errors.Is(err, accounts.ErrTaken), errors.Is(err, accounts.ErrNotFound):
+			c.sendError(err.Error())
+		default:
+			log.Printf("[UPDATE] failed to rename user %d: %v", c.sess.UserID, err)
+			c.sendError("username update failed")
+		}
+		return
+	}
+
+	c.sess.Username = user.Username
+	c.send(protocol.Control{Type: "ACK", Name: user.Username})
+}
+
+// handleChangePassword answers UPDATE_PASSWORD after checking the current
+// password.
+func (s *Server) handleChangePassword(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	if msg.OldPassword == "" {
+		c.sendError("current password is required")
+		return
+	}
+	if n := len([]byte(msg.Password)); n < 8 || n > 72 {
+		c.sendError("password must be 8-72 bytes")
+		return
+	}
+
+	ctx, cancel := storeCtx()
+	defer cancel()
+	err := s.users.ChangePassword(ctx, c.sess.UserID, msg.OldPassword, msg.Password)
+	if err != nil {
+		switch {
+		case errors.Is(err, accounts.ErrBadCredentials), errors.Is(err, accounts.ErrNotFound):
+			c.sendError(err.Error())
+		default:
+			log.Printf("[UPDATE] failed to change password for user %d: %v", c.sess.UserID, err)
+			c.sendError("password update failed")
+		}
+		return
+	}
+
+	c.send(protocol.Control{Type: "ACK"})
+}
+
+func (s *Server) handleDeleteUser(c *client, msg protocol.Control) {
 	if !c.requireAuth() {
 		return
 	}

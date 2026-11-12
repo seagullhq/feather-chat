@@ -77,71 +77,152 @@ impl super::SettingsView {
                     }),
             )
             .child(
-                card(&t, "Edit account")
+                card(&t, "Change username")
                     .child(Field::new("Username:", &self.edit_user))
+                    .when(signed, |d| d.child(self.update_username(&t, cx))),
+            )
+            .child(
+                card(&t, "Change password")
+                    .child(Field::new("Current password:", &self.edit_old_pw))
+                    .child(Field::new("New password:", &self.edit_pw))
                     .child(Field::new("Confirm password:", &self.conf_pass))
-                    .child(Field::new("Password:", &self.edit_pw))
-                    .when(signed, |d| d.child(self.update_account(&t, cx)))
+                    .when(signed, |d| d.child(self.change_password(&t, cx))),
             )
             .when(signed, |d| d.child(self.delete_account(&t, cx)))
     }
 
-    fn update_account(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
-        let updating = self.editing;
-        let body = if self.confirm_edit {
+    fn update_username(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
+        let saving = self.saving_username;
+        let body = if self.confirm_username {
             div()
                 .flex()
                 .items_center()
                 .gap_2()
+                .child(div().flex_1().child("Apply changes?"))
                 .child(
-                    div()
-                        .flex_1()
-                        .child("Apply changes?"),
-                )
-                .child(
-                    Button::new("account-edit", "Cancel")
-                        .disabled(updating)
+                    Button::new("username-cancel", "Cancel")
+                        .disabled(saving)
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.confirm_edit = false;
+                            this.confirm_username = false;
                             cx.notify();
                         })),
                 )
                 .child(
-                    Button::new(
-                        "account-edit",
-                        if updating { "Editing..." } else { "Delete" },
-                    )
-                    .primary()
-                    .disabled(updating)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        let sent = cx
-                            .try_global::<Session>()
-                            .and_then(|s| s.control.as_ref())
-                            .is_some_and(|c| c.update_user());
-                        if sent {
-                            this.editing = true;
-                            this.error = None;
-                        } else {
-                            this.confirm_edit = false;
-                            this.error = Some("Not connected.".into());
-                        }
-                        cx.notify();
-                    })),
+                    Button::new("username-apply", if saving { "Saving..." } else { "Apply" })
+                        .primary()
+                        .disabled(saving)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirm_username = false;
+                            let user = this.edit_user.read(cx).text().trim().to_string();
+                            this.username_error = if user.is_empty() {
+                                Some("Username can't be empty.".into())
+                            } else if !cx
+                                .try_global::<Session>()
+                                .and_then(|s| s.control.as_ref())
+                                .is_some_and(|c| c.update_username(&user))
+                            {
+                                Some("Not connected.".into())
+                            } else {
+                                this.saving_username = true;
+                                None
+                            };
+                            cx.notify();
+                        })),
                 )
         } else {
-            div().flex_row().child(
-                Button::new("account-edit-ask", "Update account").on_click(cx.listener(
-                    |this, _, _, cx| {
-                        this.confirm_edit = true;
-                        this.error = None;
-                        cx.notify();
-                    },
-                )),
-            )
+            div()
+                .flex()
+                .child(
+                    Button::new("username-ask", "Update username").on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.confirm_username = true;
+                            this.username_saved = false;
+                            this.username_error = None;
+                            cx.notify();
+                        },
+                    )),
+                )
         };
         div()
-            .when_some(self.error.clone(), |d, e| {
+            .flex()
+            .flex_col()
+            .gap_2()
+            .when_some(self.username_error.clone(), |d, e| {
                 d.child(div().text_color(t.danger).child(e))
+            })
+            .when(self.username_saved, |d| {
+                d.child(div().text_color(t.success).child("Username updated."))
+            })
+            .child(body)
+    }
+
+    fn change_password(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
+        let saving = self.saving_password;
+        let body = if self.confirm_password {
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(div().flex_1().child("Apply changes?"))
+                .child(
+                    Button::new("password-cancel", "Cancel")
+                        .disabled(saving)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirm_password = false;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("password-apply", if saving { "Saving..." } else { "Apply" })
+                        .primary()
+                        .disabled(saving)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirm_password = false;
+                            let old = this.edit_old_pw.read(cx).text().to_string();
+                            let pw = this.edit_pw.read(cx).text().to_string();
+                            let conf = this.conf_pass.read(cx).text().to_string();
+                            this.password_error = if old.is_empty() {
+                                Some("Enter your current password.".into())
+                            } else if pw.is_empty() {
+                                Some("New password can't be empty.".into())
+                            } else if pw != conf {
+                                Some("Passwords don't match.".into())
+                            } else if !cx
+                                .try_global::<Session>()
+                                .and_then(|s| s.control.as_ref())
+                                .is_some_and(|c| c.change_password(&old, &pw))
+                            {
+                                Some("Not connected.".into())
+                            } else {
+                                this.saving_password = true;
+                                None
+                            };
+                            cx.notify();
+                        })),
+                )
+        } else {
+            div()
+                .flex()
+                .child(
+                    Button::new("password-ask", "Change password").on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.confirm_password = true;
+                            this.password_saved = false;
+                            this.password_error = None;
+                            cx.notify();
+                        },
+                    )),
+                )
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .when_some(self.password_error.clone(), |d, e| {
+                d.child(div().text_color(t.danger).child(e))
+            })
+            .when(self.password_saved, |d| {
+                d.child(div().text_color(t.success).child("Password updated."))
             })
             .child(body)
     }

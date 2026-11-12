@@ -31,6 +31,13 @@ pub(super) enum Command {
         server_id: i64,
     },
     DeleteUser,
+    UpdateUsername {
+        username: String,
+    },
+    ChangePassword {
+        old_password: String,
+        new_password: String,
+    },
     CreateChannel {
         server_id: i64,
         name: String,
@@ -65,9 +72,21 @@ impl Control {
     pub fn delete_user(&self) -> bool {
         self.tx.try_send(Command::DeleteUser).is_ok()
     }
-    pub fn update_user(&self) -> bool {
-        //self.tx.try_send(Command::DeleteUser).is_ok() //TODO: Add update command
-        true
+    pub fn update_username(&self, username: &str) -> bool {
+        self.tx
+            .try_send(Command::UpdateUsername {
+                username: username.into(),
+            })
+            .is_ok()
+    }
+
+    pub fn change_password(&self, old_password: &str, new_password: &str) -> bool {
+        self.tx
+            .try_send(Command::ChangePassword {
+                old_password: old_password.into(),
+                new_password: new_password.into(),
+            })
+            .is_ok()
     }
 
     pub fn create_server(&self, name: String) -> bool {

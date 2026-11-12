@@ -19,6 +19,7 @@ type Control struct {
 	Email           string                `json:"email,omitempty"`
 	Identifier      string                `json:"identifier,omitempty"`
 	Password        string                `json:"password,omitempty"`
+	OldPassword     string                `json:"oldPassword,omitempty"`
 	Error           string                `json:"error,omitempty"`
 	ChannelName     string                `json:"channelName,omitempty"`
 	ChannelType     string                `json:"channelType,omitempty"`

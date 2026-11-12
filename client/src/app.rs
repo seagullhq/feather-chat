@@ -15,6 +15,9 @@ pub(crate) struct Root {
     logged_in: bool,
     /// Credentials of the in-flight login, saved to the keyring on success.
     pending: Option<(String, String, String)>,
+    /// Credentials currently stored in the keyring, kept in sync with the
+    /// account so a rename/password change needs no sign-out.
+    saved: Option<(String, String, String)>,
     events: async_channel::Sender<Event>,
     control: Option<Control>,
 }
@@ -45,6 +48,7 @@ impl Root {
             titlebar,
             focus,
             pending: None,
+            saved: None,
             logged_in: false,
             events,
             control: None,
@@ -122,11 +126,39 @@ impl Root {
     /// Forgets the saved login, drops the connection and shows the login screen.
     fn sign_out(&mut self, cx: &mut Context<Self>) {
         std::thread::spawn(store::clear);
+        self.saved = None;
         self.logged_in = false;
         self.control.take();
         cx.global_mut::<ui::Session>().control = None;
         self.main.update(cx, |main, cx| main.on_disconnected(cx));
         ui::close_settings(cx);
+    }
+
+    /// Rewrites the remembered login after a username or password change, so
+    /// the keyring stays valid and the user remains signed in.
+    fn remember_credentials(
+        &mut self,
+        cx: &mut Context<Self>,
+        identifier: Option<String>,
+        password: Option<String>,
+    ) {
+        if let Some(identifier) = &identifier {
+            if cx.has_global::<ui::Session>() {
+                cx.global_mut::<ui::Session>().identifier = identifier.clone();
+            }
+        }
+
+        let Some((host, id, pw)) = self.saved.as_mut() else {
+            return;
+        };
+        if let Some(identifier) = identifier {
+            *id = identifier;
+        }
+        if let Some(password) = password {
+            *pw = password;
+        }
+        let (host, id, pw) = (host.clone(), id.clone(), pw.clone());
+        std::thread::spawn(move || store::save(&host, &id, &pw));
     }
 
     fn on_event(&mut self, ev: Event, cx: &mut Context<Self>) {
@@ -135,6 +167,7 @@ impl Root {
                 self.auth.update(cx, |a, cx| a.on_succeeded(cx));
                 self.logged_in = true;
                 if let Some((h, i, p)) = self.pending.take() {
+                    self.saved = Some((h.clone(), i.clone(), p.clone()));
                     std::thread::spawn(move || store::save(&h, &i, &p));
                 }
             }
@@ -188,6 +221,16 @@ impl Root {
                 .update(cx, |main, cx| main.on_server_edit_failed(m, cx)),
             Event::UserDeleted | Event::LoggedOut => self.sign_out(cx),
             Event::UserDeleteFailed(m) => ui::on_user_delete_failed(m, cx),
+            Event::UsernameUpdateFailed(m) => ui::on_username_update_failed(m, cx),
+            Event::PasswordUpdateFailed(m) => ui::on_password_update_failed(m, cx),
+            Event::UsernameUpdated(name) => {
+                self.remember_credentials(cx, Some(name.clone()), None);
+                ui::on_username_updated(name, cx);
+            }
+            Event::PasswordUpdated(password) => {
+                self.remember_credentials(cx, None, Some(password));
+                ui::on_password_updated(cx);
+            }
             Event::ChannelCreated {
                 server_id,
                 id,

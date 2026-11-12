@@ -56,7 +56,9 @@ var handlers = map[string]func(*Server, *client, protocol.Control){
 	"LIST_CHANNELS":      (*Server).handleListChannels,
 	"CREATE_CHANNEL":     (*Server).handleCreateChannel,
 	"LIST_MEMBERS":       (*Server).handleListMembers,
-	"DELETE_USER": 		  (*Server).handleDeleteUser,
+	"UPDATE_USERNAME":    (*Server).handleUpdateUsername,
+	"UPDATE_PASSWORD":    (*Server).handleChangePassword,
+	"DELETE_USER":        (*Server).handleDeleteUser,
 }
 
 // dispatch routes one decoded message, ignoring unknown types (§7 interop
