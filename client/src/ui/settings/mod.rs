@@ -52,16 +52,16 @@ struct SettingsView {
     confirm_delete: bool,
     deleting: bool,
     /// Username change: confirmation / request in flight / last error.
-    confirm_username: bool,
     saving_username: bool,
     username_saved: bool,
     username_error: Option<String>,
     /// Password change: confirmation / request in flight / last error.
-    confirm_password: bool,
     saving_password: bool,
     password_saved: bool,
     password_error: Option<String>,
     error: Option<String>,
+    /// Which account row is expanded: "user", "pw" or "del".
+    open_item: Option<&'static str>,
 }
 
 impl SettingsView {
@@ -129,15 +129,14 @@ impl SettingsView {
             conf_pass,
             confirm_delete: false,
             deleting: false,
-            confirm_username: false,
             saving_username: false,
             username_saved: false,
             username_error: None,
-            confirm_password: false,
             saving_password: false,
             password_saved: false,
             password_error: None,
             error: None,
+            open_item: None,
         }
     }
 }
@@ -159,7 +158,7 @@ pub fn on_user_delete_failed(message: String, cx: &mut App) {
 pub fn on_username_update_failed(message: String, cx: &mut App) {
     window::with_settings(cx, |view, _, cx| {
         view.saving_username = false;
-        view.confirm_username = false;
+        view.open_item = None;
         view.username_saved = false;
         view.username_error = Some(message);
         cx.notify();
@@ -169,7 +168,7 @@ pub fn on_username_update_failed(message: String, cx: &mut App) {
 pub fn on_password_update_failed(message: String, cx: &mut App) {
     window::with_settings(cx, |view, _, cx| {
         view.saving_password = false;
-        view.confirm_password = false;
+        view.open_item = None;
         view.password_saved = false;
         view.password_error = Some(message);
         cx.notify();
@@ -179,7 +178,6 @@ pub fn on_password_update_failed(message: String, cx: &mut App) {
 pub fn on_username_updated(username: String, cx: &mut App) {
     window::with_settings(cx, |view, _, cx| {
         view.saving_username = false;
-        view.confirm_username = false;
         view.username_saved = true;
         view.username_error = None;
         let field = view.edit_user.clone();
@@ -191,7 +189,6 @@ pub fn on_username_updated(username: String, cx: &mut App) {
 pub fn on_password_updated(cx: &mut App) {
     window::with_settings(cx, |view, _, cx| {
         view.saving_password = false;
-        view.confirm_password = false;
         view.password_saved = true;
         view.password_error = None;
         // Never keep the typed passwords around after a successful change.
