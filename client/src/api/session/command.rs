@@ -65,6 +65,10 @@ impl Control {
     pub fn delete_user(&self) -> bool {
         self.tx.try_send(Command::DeleteUser).is_ok()
     }
+    pub fn update_user(&self) -> bool {
+        //self.tx.try_send(Command::DeleteUser).is_ok() //TODO: Add update command
+        true
+    }
 
     pub fn create_server(&self, name: String) -> bool {
         self.tx.try_send(Command::CreateServer { name }).is_ok()

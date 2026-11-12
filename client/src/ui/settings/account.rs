@@ -79,9 +79,71 @@ impl super::SettingsView {
             .child(
                 card(&t, "Edit account")
                     .child(Field::new("Username:", &self.edit_user))
-                    .child(Field::new("Password:", &self.edit_pw)),
+                    .child(Field::new("Confirm password:", &self.conf_pass))
+                    .child(Field::new("Password:", &self.edit_pw))
+                    .when(signed, |d| d.child(self.update_account(&t, cx)))
             )
             .when(signed, |d| d.child(self.delete_account(&t, cx)))
+    }
+
+    fn update_account(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
+        let updating = self.editing;
+        let body = if self.confirm_edit {
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .flex_1()
+                        .child("Apply changes?"),
+                )
+                .child(
+                    Button::new("account-edit", "Cancel")
+                        .disabled(updating)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.confirm_edit = false;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new(
+                        "account-edit",
+                        if updating { "Editing..." } else { "Delete" },
+                    )
+                    .primary()
+                    .disabled(updating)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let sent = cx
+                            .try_global::<Session>()
+                            .and_then(|s| s.control.as_ref())
+                            .is_some_and(|c| c.update_user());
+                        if sent {
+                            this.editing = true;
+                            this.error = None;
+                        } else {
+                            this.confirm_edit = false;
+                            this.error = Some("Not connected.".into());
+                        }
+                        cx.notify();
+                    })),
+                )
+        } else {
+            div().flex_row().child(
+                Button::new("account-edit-ask", "Update account").on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.confirm_edit = true;
+                        this.error = None;
+                        cx.notify();
+                    },
+                )),
+            )
+        };
+        div()
+            .when_some(self.error.clone(), |d, e| {
+                d.child(div().text_color(t.danger).child(e))
+            })
+            .child(body)
     }
 
     /// "Delete account" with an inline confirmation, like the server sheet.

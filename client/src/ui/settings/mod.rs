@@ -45,9 +45,12 @@ struct SettingsView {
     /// Account edit fields: the current username, and a new password.
     edit_user: Entity<TextInput>,
     edit_pw: Entity<TextInput>,
+    conf_pass: Entity<TextInput>,
     /// Account deletion: asking for confirmation / request in flight / last error.
     confirm_delete: bool,
     deleting: bool,
+    editing: bool,
+    confirm_edit: bool,
     error: Option<String>,
 }
 
@@ -98,6 +101,7 @@ impl SettingsView {
             edit_user.update(cx, |input, cx| input.set_text(&current_user, cx));
         }
         let edit_pw = account::input("New password", true, cx);
+        let conf_pass: Entity<TextInput> = account::input("Confirm new password", true, cx);
         Self {
             focus: cx.focus_handle(),
             page: Page::Account,
@@ -110,8 +114,11 @@ impl SettingsView {
             titlebar: cx.new(|_| Titlebar::new("Settings").sheet()),
             edit_user,
             edit_pw,
+            conf_pass,
             confirm_delete: false,
             deleting: false,
+            editing: false,
+            confirm_edit: false,
             error: None,
         }
     }
