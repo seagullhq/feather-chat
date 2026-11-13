@@ -135,7 +135,6 @@ func (s *ServerStore) BanUser(ctx context.Context, requesterID int, serverID int
 	return tx.Commit()
 }
 
-
 // DeleteServer removes a server, but only when userID owns it.
 func (s *ServerStore) DeleteServer(ctx context.Context, userID int, serverID int) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -277,6 +276,17 @@ func (s *ServerStore) JoinServer(ctx context.Context, userID int, code string) (
 	}
 	if err != nil {
 		return nil, err
+	}
+	var banned bool
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(banned, false) FROM server_members
+		 WHERE server_id = $1 AND user_id = $2`, srv.ID, userID,
+	).Scan(&banned)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if banned {
+		return nil, ErrBanned
 	}
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO server_members (server_id, user_id) VALUES ($1, $2)

@@ -416,6 +416,106 @@ func TestIntegrationListServers(t *testing.T) {
 	}
 }
 
+// TestIntegrationKickAndBan covers member removal: the removed client is told
+// directly, the server disappears from its listing, and a banned user cannot
+// join again with the invite code.
+func TestIntegrationKickAndBan(t *testing.T) {
+	store, db := testStore(t)
+	owner := fmt.Sprintf("kb_%d", time.Now().UnixNano())
+	member := owner + "_m"
+	const password = "integration-password-123"
+	serverName := fmt.Sprintf("kb_%d", time.Now().UnixNano())
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := db.ExecContext(ctx, "DELETE FROM users WHERE LOWER(username) IN (LOWER($1), LOWER($2))", owner, member); err != nil {
+			t.Logf("cleanup users %s/%s: %v", owner, member, err)
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := store.Register(ctx, owner, owner+"@example.test", password); err != nil {
+		t.Fatalf("Register owner: %v", err)
+	}
+	if err := store.Register(ctx, member, member+"@example.test", password); err != nil {
+		t.Fatalf("Register member: %v", err)
+	}
+	ownerUser, err := store.Authenticate(ctx, owner, password)
+	if err != nil {
+		t.Fatalf("Authenticate owner: %v", err)
+	}
+	memberUser, err := store.Authenticate(ctx, member, password)
+	if err != nil {
+		t.Fatalf("Authenticate member: %v", err)
+	}
+
+	serverStore := servers.NewStore(db)
+	srv, err := serverStore.CreateServer(ctx, ownerUser.ID, serverName)
+	if err != nil {
+		t.Fatalf("CreateServer: %v", err)
+	}
+	if _, err := serverStore.JoinServer(ctx, memberUser.ID, srv.InviteCode); err != nil {
+		t.Fatalf("JoinServer: %v", err)
+	}
+
+	ltcp, _ := net.Listen("tcp", "127.0.0.1:0")
+	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	defer ltcp.Close()
+	defer ludp.Close()
+	serveTest(t, ltcp, ludp, store, serverStore)
+
+	ownerConn := dialControl(t, ltcp.Addr().String(), 0x6666, 0, owner, owner+"@example.test", password, false)
+	defer ownerConn.Close()
+	memberConn := dialControl(t, ltcp.Addr().String(), 0x7777, 0, member, member+"@example.test", password, false)
+	defer memberConn.Close()
+
+	// Kick: the member gets USER_KICKED and the server leaves their listing.
+	sendTest(t, ownerConn, protocol.Control{Type: "KICK_USER_FROM_SERVER", ServerID: srv.ID, UserID: memberUser.ID})
+	awaitControl(t, ownerConn, "KICK ACK", func(m protocol.Control) bool { return m.Type == "ACK" })
+	kicked := awaitControl(t, memberConn, "USER_KICKED", func(m protocol.Control) bool { return m.Type == "USER_KICKED" })
+	if kicked.ServerID != srv.ID {
+		t.Fatalf("USER_KICKED server = %d, want %d", kicked.ServerID, srv.ID)
+	}
+	sendTest(t, memberConn, protocol.Control{Type: "LIST_SERVERS"})
+	list := awaitControl(t, memberConn, "LIST_SERVERS ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK"
+	})
+	for _, s := range list.Servers {
+		if s.ID == srv.ID {
+			t.Fatalf("kicked server %d still listed", srv.ID)
+		}
+	}
+
+	// Ban: the member gets USER_BANNED, disappears from the roster, and can no
+	// longer rejoin with the same invite code.
+	if _, err := serverStore.JoinServer(ctx, memberUser.ID, srv.InviteCode); err != nil {
+		t.Fatalf("rejoin after kick: %v", err)
+	}
+	sendTest(t, ownerConn, protocol.Control{Type: "BAN_USER_FROM_SERVER", ServerID: srv.ID, UserID: memberUser.ID})
+	awaitControl(t, ownerConn, "BAN ACK", func(m protocol.Control) bool { return m.Type == "ACK" })
+	banned := awaitControl(t, memberConn, "USER_BANNED", func(m protocol.Control) bool { return m.Type == "USER_BANNED" })
+	if banned.ServerID != srv.ID {
+		t.Fatalf("USER_BANNED server = %d, want %d", banned.ServerID, srv.ID)
+	}
+
+	sendTest(t, ownerConn, protocol.Control{Type: "LIST_MEMBERS", ServerID: srv.ID})
+	roster := awaitControl(t, ownerConn, "LIST_MEMBERS ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.ServerMembers != nil
+	})
+	for _, m := range roster.ServerMembers {
+		if m.ID == memberUser.ID {
+			t.Fatalf("banned user %d still in roster", memberUser.ID)
+		}
+	}
+
+	sendTest(t, memberConn, protocol.Control{Type: "JOIN_SERVER", InviteCode: srv.InviteCode})
+	if e := awaitControl(t, memberConn, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != servers.ErrBanned.Error() {
+		t.Fatalf("banned rejoin error = %q, want %q", e.Error, servers.ErrBanned.Error())
+	}
+}
+
 // TestIntegrationRoster: JOIN returns who is already there, the others are told
 // about joins, state changes and leaves, and an SSRC can't be claimed twice.
 func TestIntegrationRoster(t *testing.T) {

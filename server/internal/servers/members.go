@@ -10,7 +10,7 @@ type ServerMember struct {
 }
 
 // ListMembers returns the people of a server, owner first. Same visibility
-// rule as ListChannels: a non-member gets an empty list.
+// rule as ListChannels: a non-member or banned user gets an empty list.
 func (s *ServerStore) ListMembers(ctx context.Context, serverID, userID int) ([]ServerMember, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT u.id, u.username, u.id = sv.owner_id
@@ -18,9 +18,11 @@ func (s *ServerStore) ListMembers(ctx context.Context, serverID, userID int) ([]
 		JOIN users u ON u.id = m.user_id
 		JOIN servers sv ON sv.id = m.server_id
 		WHERE m.server_id = $1
+		  AND COALESCE(m.banned, false) = false
 		  AND EXISTS (
 				SELECT 1 FROM server_members me
 				WHERE me.server_id = $1 AND me.user_id = $2
+				  AND COALESCE(me.banned, false) = false
 		  )
 		ORDER BY (u.id = sv.owner_id) DESC, LOWER(u.username)
 	`, serverID, userID)
@@ -40,9 +42,10 @@ func (s *ServerStore) ListMembers(ctx context.Context, serverID, userID int) ([]
 	return members, rows.Err()
 }
 
-// MemberIDs returns the user ids of everyone in a server.
+// MemberIDs returns the user ids of everyone who still belongs to a server.
 func (s *ServerStore) MemberIDs(ctx context.Context, serverID int) ([]int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT user_id FROM server_members WHERE server_id = $1`, serverID)
+	rows, err := s.db.QueryContext(ctx, `SELECT user_id FROM server_members
+		WHERE server_id = $1 AND COALESCE(banned, false) = false`, serverID)
 	if err != nil {
 		return nil, err
 	}

@@ -290,6 +290,23 @@ impl MainView {
         cx.notify();
     }
 
+    /// The server removed us (kick or ban): drop its voice session and forget it.
+    pub fn on_removed_from_server(&mut self, server_id: i64, cx: &mut Context<Self>) {
+        let in_voice = self
+            .joined
+            .and_then(|(server, _)| self.servers.get(server))
+            .is_some_and(|server| server.id == server_id);
+        if in_voice {
+            if let Some(control) = &self.control {
+                control.leave();
+            }
+            self.media = None;
+            self.me.level = 0.;
+            self.joined = None;
+        }
+        self.on_server_deleted(server_id, cx);
+    }
+
     pub fn on_server_edit_failed(&mut self, message: String, cx: &mut Context<Self>) {
         self.sheet_ui.set_error(Some(message));
         cx.notify();

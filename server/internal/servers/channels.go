@@ -85,6 +85,7 @@ func (s *ServerStore) VoiceChannelForUser(ctx context.Context, channelID, userID
 				OR EXISTS (
 					SELECT 1 FROM server_members m
 					WHERE m.server_id = c.server_id AND m.user_id = $2
+					  AND COALESCE(m.banned, false) = false
 				)
 		  )
 	`

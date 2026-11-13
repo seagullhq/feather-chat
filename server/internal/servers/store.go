@@ -11,6 +11,7 @@ import (
 var (
 	ErrTaken        = errors.New("server name already taken")
 	ErrBadInvite    = errors.New("invalid invite code")
+	ErrBanned       = errors.New("banned from this server")
 	ErrForbidden    = errors.New("forbidden")
 	ErrCantDelete   = errors.New("only the owner can delete this server")
 	ErrFailedDelete = errors.New("server deletion failed")

@@ -169,7 +169,9 @@ func (s *Server) handleServerKick(c *client, msg protocol.Control) {
 		}
 		return
 	}
-	notify(peers, protocol.Control{Type: "USER_KICKED", ServerID: msg.ServerID})
+	notify(peers, protocol.Control{Type: "SERVER_MEMBERS_CHANGED", ServerID: msg.ServerID})
+	notify(s.rooms.SessionsOf(map[int]bool{targetUserID: true}),
+		protocol.Control{Type: "USER_KICKED", ServerID: msg.ServerID})
 	c.send(protocol.Control{Type: "ACK"})
 }
 
@@ -207,7 +209,9 @@ func (s *Server) handleServerBan(c *client, msg protocol.Control) {
 		}
 		return
 	}
-	notify(peers, protocol.Control{Type: "USER_KICKED", ServerID: msg.ServerID})
+	notify(peers, protocol.Control{Type: "SERVER_MEMBERS_CHANGED", ServerID: msg.ServerID})
+	notify(s.rooms.SessionsOf(map[int]bool{targetUserID: true}),
+		protocol.Control{Type: "USER_BANNED", ServerID: msg.ServerID})
 	c.send(protocol.Control{Type: "ACK"})
 }
 
@@ -226,7 +230,7 @@ func (s *Server) handleJoinServer(c *client, msg protocol.Control) {
 	defer cancel()
 	server, err := s.servers.JoinServer(ctx, c.sess.UserID, code)
 	if err != nil {
-		if errors.Is(err, servers.ErrBadInvite) {
+		if errors.Is(err, servers.ErrBadInvite) || errors.Is(err, servers.ErrBanned) {
 			c.sendError(err.Error())
 			return
 		}

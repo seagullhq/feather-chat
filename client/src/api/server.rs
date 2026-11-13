@@ -133,11 +133,7 @@ pub(super) fn list_members(
         .collect())
 }
 
-pub(super) fn kick_user(
-    session: &mut Session,
-    server_id: i64,
-    user_id: i64,
-) -> Result<(), String> {
+pub(super) fn kick_user(session: &mut Session, server_id: i64, user_id: i64) -> Result<(), String> {
     session
         .call(json!({
             "type": "KICK_USER_FROM_SERVER",
@@ -147,11 +143,7 @@ pub(super) fn kick_user(
         .map(|_| ())
 }
 
-pub(super) fn ban_user(
-    session: &mut Session,
-    server_id: i64,
-    user_id: i64,
-) -> Result<(), String> {
+pub(super) fn ban_user(session: &mut Session, server_id: i64, user_id: i64) -> Result<(), String> {
     session
         .call(json!({
             "type": "BAN_USER_FROM_SERVER",

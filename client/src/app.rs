@@ -142,7 +142,9 @@ impl Root {
         identifier: Option<String>,
         password: Option<String>,
     ) {
-        if let Some(identifier) = &identifier && cx.has_global::<ui::Session>(){
+        if let Some(identifier) = &identifier
+            && cx.has_global::<ui::Session>()
+        {
             cx.global_mut::<ui::Session>().identifier = identifier.clone();
         }
 
@@ -214,6 +216,9 @@ impl Root {
             Event::ServerDeleted { id } => self
                 .main
                 .update(cx, |main, cx| main.on_server_deleted(id, cx)),
+            Event::RemovedFromServer { server_id } => self
+                .main
+                .update(cx, |main, cx| main.on_removed_from_server(server_id, cx)),
             Event::ServerEditFailed(m) => self
                 .main
                 .update(cx, |main, cx| main.on_server_edit_failed(m, cx)),

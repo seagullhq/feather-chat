@@ -20,6 +20,10 @@ fn push(frame: &Value) -> Option<Event> {
         }
         "SERVER_DELETED" => return Some(Event::ServerDeleted { id: server_id }),
         "SERVER_MEMBERS_CHANGED" => return Some(Event::MembersChanged { server_id }),
+        // Sent directly to the user who was kicked or banned.
+        "USER_KICKED" | "USER_BANNED" => {
+            return Some(Event::RemovedFromServer { server_id });
+        }
         "CHANNEL_CREATED" => {
             return Some(Event::ChannelAdded {
                 server_id,
