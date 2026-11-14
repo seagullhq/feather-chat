@@ -216,6 +216,12 @@ fn commands(
                     let _ = events.send_blocking(Event::UsersFound { query, users });
                 }
             }
+            Command::AcceptFriend { user_id } => match friends::accept_friend(&mut session, user_id) {
+                Ok(()) => send_friends(&mut session, &events),
+                Err(e) => {
+                    let _ = events.send_blocking(Event::FriendFailed(e));
+                }
+            },
             Command::AddFriend { username } => match friends::add_friend(&mut session, &username) {
                 Ok(()) => {
                     let _ = events.send_blocking(Event::FriendRequested);

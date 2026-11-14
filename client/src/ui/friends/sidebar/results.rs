@@ -22,6 +22,15 @@ fn row(name: &str) -> Div {
         .child(div().flex_1().min_w_0().truncate().child(name.to_string()))
 }
 
+/// A person with their action button below the name.
+fn under(name: &str, button: impl IntoElement) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .child(row(name))
+        .child(div().pl(px(40.)).child(button))
+}
+
 impl FriendsView {
     pub(super) fn results(&self, query: &str, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
@@ -40,21 +49,19 @@ impl FriendsView {
             "No friends match."
         };
 
-        // Asking back accepts an incoming request.
-        let requests = (!incoming.is_empty()).then(|| {
+                let requests = (!incoming.is_empty()).then(|| {
             div()
                 .flex()
                 .flex_col()
                 .gap_1()
                 .child(heading("Requests", t.muted))
                 .children(incoming.iter().map(|f| {
-                    let name = f.name.clone();
-                    row(&f.name).child(
+                    let id = f.id;
+                    under(
+                        &f.name,
                         ToolButton::new(("accept", f.id as u64), "Accept", "check")
                             .color(t.success)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.request(name.clone(), cx)
-                            })),
+                            .on_click(cx.listener(move |this, _, _, cx| this.accept(id, cx))),
                     )
                 }))
         });
@@ -63,9 +70,7 @@ impl FriendsView {
             .flex()
             .flex_col()
             .gap_1()
-            .when(!query.is_empty() || !incoming.is_empty(), |d| {
-                d.child(heading("Friends", t.muted))
-            })
+            .child(heading("Friends", t.muted))
             .children(friends.iter().map(|f| row(&f.name)))
             .when(friends.is_empty(), |d| {
                 d.child(div().px_1().text_color(t.muted).child(empty))
@@ -85,7 +90,8 @@ impl FriendsView {
                 .child(heading("Add friend", t.muted))
                 .children(strangers.iter().map(|f| {
                     let name = f.name.clone();
-                    row(&f.name).child(
+                    under(
+                        &f.name,
                         ToolButton::new(("send-request", f.id as u64), "Send request", "plus")
                             .color(t.accent)
                             .on_click(cx.listener(move |this, _, _, cx| {
