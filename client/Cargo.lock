@@ -1612,7 +1612,7 @@ dependencies = [
 
 [[package]]
 name = "feather-chat"
-version = "0.18.32"
+version = "0.19.32"
 dependencies = [
  "async-channel",
  "cpal",
