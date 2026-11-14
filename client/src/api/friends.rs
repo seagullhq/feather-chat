@@ -60,9 +60,13 @@ pub(super) fn search_users(session: &mut Session, query: &str) -> Result<Vec<Fri
     Ok(people(&ack, "users"))
 }
 
-/// Also answers an incoming request: asking someone who already asked you
-/// makes you friends. ponytail: assumed server rule; unfriend / decline /
-/// cancel wait for backend messages.
+pub(super) fn accept_friend(session: &mut Session, user_id: i64) -> Result<(), String> {
+    session
+        .call(json!({"type":"ACCEPT_FRIENDSHIP_REQUEST","userId":user_id}))
+        .map(drop)
+}
+
+/// Sends a request. Unfriend / decline / cancel wait for backend messages.
 pub(super) fn add_friend(session: &mut Session, username: &str) -> Result<(), String> {
     session
         .call(json!({"type":"SEND_FRIENDSHIP_REQUEST","username":username}))

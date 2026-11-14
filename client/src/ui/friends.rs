@@ -87,6 +87,10 @@ impl FriendsView {
     pub fn refresh(&self) {
         if let Some(c) = &self.control {
             c.list_friends();
+            // Search hits carry a relation too: keep them fresh.
+            if !self.searched.is_empty() {
+                c.search_users(self.searched.clone());
+            }
         }
     }
 
@@ -111,7 +115,15 @@ impl FriendsView {
         cx.notify();
     }
 
-    /// Send (or answer) a request to `name`.
+    fn accept(&mut self, user_id: i64, cx: &mut Context<Self>) {
+        self.error = None;
+        if let Some(c) = &self.control {
+            c.accept_friend(user_id);
+        }
+        cx.notify();
+    }
+
+    /// Send a request to `name`.
     fn request(&mut self, name: String, cx: &mut Context<Self>) {
         self.error = None;
         if let Some(c) = &self.control {

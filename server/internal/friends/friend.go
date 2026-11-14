@@ -109,6 +109,24 @@ func (s *ServerStore) SendFriendship(ctx context.Context, requesterID, addressee
 	return &request, nil
 }
 
+// AcceptFriendship turns the pending request from requesterID to userID into
+// a friendship. ErrNotFound when there is no such pending request.
+func (s *ServerStore) AcceptFriendship(ctx context.Context, userID, requesterID int) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE friendships SET status = 'ACCEPTED', updated_at = $3
+		WHERE requester_id = $2 AND addressee_id = $1 AND status = 'PENDING'`,
+		userID, requesterID, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // Person is another user as seen by the asking user. Relation is "friend",
 // "incoming" (they asked you), "outgoing" (you asked them) or "" for nobody
 // in particular.

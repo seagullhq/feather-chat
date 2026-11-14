@@ -261,6 +261,11 @@ func (s *Server) handleServerMakeMember(c *client, msg protocol.Control) {
 	s.changeServerRole(c, msg, false)
 }
 
+// friendsChanged tells every session of userID that its friend list is stale.
+func (s *Server) friendsChanged(userID int) {
+	notify(s.rooms.SessionsOf(map[int]bool{userID: true}), protocol.Control{Type: "FRIENDS_CHANGED"})
+}
+
 // handleSendFriendRequest answers SEND_FRIENDSHIP_REQUEST by storing a pending
 // request from the session's user to a user named by ID or username.
 func (s *Server) handleSendFriendRequest(c *client, msg protocol.Control) {
@@ -306,6 +311,7 @@ func (s *Server) handleSendFriendRequest(c *client, msg protocol.Control) {
 		}
 		return
 	}
+	s.friendsChanged(request.AddresseeID)
 	c.send(protocol.Control{Type: "ACK", TargetUserID: request.AddresseeID})
 }
 
@@ -324,6 +330,31 @@ func (s *Server) handleFetchFriendRequest(c *client, msg protocol.Control) {
 		return
 	}
 	c.send(protocol.Control{Type: "ACK", Friends: personSummaries(people)})
+}
+
+// handleAcceptFriendRequest answers ACCEPT_FRIENDSHIP_REQUEST by accepting the
+// pending request that user userId sent to the session's user.
+func (s *Server) handleAcceptFriendRequest(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	if msg.UserID <= 0 {
+		c.sendError("requester id required")
+		return
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	if err := s.friends.AcceptFriendship(ctx, c.sess.UserID, msg.UserID); err != nil {
+		if errors.Is(err, friends.ErrNotFound) {
+			c.sendError("friend request not found")
+			return
+		}
+		log.Printf("[FRIENDS] failed to accept %d for %d: %v", msg.UserID, c.sess.UserID, err)
+		c.sendError("accept failed")
+		return
+	}
+	s.friendsChanged(msg.UserID)
+	c.send(protocol.Control{Type: "ACK", TargetUserID: msg.UserID})
 }
 
 // handleSearchUsers answers SEARCH_USERS with the users whose name contains
