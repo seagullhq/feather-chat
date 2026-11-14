@@ -312,7 +312,48 @@ func (s *Server) handleSendFriendRequest(c *client, msg protocol.Control) {
 // handleFetchFriendRequest answers FETCH_FRIENDSHIP_REQUEST with the pending
 // requests of the session's user.
 func (s *Server) handleFetchFriendRequest(c *client, msg protocol.Control) {
-	c.send(protocol.Control{Type: "ACK"})
+	if !c.requireAuth() {
+		return
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	people, err := s.friends.FetchRequests(ctx, c.sess.UserID)
+	if err != nil {
+		log.Printf("[FRIENDS] failed to fetch for %d: %v", c.sess.UserID, err)
+		c.sendError("friend list failed")
+		return
+	}
+	c.send(protocol.Control{Type: "ACK", Friends: personSummaries(people)})
+}
+
+// handleSearchUsers answers SEARCH_USERS with the users whose name contains
+// the query, each with its relation to the session's user.
+func (s *Server) handleSearchUsers(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	query := strings.TrimSpace(msg.Query)
+	if query == "" {
+		c.send(protocol.Control{Type: "ACK"})
+		return
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	people, err := s.friends.SearchUsers(ctx, c.sess.UserID, query)
+	if err != nil {
+		log.Printf("[FRIENDS] search %q failed: %v", query, err)
+		c.sendError("user search failed")
+		return
+	}
+	c.send(protocol.Control{Type: "ACK", Users: personSummaries(people)})
+}
+
+func personSummaries(people []friends.Person) []protocol.PersonSummary {
+	out := make([]protocol.PersonSummary, len(people))
+	for i, p := range people {
+		out[i] = protocol.PersonSummary{ID: p.ID, Username: p.Username, Relation: p.Relation}
+	}
+	return out
 }
 
 // changeServerRole applies a promote/demote request from the server owner.

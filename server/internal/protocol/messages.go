@@ -29,6 +29,17 @@ type Control struct {
 	UserID          int                   `json:"userId,omitempty"`
 	TargetUserID    int                   `json:"targetUserId,omitempty"`
 	User            int                   `json:"user,omitempty"`
+	Query           string                `json:"query,omitempty"`
+	Friends         []PersonSummary       `json:"friends,omitempty"`
+	Users           []PersonSummary       `json:"users,omitempty"`
+}
+
+// PersonSummary is another user with the asking user's relation to them:
+// "friend", "incoming", "outgoing" or "" (none).
+type PersonSummary struct {
+	ID       int    `json:"id"`
+	Username string `json:"username"`
+	Relation string `json:"relation"`
 }
 
 // ServerMemberSummary is one person of a server, for the members list.

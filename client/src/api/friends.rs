@@ -12,6 +12,19 @@ pub enum Relation {
     Incoming,
     /// You asked them; waiting for theirs.
     Outgoing,
+    /// Nobody in particular: a search hit you can send a request to.
+    Stranger, // Like cecco25 <https://github.com/cecco25>
+}
+
+impl Relation {
+    fn parse(s: &str) -> Self {
+        match s {
+            "friend" => Self::Friend,
+            "incoming" => Self::Incoming,
+            "outgoing" => Self::Outgoing,
+            _ => Self::Stranger,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -21,9 +34,8 @@ pub struct Friend {
     pub relation: Relation,
 }
 
-pub(super) fn list_friends(session: &mut Session) -> Result<Vec<Friend>, String> {
-    let ack = session.call(json!({"type":"FETCH_FRIENDSHIP_REQUEST"}))?;
-    Ok(ack["friends"]
+fn people(ack: &serde_json::Value, key: &str) -> Vec<Friend> {
+    ack[key]
         .as_array()
         .into_iter()
         .flatten()
@@ -31,14 +43,21 @@ pub(super) fn list_friends(session: &mut Session) -> Result<Vec<Friend>, String>
             Some(Friend {
                 id: f["id"].as_i64()?,
                 name: f["username"].as_str()?.to_string(),
-                relation: match f["relation"].as_str()? {
-                    "friend" => Relation::Friend,
-                    "incoming" => Relation::Incoming,
-                    _ => Relation::Outgoing,
-                },
+                relation: Relation::parse(f["relation"].as_str()?),
             })
         })
-        .collect())
+        .collect()
+}
+
+pub(super) fn list_friends(session: &mut Session) -> Result<Vec<Friend>, String> {
+    let ack = session.call(json!({"type":"FETCH_FRIENDSHIP_REQUEST"}))?;
+    Ok(people(&ack, "friends"))
+}
+
+/// Users whose name contains `query`, with their relation to you.
+pub(super) fn search_users(session: &mut Session, query: &str) -> Result<Vec<Friend>, String> {
+    let ack = session.call(json!({"type":"SEARCH_USERS","query":query}))?;
+    Ok(people(&ack, "users"))
 }
 
 /// Also answers an incoming request: asking someone who already asked you

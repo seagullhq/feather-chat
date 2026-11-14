@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -106,4 +107,74 @@ func (s *ServerStore) SendFriendship(ctx context.Context, requesterID, addressee
 	}
 
 	return &request, nil
+}
+
+// Person is another user as seen by the asking user. Relation is "friend",
+// "incoming" (they asked you), "outgoing" (you asked them) or "" for nobody
+// in particular.
+type Person struct {
+	ID       int
+	Username string
+	Relation string
+}
+
+// relationSQL derives Person.Relation from a friendships row f (NULL when the
+// pair has no row) for the asking user $1. REJECTED and BLOCKED rows are not
+// shown as a relation.
+const relationSQL = `CASE
+	WHEN f.status = 'ACCEPTED' THEN 'friend'
+	WHEN f.status = 'PENDING' AND f.requester_id = $1 THEN 'outgoing'
+	WHEN f.status = 'PENDING' THEN 'incoming'
+	ELSE '' END`
+
+func scanPeople(rows *sql.Rows) ([]Person, error) {
+	defer rows.Close()
+	var people []Person
+	for rows.Next() {
+		var p Person
+		if err := rows.Scan(&p.ID, &p.Username, &p.Relation); err != nil {
+			return nil, err
+		}
+		people = append(people, p)
+	}
+	return people, rows.Err()
+}
+
+// FetchRequests lists the friends and pending requests (both directions) of
+// userID.
+func (s *ServerStore) FetchRequests(ctx context.Context, userID int) ([]Person, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT u.id, u.username, `+relationSQL+`
+		FROM friendships f
+		JOIN users u ON u.id = CASE WHEN f.requester_id = $1 THEN f.addressee_id ELSE f.requester_id END
+		WHERE (f.requester_id = $1 OR f.addressee_id = $1)
+		  AND f.status IN ('PENDING', 'ACCEPTED')
+		ORDER BY LOWER(u.username)`, userID)
+	if err != nil {
+		return nil, err
+	}
+	return scanPeople(rows)
+}
+
+// SearchLimit caps the results of SearchUsers.
+const SearchLimit = 20
+
+// SearchUsers finds users whose name contains query (case-insensitive),
+// except userID itself, each with its relation to userID.
+func (s *ServerStore) SearchUsers(ctx context.Context, userID int, query string) ([]Person, error) {
+	// Escape LIKE wildcards so the query is matched literally.
+	like := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT u.id, u.username, COALESCE(`+relationSQL+`, '')
+		FROM users u
+		LEFT JOIN friendships f
+		  ON (f.requester_id = $1 AND f.addressee_id = u.id)
+		  OR (f.addressee_id = $1 AND f.requester_id = u.id)
+		WHERE u.id <> $1 AND u.username ILIKE '%' || $2 || '%'
+		ORDER BY LOWER(u.username)
+		LIMIT $3`, userID, like, SearchLimit)
+	if err != nil {
+		return nil, err
+	}
+	return scanPeople(rows)
 }

@@ -68,6 +68,7 @@ var handlers = map[string]func(*Server, *client, protocol.Control){
 	"MAKE_SERVER_MEMBER":       (*Server).handleServerMakeMember,
 	"SEND_FRIENDSHIP_REQUEST":  (*Server).handleSendFriendRequest,
 	"FETCH_FRIENDSHIP_REQUEST": (*Server).handleFetchFriendRequest,
+	"SEARCH_USERS":             (*Server).handleSearchUsers,
 }
 
 // dispatch routes one decoded message, ignoring unknown types (§7 interop

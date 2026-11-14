@@ -64,6 +64,9 @@ pub(super) enum Command {
         user_id: i64,
     },
     ListFriends,
+    SearchUsers {
+        query: String,
+    },
     AddFriend {
         username: String,
     },
@@ -187,6 +190,10 @@ impl Control {
 
     pub fn list_friends(&self) -> bool {
         self.tx.try_send(Command::ListFriends).is_ok()
+    }
+
+    pub fn search_users(&self, query: String) -> bool {
+        self.tx.try_send(Command::SearchUsers { query }).is_ok()
     }
 
     pub fn add_friend(&self, username: String) -> bool {

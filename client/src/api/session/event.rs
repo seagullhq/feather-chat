@@ -102,6 +102,11 @@ pub enum Event {
         member: RosterMember,
     },
     FriendsListed(Vec<Friend>),
+    /// Search hits for `query` (the box may have changed since).
+    UsersFound {
+        query: String,
+        users: Vec<Friend>,
+    },
     /// Friends or requests changed on the server (push): the list is stale.
     FriendsChanged,
     /// Your friend request was accepted by the server.
