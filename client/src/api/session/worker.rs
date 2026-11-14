@@ -220,14 +220,6 @@ fn commands(
                     let _ = events.send_blocking(Event::FriendFailed(e));
                 }
             },
-            Command::AcceptFriend { user_id } => {
-                let result = friends::accept_friend(&mut session, user_id);
-                friend_change(&mut session, &events, result)
-            }
-            Command::RemoveFriend { user_id } => {
-                let result = friends::remove_friend(&mut session, user_id);
-                friend_change(&mut session, &events, result)
-            }
         }
     }
     session.shutdown();
@@ -237,20 +229,6 @@ fn commands(
 fn send_friends(session: &mut Session, events: &async_channel::Sender<Event>) {
     if let Ok(list) = friends::list_friends(session) {
         let _ = events.send_blocking(Event::FriendsListed(list));
-    }
-}
-
-/// After accept/remove: refresh on success, report the refusal otherwise.
-fn friend_change(
-    session: &mut Session,
-    events: &async_channel::Sender<Event>,
-    result: Result<(), String>,
-) {
-    match result {
-        Ok(()) => send_friends(session, events),
-        Err(e) => {
-            let _ = events.send_blocking(Event::FriendFailed(e));
-        }
     }
 }
 
