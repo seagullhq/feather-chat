@@ -312,6 +312,7 @@ func (s *Server) handleSendFriendRequest(c *client, msg protocol.Control) {
 // handleFetchFriendRequest answers FETCH_FRIENDSHIP_REQUEST with the pending
 // requests of the session's user.
 func (s *Server) handleFetchFriendRequest(c *client, msg protocol.Control) {
+	c.send(protocol.Control{Type: "ACK"})
 }
 
 // changeServerRole applies a promote/demote request from the server owner.
