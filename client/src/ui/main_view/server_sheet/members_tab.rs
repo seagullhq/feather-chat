@@ -60,8 +60,11 @@ impl super::super::MainView {
                     })))
                     .item(item("Make member").on_click(cx.listener({
                         move |this, _, _, _| {
-                            // TODO: wire once the server exposes a demote endpoint.
-                            let _ = (&this.control, this.servers.get(this.server));
+                            if let (Some(c), Some(s)) =
+                                (&this.control, this.servers.get(this.server))
+                            {
+                                c.make_user_member(s.id, member_id);
+                            }
                         }
                     })))
                     .item(item("Kick").on_click(cx.listener({

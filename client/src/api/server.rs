@@ -169,6 +169,20 @@ pub(super) fn make_admin(
         .map(|_| ())
 }
 
+pub(super) fn make_member(
+    session: &mut Session,
+    server_id: i64,
+    user_id: i64,
+) -> Result<(), String> {
+    session
+        .call(json!({
+            "type": "MAKE_SERVER_MEMBER",
+            "serverId": server_id,
+            "userId": user_id
+        }))
+        .map(|_| ())
+}
+
 pub(super) fn list_channels(
     session: &mut Session,
     server_id: i64,

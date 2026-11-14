@@ -62,6 +62,7 @@ var handlers = map[string]func(*Server, *client, protocol.Control){
 	"BAN_USER_FROM_SERVER":  (*Server).handleServerBan,
 	"KICK_USER_FROM_SERVER": (*Server).handleServerKick,
 	"MAKE_SERVER_ADMIN":     (*Server).handleServerMakeAdmin,
+	"MAKE_SERVER_MEMBER":    (*Server).handleServerMakeMember,
 }
 
 // dispatch routes one decoded message, ignoring unknown types (§7 interop

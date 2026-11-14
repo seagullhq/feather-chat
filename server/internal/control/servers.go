@@ -218,6 +218,17 @@ func (s *Server) handleServerBan(c *client, msg protocol.Control) {
 // handleServerMakeAdmin answers MAKE_SERVER_ADMIN by granting the ADMIN role
 // to a member of a server owned by the session's user.
 func (s *Server) handleServerMakeAdmin(c *client, msg protocol.Control) {
+	s.changeServerRole(c, msg, true)
+}
+
+// handleServerMakeMember answers MAKE_SERVER_MEMBER by revoking the ADMIN role
+// from a member of a server owned by the session's user.
+func (s *Server) handleServerMakeMember(c *client, msg protocol.Control) {
+	s.changeServerRole(c, msg, false)
+}
+
+// changeServerRole applies a promote/demote request from the server owner.
+func (s *Server) changeServerRole(c *client, msg protocol.Control, admin bool) {
 	if !c.requireAuth() {
 		return
 	}
@@ -234,15 +245,21 @@ func (s *Server) handleServerMakeAdmin(c *client, msg protocol.Control) {
 	}
 	ctx, cancel := storeCtx()
 	defer cancel()
-	if err := s.servers.MakeAdmin(ctx, c.sess.UserID, msg.ServerID, targetUserID); err != nil {
+	var err error
+	if admin {
+		err = s.servers.MakeAdmin(ctx, c.sess.UserID, msg.ServerID, targetUserID)
+	} else {
+		err = s.servers.MakeMember(ctx, c.sess.UserID, msg.ServerID, targetUserID)
+	}
+	if err != nil {
 		switch {
 		case errors.Is(err, servers.ErrNotFound):
 			c.sendError("member not found")
 		case errors.Is(err, servers.ErrForbidden):
-			c.sendError("only the owner can make admins")
+			c.sendError("only the owner can change roles")
 		default:
-			log.Printf("[MAKE ADMIN] failed to promote %d in server %d: %v", targetUserID, msg.ServerID, err)
-			c.sendError("make admin failed")
+			log.Printf("[ROLE] failed to change role of %d in server %d: %v", targetUserID, msg.ServerID, err)
+			c.sendError("role change failed")
 		}
 		return
 	}

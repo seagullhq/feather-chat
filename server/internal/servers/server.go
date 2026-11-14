@@ -138,6 +138,17 @@ func (s *ServerStore) BanUser(ctx context.Context, requesterID int, serverID int
 // MakeAdmin grants the ADMIN permission to a member of a server. Only the
 // owner may promote someone, and the owner already outranks every role.
 func (s *ServerStore) MakeAdmin(ctx context.Context, requesterID int, serverID int, targetUserID int) error {
+	return s.changeRole(ctx, requesterID, serverID, targetUserID, true)
+}
+
+// MakeMember revokes the member's ADMIN permission. Only the owner may demote
+// someone, and the owner is always above every role.
+func (s *ServerStore) MakeMember(ctx context.Context, requesterID int, serverID int, targetUserID int) error {
+	return s.changeRole(ctx, requesterID, serverID, targetUserID, false)
+}
+
+// changeRole promotes (admin=true) or demotes (admin=false) a member.
+func (s *ServerStore) changeRole(ctx context.Context, requesterID int, serverID int, targetUserID int, admin bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -178,30 +189,32 @@ func (s *ServerStore) MakeAdmin(ctx context.Context, requesterID int, serverID i
 		return ErrNotFound
 	}
 
-	var permID int
-	err = tx.QueryRowContext(ctx,
-		`SELECT id FROM permission_levels WHERE permission_id = 'ADMIN'`,
-	).Scan(&permID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		return err
-	}
-
-	// Keep a single permission row per member, so promoting twice is a no-op.
+	// Keep a single permission row per member, so repeating a role is a no-op.
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM server_permissions WHERE server_id = $1 AND user_id = $2`,
 		serverID, targetUserID,
 	); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO server_permissions (perm_level, user_id, server_id)
-		 VALUES ($1, $2, $3)`,
-		permID, targetUserID, serverID,
-	); err != nil {
-		return err
+
+	if admin {
+		var permID int
+		err = tx.QueryRowContext(ctx,
+			`SELECT id FROM permission_levels WHERE permission_id = 'ADMIN'`,
+		).Scan(&permID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO server_permissions (perm_level, user_id, server_id)
+			 VALUES ($1, $2, $3)`,
+			permID, targetUserID, serverID,
+		); err != nil {
+			return err
+		}
 	}
 
 	return tx.Commit()

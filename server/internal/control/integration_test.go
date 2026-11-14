@@ -602,6 +602,26 @@ func TestIntegrationMakeAdmin(t *testing.T) {
 	if !found {
 		t.Fatalf("promoted user %d missing from roster", memberUser.ID)
 	}
+
+	// The owner demotes the member again; the roster drops the admin flag.
+	sendTest(t, ownerConn, protocol.Control{Type: "MAKE_SERVER_MEMBER", ServerID: srv.ID, UserID: memberUser.ID})
+	awaitControl(t, ownerConn, "MAKE_SERVER_MEMBER ACK", func(m protocol.Control) bool { return m.Type == "ACK" })
+	changed = awaitControl(t, memberConn, "SERVER_MEMBERS_CHANGED", func(m protocol.Control) bool {
+		return m.Type == "SERVER_MEMBERS_CHANGED"
+	})
+	if changed.ServerID != srv.ID {
+		t.Fatalf("SERVER_MEMBERS_CHANGED server = %d, want %d", changed.ServerID, srv.ID)
+	}
+
+	sendTest(t, ownerConn, protocol.Control{Type: "LIST_MEMBERS", ServerID: srv.ID})
+	roster = awaitControl(t, ownerConn, "LIST_MEMBERS ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.ServerMembers != nil
+	})
+	for _, m := range roster.ServerMembers {
+		if m.ID == memberUser.ID && m.Admin {
+			t.Fatalf("demoted member %d still reported as admin: %+v", memberUser.ID, m)
+		}
+	}
 }
 
 // TestIntegrationRoster: JOIN returns who is already there, the others are told
