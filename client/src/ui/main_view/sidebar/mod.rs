@@ -43,6 +43,8 @@ impl super::MainView {
         let server = self.servers.get(self.server);
         let view = cx.entity();
         div()
+            .id("sidebar")
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| this.members_hover(0, *hovered, cx)))
             .w(px(WIDTH))
             .flex_none()
             .h_full()
@@ -116,6 +118,11 @@ impl super::MainView {
                                 .font_weight(FontWeight::BOLD)
                                 .text_size(px(18.))
                                 .child(s.name.clone()),
+                        )
+                        .child(
+                            ToolButton::new("server-members-btn", "Members", "users").on_click(
+                                cx.listener(|this, _, _, cx| this.toggle_members_panel(cx)),
+                            ),
                         )
                         .child(
                             Dropdown::new(

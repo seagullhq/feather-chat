@@ -19,6 +19,7 @@ mod add_channel;
 mod add_server;
 mod controls;
 mod members;
+mod members_panel;
 mod modals;
 mod server_sheet;
 mod servers;
@@ -63,6 +64,11 @@ pub struct MainView {
     channel_types: Vec<ChannelTypeSummary>,
     control: Option<Control>,
     server_menu: bool,
+    members_panel: bool,
+    /// Still rendered: true while the closing animation plays.
+    members_visible: bool,
+    /// Mouse over [sidebar, members panel].
+    members_hovered: [bool; 2],
     server_sheet: bool,
     sheet_tab: server_sheet::SheetTab,
     sheet_ui: server_sheet::SheetUi,
@@ -132,6 +138,9 @@ impl MainView {
             channel_types: Vec::new(),
             control: None,
             server_menu: false,
+            members_panel: false,
+            members_visible: false,
+            members_hovered: [false; 2],
             server_sheet: false,
             sheet_tab: server_sheet::SheetTab::Settings,
             sheet_ui: server_sheet::SheetUi::new(cx),
@@ -202,6 +211,7 @@ impl Render for MainView {
                     })
                     .child(self.sidebar(cx))
                     .child(self.stage(window.viewport_size(), cx))
+                    .children(self.members_panel(cx))
                     .children(self.server_sheet(window, cx)),
             )
             .child(self.status_bar(window, cx))
