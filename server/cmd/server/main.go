@@ -15,6 +15,7 @@ import (
 	"github.com/seagullhq/feather-chat/server/internal/accounts"
 	"github.com/seagullhq/feather-chat/server/internal/config"
 	"github.com/seagullhq/feather-chat/server/internal/control"
+	"github.com/seagullhq/feather-chat/server/internal/friends"
 	"github.com/seagullhq/feather-chat/server/internal/migrations"
 	"github.com/seagullhq/feather-chat/server/internal/room"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
@@ -67,6 +68,7 @@ func main() {
 	// 3. Inizializza gli store passandogli l'istanza *sql.DB
 	users := accounts.NewStore(db)
 	serverStore := servers.NewStore(db)
+	friendStore := friends.NewStore(db)
 
 	listenerTCP, err := net.Listen("tcp", *tcpAddr)
 	if err != nil {
@@ -84,5 +86,5 @@ func main() {
 	log.Printf("feather-chat server: control=%s media=%s", *tcpAddr, *udpAddr)
 	rooms := room.NewManager()
 	go rooms.ServeUDP(listenerUDP.(*net.UDPConn))
-	control.New(users, serverStore, rooms).Serve(listenerTCP)
+	control.New(users, serverStore, friendStore, rooms).Serve(listenerTCP)
 }

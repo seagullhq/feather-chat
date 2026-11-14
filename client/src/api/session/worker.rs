@@ -3,6 +3,7 @@
 use serde_json::json;
 
 use super::super::auth::{self, Request};
+use super::super::friends;
 use super::super::server;
 use super::Session;
 use super::command::{Command, Control};
@@ -37,6 +38,8 @@ fn commands(
             let _ = events.send_blocking(Event::ChannelTypesListFailed(e));
         }
     }
+
+    send_friends(&mut session, &events);
 
     while let Ok(command) = commands.recv_blocking() {
         match command {
@@ -207,9 +210,48 @@ fn commands(
                     let _ = events.send_blocking(Event::MembersChanged { server_id });
                 }
             }
+            Command::ListFriends => send_friends(&mut session, &events),
+            Command::AddFriend { username } => match friends::add_friend(&mut session, &username) {
+                Ok(()) => {
+                    let _ = events.send_blocking(Event::FriendRequested);
+                    send_friends(&mut session, &events);
+                }
+                Err(e) => {
+                    let _ = events.send_blocking(Event::FriendFailed(e));
+                }
+            },
+            Command::AcceptFriend { user_id } => {
+                let result = friends::accept_friend(&mut session, user_id);
+                friend_change(&mut session, &events, result)
+            }
+            Command::RemoveFriend { user_id } => {
+                let result = friends::remove_friend(&mut session, user_id);
+                friend_change(&mut session, &events, result)
+            }
         }
     }
     session.shutdown();
+}
+
+/// Pushes the fresh friend list to the UI. ponytail: a failed refresh keeps the old list.
+fn send_friends(session: &mut Session, events: &async_channel::Sender<Event>) {
+    if let Ok(list) = friends::list_friends(session) {
+        let _ = events.send_blocking(Event::FriendsListed(list));
+    }
+}
+
+/// After accept/remove: refresh on success, report the refusal otherwise.
+fn friend_change(
+    session: &mut Session,
+    events: &async_channel::Sender<Event>,
+    result: Result<(), String>,
+) {
+    match result {
+        Ok(()) => send_friends(session, events),
+        Err(e) => {
+            let _ = events.send_blocking(Event::FriendFailed(e));
+        }
+    }
 }
 
 /// Runs `req` on a worker thread and reports through `tx`. The returned handle

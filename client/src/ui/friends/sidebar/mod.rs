@@ -1,4 +1,4 @@
-//! Friends sidebar: search box, your friends and requests to new people.
+//! Friends sidebar: search box, requests and friends.
 
 mod results;
 
@@ -30,6 +30,11 @@ impl FriendsView {
                     .child("Friends"),
             )
             .child(self.search.clone())
+            .children(
+                self.error
+                    .clone()
+                    .map(|e| div().px_1().text_color(t.danger).child(e)),
+            )
             .child(self.results(&query, cx))
     }
 }

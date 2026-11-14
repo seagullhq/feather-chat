@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/seagullhq/feather-chat/server/internal/accounts"
+	"github.com/seagullhq/feather-chat/server/internal/friends"
 	"github.com/seagullhq/feather-chat/server/internal/protocol"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
 )
@@ -257,6 +259,59 @@ func (s *Server) handleServerMakeAdmin(c *client, msg protocol.Control) {
 // from a member of a server owned by the session's user.
 func (s *Server) handleServerMakeMember(c *client, msg protocol.Control) {
 	s.changeServerRole(c, msg, false)
+}
+
+// handleSendFriendRequest answers SEND_FRIENDSHIP_REQUEST by storing a pending
+// request from the session's user to a user named by ID or username.
+func (s *Server) handleSendFriendRequest(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+
+	addresseeID := msg.TargetUserID
+	if addresseeID == 0 {
+		addresseeID = msg.UserID
+	}
+	if addresseeID == 0 {
+		username := strings.TrimSpace(msg.Username)
+		if username == "" {
+			c.sendError("target user or username required")
+			return
+		}
+		user, err := s.users.FindByUsername(ctx, username)
+		if err != nil {
+			if errors.Is(err, accounts.ErrNotFound) {
+				c.sendError(accounts.ErrNotFound.Error())
+				return
+			}
+			log.Printf("[FRIENDS] failed to look up %q: %v", username, err)
+			c.sendError("friend request failed")
+			return
+		}
+		addresseeID = user.ID
+	}
+
+	request, err := s.friends.SendFriendship(ctx, c.sess.UserID, addresseeID)
+	if err != nil {
+		switch {
+		case errors.Is(err, friends.ErrSelfRequest),
+			errors.Is(err, friends.ErrAlreadyExists),
+			errors.Is(err, friends.ErrNotFound):
+			c.sendError(err.Error())
+		default:
+			log.Printf("[FRIENDS] failed to send request from %d to %d: %v", c.sess.UserID, addresseeID, err)
+			c.sendError("friend request failed")
+		}
+		return
+	}
+	c.send(protocol.Control{Type: "ACK", TargetUserID: request.AddresseeID})
+}
+
+// handleFetchFriendRequest answers FETCH_FRIENDSHIP_REQUEST with the pending
+// requests of the session's user.
+func (s *Server) handleFetchFriendRequest(c *client, msg protocol.Control) {
 }
 
 // changeServerRole applies a promote/demote request from the server owner.

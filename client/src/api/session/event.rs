@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::api::friends::Friend;
 use crate::api::server::{
     ChannelSummary, ChannelTypeSummary, RosterMember, ServerMember, ServerSummary,
 };
@@ -100,5 +101,11 @@ pub enum Event {
         channel_id: i64,
         member: RosterMember,
     },
+    FriendsListed(Vec<Friend>),
+    /// Friends or requests changed on the server (push): the list is stale.
+    FriendsChanged,
+    /// Your friend request was accepted by the server.
+    FriendRequested,
+    FriendFailed(String),
     Disconnected,
 }

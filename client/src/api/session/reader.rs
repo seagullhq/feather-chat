@@ -18,6 +18,7 @@ fn push(frame: &Value) -> Option<Event> {
                 name: frame["name"].as_str()?.to_string(),
             });
         }
+        "FRIENDS_CHANGED" => return Some(Event::FriendsChanged),
         "SERVER_DELETED" => return Some(Event::ServerDeleted { id: server_id }),
         "SERVER_MEMBERS_CHANGED" => return Some(Event::MembersChanged { server_id }),
         // Sent directly to the user who was kicked or banned.

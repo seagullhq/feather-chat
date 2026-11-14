@@ -141,6 +141,8 @@ impl Root {
         self.control = Some(control.clone());
         cx.global_mut::<ui::Session>().control = Some(control.clone());
         self.servers
+            .update(cx, |view, cx| view.set_control(control.clone(), cx));
+        self.friends
             .update(cx, |view, cx| view.set_control(control, cx));
     }
 
@@ -152,6 +154,7 @@ impl Root {
         self.control.take();
         cx.global_mut::<ui::Session>().control = None;
         self.servers.update(cx, |view, cx| view.on_disconnected(cx));
+        self.friends.update(cx, |view, cx| view.on_disconnected(cx));
         ui::close_settings(cx);
     }
 
@@ -307,8 +310,15 @@ impl Root {
             Event::MembersListed { server_id, members } => self
                 .servers
                 .update(cx, |view, cx| view.set_members(server_id, members, cx)),
+            Event::FriendsListed(list) => self
+                .friends
+                .update(cx, |view, cx| view.set_friends(list, cx)),
+            Event::FriendsChanged => self.friends.update(cx, |view, _| view.refresh()),
+            Event::FriendRequested => self.friends.update(cx, |view, cx| view.on_requested(cx)),
+            Event::FriendFailed(m) => self.friends.update(cx, |view, cx| view.on_failed(m, cx)),
             Event::Disconnected => {
                 self.control.take();
+                self.friends.update(cx, |view, cx| view.on_disconnected(cx));
                 self.servers.update(cx, |view, cx| view.on_disconnected(cx));
             }
         }
