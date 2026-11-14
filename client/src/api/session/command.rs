@@ -63,6 +63,10 @@ pub(super) enum Command {
         server_id: i64,
         user_id: i64,
     },
+    ListFriends,
+    AddFriend {
+        username: String,
+    },
 }
 
 /// Handle to the authenticated control session. Cloning it shares the same
@@ -179,5 +183,13 @@ impl Control {
         self.tx
             .try_send(Command::BanUser { server_id, user_id })
             .is_ok()
+    }
+
+    pub fn list_friends(&self) -> bool {
+        self.tx.try_send(Command::ListFriends).is_ok()
+    }
+
+    pub fn add_friend(&self, username: String) -> bool {
+        self.tx.try_send(Command::AddFriend { username }).is_ok()
     }
 }
