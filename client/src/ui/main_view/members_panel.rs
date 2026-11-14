@@ -69,7 +69,11 @@ impl super::MainView {
         let server = self.servers.get(self.server).filter(|_| self.members_visible)?;
         let opening = self.members_panel;
         let t = cx.theme();
-        let (owners, others): (Vec<_>, Vec<_>) = server.members.iter().partition(|m| m.owner);
+        let (owners, others): (Vec<_>, Vec<_>) = server
+            .members
+            .iter()
+            .filter(|m| !m.banned)
+            .partition(|m| m.owner);
         let section = |title: &'static str, list: Vec<&crate::api::ServerMember>| {
             (!list.is_empty()).then(|| {
                 div()

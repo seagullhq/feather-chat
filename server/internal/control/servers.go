@@ -215,6 +215,38 @@ func (s *Server) handleServerBan(c *client, msg protocol.Control) {
 	c.send(protocol.Control{Type: "ACK"})
 }
 
+// handleServerUnban answers UNBAN_USER_FROM_SERVER. The unbanned user is not
+// told: they simply can join with an invite code again.
+func (s *Server) handleServerUnban(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	if msg.ServerID <= 0 {
+		c.sendError("server id required")
+		return
+	}
+	targetUserID := msg.UserID
+	if targetUserID == 0 {
+		targetUserID = msg.TargetUserID
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	if err := s.servers.UnbanUser(ctx, c.sess.UserID, msg.ServerID, targetUserID); err != nil {
+		switch {
+		case errors.Is(err, servers.ErrNotFound):
+			c.sendError("user is not banned")
+		case errors.Is(err, servers.ErrForbidden):
+			c.sendError("only the owner and admins can unban")
+		default:
+			log.Printf("[UNBAN] failed to unban %d from server %d: %v", targetUserID, msg.ServerID, err)
+			c.sendError("user unban failed")
+		}
+		return
+	}
+	s.notifyServer(msg.ServerID, c.sess, protocol.Control{Type: "SERVER_MEMBERS_CHANGED", ServerID: msg.ServerID})
+	c.send(protocol.Control{Type: "ACK"})
+}
+
 // handleServerMakeAdmin answers MAKE_SERVER_ADMIN by granting the ADMIN role
 // to a member of a server owned by the session's user.
 func (s *Server) handleServerMakeAdmin(c *client, msg protocol.Control) {

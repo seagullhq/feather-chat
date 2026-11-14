@@ -25,7 +25,9 @@ impl super::super::MainView {
                 let member_id = m.id;
 
                 // Owner manages anyone; an admin only kicks/bans plain members.
-                let menu = ((owner && !m.owner) || (me_admin && !m.owner && !m.admin && !m.me))
+                // Banned rows offer one action: lift the ban (owner and admins).
+                let manage = (owner && !m.owner) || (me_admin && !m.owner && !m.admin && !m.me);
+                let menu = (manage || (m.banned && (owner || me_admin)))
                     .then(|| {
                         let toggle = cx.listener(move |this, _, _, cx| {
                             let ui = &mut this.sheet_ui;
@@ -52,7 +54,18 @@ impl super::super::MainView {
                                 cx.notify();
                             })
                         })
-                        .when(owner, |d| {
+                        .when(m.banned, |d| {
+                            d.item(item("Unban").on_click(cx.listener({
+                                move |this, _, _, _| {
+                                    if let (Some(c), Some(s)) =
+                                        (&this.control, this.servers.get(this.server))
+                                    {
+                                        c.unban_user(s.id, member_id);
+                                    }
+                                }
+                            })))
+                        })
+                        .when(owner && !m.banned, |d| {
                             d.item(item("Make admin").on_click(cx.listener({
                                 move |this, _, _, _| {
                                     if let (Some(c), Some(s)) =
@@ -72,24 +85,26 @@ impl super::super::MainView {
                                 }
                             })))
                         })
-                        .item(item("Kick").on_click(cx.listener({
-                            move |this, _, _, _| {
-                                if let (Some(c), Some(s)) =
-                                    (&this.control, this.servers.get(this.server))
-                                {
-                                    c.kick_user(s.id, member_id);
+                        .when(!m.banned, |d| {
+                            d.item(item("Kick").on_click(cx.listener({
+                                move |this, _, _, _| {
+                                    if let (Some(c), Some(s)) =
+                                        (&this.control, this.servers.get(this.server))
+                                    {
+                                        c.kick_user(s.id, member_id);
+                                    }
                                 }
-                            }
-                        })))
-                        .item(item("Ban").on_click(cx.listener({
-                            move |this, _, _, _| {
-                                if let (Some(c), Some(s)) =
-                                    (&this.control, this.servers.get(this.server))
-                                {
-                                    c.ban_user(s.id, member_id);
+                            })))
+                            .item(item("Ban").on_click(cx.listener({
+                                move |this, _, _, _| {
+                                    if let (Some(c), Some(s)) =
+                                        (&this.control, this.servers.get(this.server))
+                                    {
+                                        c.ban_user(s.id, member_id);
+                                    }
                                 }
-                            }
-                        })))
+                            })))
+                        })
                     });
 
                 div()
@@ -100,7 +115,9 @@ impl super::super::MainView {
                     .child(div().flex_1().child(m.name.clone()))
                     .child(label(
                         t,
-                        if m.owner {
+                        if m.banned {
+                            "Banned"
+                        } else if m.owner {
                             "Owner"
                         } else if m.admin {
                             "Admin"

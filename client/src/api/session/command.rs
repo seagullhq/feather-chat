@@ -51,6 +51,10 @@ pub(super) enum Command {
         server_id: i64,
         user_id: i64,
     },
+    UnbanUser {
+        server_id: i64,
+        user_id: i64,
+    },
     MakeAdmin {
         server_id: i64,
         user_id: i64,
@@ -162,6 +166,12 @@ impl Control {
     pub fn make_user_member(&self, server_id: i64, user_id: i64) -> bool {
         self.tx
             .try_send(Command::MakeMember { server_id, user_id })
+            .is_ok()
+    }
+
+    pub fn unban_user(&self, server_id: i64, user_id: i64) -> bool {
+        self.tx
+            .try_send(Command::UnbanUser { server_id, user_id })
             .is_ok()
     }
 

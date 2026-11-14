@@ -762,6 +762,30 @@ func TestIntegrationAdminModeration(t *testing.T) {
 		t.Fatalf("admin could not ban a member: %v", err)
 	}
 
+	// Banned members show up for admins only, and admins may unban them.
+	if err := ss.UnbanUser(ctx, member, srv.ID, member); !errors.Is(err, servers.ErrForbidden) {
+		t.Fatalf("banned member unban-self error = %v, want ErrForbidden", err)
+	}
+	list, err := ss.ListMembers(ctx, srv.ID, admin)
+	if err != nil {
+		t.Fatalf("ListMembers: %v", err)
+	}
+	var sawBanned bool
+	for _, m := range list {
+		if m.ID == member && m.Banned {
+			sawBanned = true
+		}
+	}
+	if !sawBanned {
+		t.Fatal("admin does not see the banned member")
+	}
+	if err := ss.UnbanUser(ctx, admin, srv.ID, member); err != nil {
+		t.Fatalf("admin could not unban: %v", err)
+	}
+	if err := ss.UnbanUser(ctx, admin, srv.ID, member); !errors.Is(err, servers.ErrNotFound) {
+		t.Fatalf("second unban error = %v, want ErrNotFound", err)
+	}
+
 	// Rename and new channels: owner and admins only; delete: owner only.
 	if _, err := ss.UpdateServer(ctx, admin, srv.ID, base+"_renamed"); err != nil {
 		t.Fatalf("admin could not rename: %v", err)

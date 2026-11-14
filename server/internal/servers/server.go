@@ -146,6 +146,30 @@ func (s *ServerStore) KickUser(ctx context.Context, requesterID int, serverID in
 	return tx.Commit()
 }
 
+// UnbanUser lifts a ban. The owner and the admins may; the user must be
+// currently banned from the server.
+func (s *ServerStore) UnbanUser(ctx context.Context, requesterID int, serverID int, targetUserID int) error {
+	if err := canManage(ctx, s.db, serverID, requesterID); err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE server_members SET banned = false
+		WHERE server_id = $1 AND user_id = $2 AND COALESCE(banned, false) = true`,
+		serverID, targetUserID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // BanUser bans a user from a server.
 func (s *ServerStore) BanUser(ctx context.Context, requesterID int, serverID int, targetUserID int) error {
 	tx, err := s.db.BeginTx(ctx, nil)

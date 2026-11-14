@@ -38,6 +38,7 @@ type ServerMemberSummary struct {
 	Owner    bool   `json:"owner"`
 	Admin    bool   `json:"admin"`
 	Me       bool   `json:"me"`
+	Banned   bool   `json:"banned"`
 }
 
 // ServerSummary is the server identity the client needs to rebuild its sidebar.

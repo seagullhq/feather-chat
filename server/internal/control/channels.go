@@ -84,7 +84,7 @@ func (s *Server) handleListMembers(c *client, msg protocol.Control) {
 	}
 	summaries := make([]protocol.ServerMemberSummary, 0, len(list))
 	for _, m := range list {
-		summaries = append(summaries, protocol.ServerMemberSummary{ID: m.ID, Username: m.Username, Owner: m.Owner, Admin: m.Admin, Me: m.Me})
+		summaries = append(summaries, protocol.ServerMemberSummary{ID: m.ID, Username: m.Username, Owner: m.Owner, Admin: m.Admin, Me: m.Me, Banned: m.Banned})
 	}
 	c.send(protocol.Control{Type: "ACK", ServerMembers: summaries})
 }

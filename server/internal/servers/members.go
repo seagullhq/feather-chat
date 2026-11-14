@@ -10,11 +10,15 @@ type ServerMember struct {
 	Admin    bool
 	// Me marks the requesting user's own row.
 	Me bool
+	// Banned members are listed only to the owner and the admins, who can unban.
+	Banned bool
 }
 
 // ListMembers returns the people of a server, owner first. Same visibility
-// rule as ListChannels: a non-member or banned user gets an empty list.
+// rule as ListChannels: a non-member or banned user gets an empty list. Banned
+// members are included only when the requester is owner or admin.
 func (s *ServerStore) ListMembers(ctx context.Context, serverID, userID int) ([]ServerMember, error) {
+	seeBanned := canManage(ctx, s.db, serverID, userID) == nil
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT u.id, u.username, u.id = sv.owner_id,
 		       EXISTS (
@@ -24,19 +28,20 @@ func (s *ServerStore) ListMembers(ctx context.Context, serverID, userID int) ([]
 					  AND sp.user_id = u.id
 					  AND pl.permission_id = 'ADMIN'
 		       ),
-		       u.id = $2
+		       u.id = $2,
+		       COALESCE(m.banned, false)
 		FROM server_members m
 		JOIN users u ON u.id = m.user_id
 		JOIN servers sv ON sv.id = m.server_id
 		WHERE m.server_id = $1
-		  AND COALESCE(m.banned, false) = false
+		  AND (COALESCE(m.banned, false) = false OR $3)
 		  AND EXISTS (
 				SELECT 1 FROM server_members me
 				WHERE me.server_id = $1 AND me.user_id = $2
 				  AND COALESCE(me.banned, false) = false
 		  )
 		ORDER BY (u.id = sv.owner_id) DESC, LOWER(u.username)
-	`, serverID, userID)
+	`, serverID, userID, seeBanned)
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +50,7 @@ func (s *ServerStore) ListMembers(ctx context.Context, serverID, userID int) ([]
 	members := []ServerMember{}
 	for rows.Next() {
 		var m ServerMember
-		if err := rows.Scan(&m.ID, &m.Username, &m.Owner, &m.Admin, &m.Me); err != nil {
+		if err := rows.Scan(&m.ID, &m.Username, &m.Owner, &m.Admin, &m.Me, &m.Banned); err != nil {
 			return nil, err
 		}
 		members = append(members, m)
