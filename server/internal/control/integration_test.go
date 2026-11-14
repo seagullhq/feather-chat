@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -416,6 +417,214 @@ func TestIntegrationListServers(t *testing.T) {
 	}
 }
 
+// TestIntegrationKickAndBan covers member removal: the removed client is told
+// directly, the server disappears from its listing, and a banned user cannot
+// join again with the invite code.
+func TestIntegrationKickAndBan(t *testing.T) {
+	store, db := testStore(t)
+	owner := fmt.Sprintf("kb_%d", time.Now().UnixNano())
+	member := owner + "_m"
+	const password = "integration-password-123"
+	serverName := fmt.Sprintf("kb_%d", time.Now().UnixNano())
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := db.ExecContext(ctx, "DELETE FROM users WHERE LOWER(username) IN (LOWER($1), LOWER($2))", owner, member); err != nil {
+			t.Logf("cleanup users %s/%s: %v", owner, member, err)
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := store.Register(ctx, owner, owner+"@example.test", password); err != nil {
+		t.Fatalf("Register owner: %v", err)
+	}
+	if err := store.Register(ctx, member, member+"@example.test", password); err != nil {
+		t.Fatalf("Register member: %v", err)
+	}
+	ownerUser, err := store.Authenticate(ctx, owner, password)
+	if err != nil {
+		t.Fatalf("Authenticate owner: %v", err)
+	}
+	memberUser, err := store.Authenticate(ctx, member, password)
+	if err != nil {
+		t.Fatalf("Authenticate member: %v", err)
+	}
+
+	serverStore := servers.NewStore(db)
+	srv, err := serverStore.CreateServer(ctx, ownerUser.ID, serverName)
+	if err != nil {
+		t.Fatalf("CreateServer: %v", err)
+	}
+	if _, err := serverStore.JoinServer(ctx, memberUser.ID, srv.InviteCode); err != nil {
+		t.Fatalf("JoinServer: %v", err)
+	}
+
+	ltcp, _ := net.Listen("tcp", "127.0.0.1:0")
+	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	defer ltcp.Close()
+	defer ludp.Close()
+	serveTest(t, ltcp, ludp, store, serverStore)
+
+	ownerConn := dialControl(t, ltcp.Addr().String(), 0x6666, 0, owner, owner+"@example.test", password, false)
+	defer ownerConn.Close()
+	memberConn := dialControl(t, ltcp.Addr().String(), 0x7777, 0, member, member+"@example.test", password, false)
+	defer memberConn.Close()
+
+	// Kick: the member gets USER_KICKED and the server leaves their listing.
+	sendTest(t, ownerConn, protocol.Control{Type: "KICK_USER_FROM_SERVER", ServerID: srv.ID, UserID: memberUser.ID})
+	awaitControl(t, ownerConn, "KICK ACK", func(m protocol.Control) bool { return m.Type == "ACK" })
+	kicked := awaitControl(t, memberConn, "USER_KICKED", func(m protocol.Control) bool { return m.Type == "USER_KICKED" })
+	if kicked.ServerID != srv.ID {
+		t.Fatalf("USER_KICKED server = %d, want %d", kicked.ServerID, srv.ID)
+	}
+	sendTest(t, memberConn, protocol.Control{Type: "LIST_SERVERS"})
+	list := awaitControl(t, memberConn, "LIST_SERVERS ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK"
+	})
+	for _, s := range list.Servers {
+		if s.ID == srv.ID {
+			t.Fatalf("kicked server %d still listed", srv.ID)
+		}
+	}
+
+	// Ban: the member gets USER_BANNED, disappears from the roster, and can no
+	// longer rejoin with the same invite code.
+	if _, err := serverStore.JoinServer(ctx, memberUser.ID, srv.InviteCode); err != nil {
+		t.Fatalf("rejoin after kick: %v", err)
+	}
+	sendTest(t, ownerConn, protocol.Control{Type: "BAN_USER_FROM_SERVER", ServerID: srv.ID, UserID: memberUser.ID})
+	awaitControl(t, ownerConn, "BAN ACK", func(m protocol.Control) bool { return m.Type == "ACK" })
+	banned := awaitControl(t, memberConn, "USER_BANNED", func(m protocol.Control) bool { return m.Type == "USER_BANNED" })
+	if banned.ServerID != srv.ID {
+		t.Fatalf("USER_BANNED server = %d, want %d", banned.ServerID, srv.ID)
+	}
+
+	sendTest(t, ownerConn, protocol.Control{Type: "LIST_MEMBERS", ServerID: srv.ID})
+	roster := awaitControl(t, ownerConn, "LIST_MEMBERS ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.ServerMembers != nil
+	})
+	for _, m := range roster.ServerMembers {
+		if m.ID == memberUser.ID {
+			t.Fatalf("banned user %d still in roster", memberUser.ID)
+		}
+	}
+
+	sendTest(t, memberConn, protocol.Control{Type: "JOIN_SERVER", InviteCode: srv.InviteCode})
+	if e := awaitControl(t, memberConn, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != servers.ErrBanned.Error() {
+		t.Fatalf("banned rejoin error = %q, want %q", e.Error, servers.ErrBanned.Error())
+	}
+}
+
+// TestIntegrationMakeAdmin: only the owner may promote a member, the roster
+// reports the new role, and the promotion is pushed to the other sessions.
+func TestIntegrationMakeAdmin(t *testing.T) {
+	store, db := testStore(t)
+	owner := fmt.Sprintf("ma_%d", time.Now().UnixNano())
+	member := owner + "_m"
+	const password = "integration-password-123"
+	serverName := fmt.Sprintf("ma_%d", time.Now().UnixNano())
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := db.ExecContext(ctx, "DELETE FROM users WHERE LOWER(username) IN (LOWER($1), LOWER($2))", owner, member); err != nil {
+			t.Logf("cleanup users %s/%s: %v", owner, member, err)
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := store.Register(ctx, owner, owner+"@example.test", password); err != nil {
+		t.Fatalf("Register owner: %v", err)
+	}
+	if err := store.Register(ctx, member, member+"@example.test", password); err != nil {
+		t.Fatalf("Register member: %v", err)
+	}
+	ownerUser, err := store.Authenticate(ctx, owner, password)
+	if err != nil {
+		t.Fatalf("Authenticate owner: %v", err)
+	}
+	memberUser, err := store.Authenticate(ctx, member, password)
+	if err != nil {
+		t.Fatalf("Authenticate member: %v", err)
+	}
+
+	serverStore := servers.NewStore(db)
+	srv, err := serverStore.CreateServer(ctx, ownerUser.ID, serverName)
+	if err != nil {
+		t.Fatalf("CreateServer: %v", err)
+	}
+	if _, err := serverStore.JoinServer(ctx, memberUser.ID, srv.InviteCode); err != nil {
+		t.Fatalf("JoinServer: %v", err)
+	}
+
+	ltcp, _ := net.Listen("tcp", "127.0.0.1:0")
+	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	defer ltcp.Close()
+	defer ludp.Close()
+	serveTest(t, ltcp, ludp, store, serverStore)
+
+	ownerConn := dialControl(t, ltcp.Addr().String(), 0x8888, 0, owner, owner+"@example.test", password, false)
+	defer ownerConn.Close()
+	memberConn := dialControl(t, ltcp.Addr().String(), 0x9999, 0, member, member+"@example.test", password, false)
+	defer memberConn.Close()
+
+	// A member cannot promote themselves.
+	sendTest(t, memberConn, protocol.Control{Type: "MAKE_SERVER_ADMIN", ServerID: srv.ID, UserID: memberUser.ID})
+	if e := awaitControl(t, memberConn, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error == "" {
+		t.Fatal("member promotion was accepted")
+	}
+
+	// The owner promotes the member, who is told the roster is stale.
+	sendTest(t, ownerConn, protocol.Control{Type: "MAKE_SERVER_ADMIN", ServerID: srv.ID, UserID: memberUser.ID})
+	awaitControl(t, ownerConn, "MAKE_SERVER_ADMIN ACK", func(m protocol.Control) bool { return m.Type == "ACK" })
+	changed := awaitControl(t, memberConn, "SERVER_MEMBERS_CHANGED", func(m protocol.Control) bool {
+		return m.Type == "SERVER_MEMBERS_CHANGED"
+	})
+	if changed.ServerID != srv.ID {
+		t.Fatalf("SERVER_MEMBERS_CHANGED server = %d, want %d", changed.ServerID, srv.ID)
+	}
+
+	sendTest(t, ownerConn, protocol.Control{Type: "LIST_MEMBERS", ServerID: srv.ID})
+	roster := awaitControl(t, ownerConn, "LIST_MEMBERS ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.ServerMembers != nil
+	})
+	var found bool
+	for _, m := range roster.ServerMembers {
+		if m.ID == memberUser.ID {
+			found = true
+			if !m.Admin {
+				t.Fatalf("member %d is not reported as admin: %+v", memberUser.ID, m)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("promoted user %d missing from roster", memberUser.ID)
+	}
+
+	// The owner demotes the member again; the roster drops the admin flag.
+	sendTest(t, ownerConn, protocol.Control{Type: "MAKE_SERVER_MEMBER", ServerID: srv.ID, UserID: memberUser.ID})
+	awaitControl(t, ownerConn, "MAKE_SERVER_MEMBER ACK", func(m protocol.Control) bool { return m.Type == "ACK" })
+	changed = awaitControl(t, memberConn, "SERVER_MEMBERS_CHANGED", func(m protocol.Control) bool {
+		return m.Type == "SERVER_MEMBERS_CHANGED"
+	})
+	if changed.ServerID != srv.ID {
+		t.Fatalf("SERVER_MEMBERS_CHANGED server = %d, want %d", changed.ServerID, srv.ID)
+	}
+
+	sendTest(t, ownerConn, protocol.Control{Type: "LIST_MEMBERS", ServerID: srv.ID})
+	roster = awaitControl(t, ownerConn, "LIST_MEMBERS ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.ServerMembers != nil
+	})
+	for _, m := range roster.ServerMembers {
+		if m.ID == memberUser.ID && m.Admin {
+			t.Fatalf("demoted member %d still reported as admin: %+v", memberUser.ID, m)
+		}
+	}
+}
+
 // TestIntegrationRoster: JOIN returns who is already there, the others are told
 // about joins, state changes and leaves, and an SSRC can't be claimed twice.
 func TestIntegrationRoster(t *testing.T) {
@@ -488,5 +697,109 @@ func TestIntegrationRoster(t *testing.T) {
 	b.Close() // a dropped TCP link must clear the roster too
 	if l := awaitControl(t, a, "MEMBER_LEFT", func(m protocol.Control) bool { return m.Type == "MEMBER_LEFT" }); l.SSRC != 0x2222 || l.ChannelID != ch.ChannelID {
 		t.Fatalf("A got %+v", l)
+	}
+}
+
+// TestIntegrationAdminModeration: an admin may kick plain members, but not the
+// owner or another admin; a plain member may not kick anyone.
+func TestIntegrationAdminModeration(t *testing.T) {
+	store, db := testStore(t)
+	const password = "integration-password-123"
+	base := fmt.Sprintf("am_%d", time.Now().UnixNano())
+	names := []string{base + "_o", base + "_a", base + "_b", base + "_m"} // owner, admin, admin2, member
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, n := range names {
+			if _, err := db.ExecContext(ctx, "DELETE FROM users WHERE LOWER(username) = LOWER($1)", n); err != nil {
+				t.Logf("cleanup user %s: %v", n, err)
+			}
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ids := make([]int, len(names))
+	for i, n := range names {
+		if err := store.Register(ctx, n, n+"@example.test", password); err != nil {
+			t.Fatalf("Register %s: %v", n, err)
+		}
+		u, err := store.Authenticate(ctx, n, password)
+		if err != nil {
+			t.Fatalf("Authenticate %s: %v", n, err)
+		}
+		ids[i] = u.ID
+	}
+	owner, admin, admin2, member := ids[0], ids[1], ids[2], ids[3]
+
+	ss := servers.NewStore(db)
+	srv, err := ss.CreateServer(ctx, owner, base)
+	if err != nil {
+		t.Fatalf("CreateServer: %v", err)
+	}
+	for _, id := range ids[1:] {
+		if _, err := ss.JoinServer(ctx, id, srv.InviteCode); err != nil {
+			t.Fatalf("JoinServer: %v", err)
+		}
+	}
+	for _, id := range []int{admin, admin2} {
+		if err := ss.MakeAdmin(ctx, owner, srv.ID, id); err != nil {
+			t.Fatalf("MakeAdmin: %v", err)
+		}
+	}
+
+	if err := ss.KickUser(ctx, member, srv.ID, admin); err == nil {
+		t.Fatal("plain member kicked an admin")
+	}
+	if err := ss.KickUser(ctx, admin, srv.ID, owner); err == nil {
+		t.Fatal("admin kicked the owner")
+	}
+	if err := ss.BanUser(ctx, admin, srv.ID, admin2); err == nil {
+		t.Fatal("admin banned another admin")
+	}
+	if err := ss.BanUser(ctx, admin, srv.ID, member); err != nil {
+		t.Fatalf("admin could not ban a member: %v", err)
+	}
+
+	// Banned members show up for admins only, and admins may unban them.
+	if err := ss.UnbanUser(ctx, member, srv.ID, member); !errors.Is(err, servers.ErrForbidden) {
+		t.Fatalf("banned member unban-self error = %v, want ErrForbidden", err)
+	}
+	list, err := ss.ListMembers(ctx, srv.ID, admin)
+	if err != nil {
+		t.Fatalf("ListMembers: %v", err)
+	}
+	var sawBanned bool
+	for _, m := range list {
+		if m.ID == member && m.Banned {
+			sawBanned = true
+		}
+	}
+	if !sawBanned {
+		t.Fatal("admin does not see the banned member")
+	}
+	if err := ss.UnbanUser(ctx, admin, srv.ID, member); err != nil {
+		t.Fatalf("admin could not unban: %v", err)
+	}
+	if err := ss.UnbanUser(ctx, admin, srv.ID, member); !errors.Is(err, servers.ErrNotFound) {
+		t.Fatalf("second unban error = %v, want ErrNotFound", err)
+	}
+
+	// Rename and new channels: owner and admins only; delete: owner only.
+	if _, err := ss.UpdateServer(ctx, admin, srv.ID, base+"_renamed"); err != nil {
+		t.Fatalf("admin could not rename: %v", err)
+	}
+	if _, err := ss.CreateChannel(ctx, "from-admin", 2, srv.ID, admin); err != nil {
+		t.Fatalf("admin could not add a channel: %v", err)
+	}
+	if _, err := ss.UpdateServer(ctx, member, srv.ID, base+"_hack"); !errors.Is(err, servers.ErrForbidden) {
+		t.Fatalf("member rename error = %v, want ErrForbidden", err)
+	}
+	if _, err := ss.CreateChannel(ctx, "from-member", 2, srv.ID, member); !errors.Is(err, servers.ErrForbidden) {
+		t.Fatalf("member channel error = %v, want ErrForbidden", err)
+	}
+	if err := ss.DeleteServer(ctx, admin, srv.ID); err == nil {
+		t.Fatal("admin deleted the server")
 	}
 }

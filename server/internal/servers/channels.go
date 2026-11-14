@@ -27,6 +27,11 @@ type ChannelType struct {
 func (s *ServerStore) CreateChannel(ctx context.Context, channelName string, channelType int, serverID int, createdBy int) (*Channel, error) {
 	now := time.Now().UTC()
 
+	// Only the owner and the admins add channels.
+	if err := canManage(ctx, s.db, serverID, createdBy); err != nil {
+		return nil, err
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -85,6 +90,7 @@ func (s *ServerStore) VoiceChannelForUser(ctx context.Context, channelID, userID
 				OR EXISTS (
 					SELECT 1 FROM server_members m
 					WHERE m.server_id = c.server_id AND m.user_id = $2
+					  AND COALESCE(m.banned, false) = false
 				)
 		  )
 	`

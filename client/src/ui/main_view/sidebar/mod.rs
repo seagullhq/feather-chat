@@ -43,6 +43,8 @@ impl super::MainView {
         let server = self.servers.get(self.server);
         let view = cx.entity();
         div()
+            .id("sidebar")
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| this.members_hover(0, *hovered, cx)))
             .w(px(WIDTH))
             .flex_none()
             .h_full()
@@ -118,6 +120,11 @@ impl super::MainView {
                                 .child(s.name.clone()),
                         )
                         .child(
+                            ToolButton::new("server-members-btn", "Members", "users").on_click(
+                                cx.listener(|this, _, _, cx| this.toggle_members_panel(cx)),
+                            ),
+                        )
+                        .child(
                             Dropdown::new(
                                 "server-menu",
                                 ToolButton::new("server-menu-btn", "", "dots-three").on_click(
@@ -140,13 +147,15 @@ impl super::MainView {
                             .entry("user-plus", "Invite", |_, _, _| {
                                 // TODO: invita persone
                             })
-                            .entry(
-                                "plus",
-                                "Add new channel",
-                                cx.listener(|this, _, window, cx| {
-                                    this.set_adding_channel(true, window, cx)
-                                }),
-                            )
+                            .when(s.can_manage(), |d| {
+                                d.entry(
+                                    "plus",
+                                    "Add new channel",
+                                    cx.listener(|this, _, window, cx| {
+                                        this.set_adding_channel(true, window, cx)
+                                    }),
+                                )
+                            })
                             .entry(
                                 "sliders-horizontal",
                                 "Manage server",

@@ -43,6 +43,26 @@ pub(super) enum Command {
         name: String,
         channel_type: i32,
     },
+    KickUser {
+        server_id: i64,
+        user_id: i64,
+    },
+    BanUser {
+        server_id: i64,
+        user_id: i64,
+    },
+    UnbanUser {
+        server_id: i64,
+        user_id: i64,
+    },
+    MakeAdmin {
+        server_id: i64,
+        user_id: i64,
+    },
+    MakeMember {
+        server_id: i64,
+        user_id: i64,
+    },
 }
 
 /// Handle to the authenticated control session. Cloning it shares the same
@@ -128,6 +148,36 @@ impl Control {
                 name,
                 channel_type,
             })
+            .is_ok()
+    }
+
+    pub fn kick_user(&self, server_id: i64, user_id: i64) -> bool {
+        self.tx
+            .try_send(Command::KickUser { server_id, user_id })
+            .is_ok()
+    }
+
+    pub fn make_user_admin(&self, server_id: i64, user_id: i64) -> bool {
+        self.tx
+            .try_send(Command::MakeAdmin { server_id, user_id })
+            .is_ok()
+    }
+
+    pub fn make_user_member(&self, server_id: i64, user_id: i64) -> bool {
+        self.tx
+            .try_send(Command::MakeMember { server_id, user_id })
+            .is_ok()
+    }
+
+    pub fn unban_user(&self, server_id: i64, user_id: i64) -> bool {
+        self.tx
+            .try_send(Command::UnbanUser { server_id, user_id })
+            .is_ok()
+    }
+
+    pub fn ban_user(&self, server_id: i64, user_id: i64) -> bool {
+        self.tx
+            .try_send(Command::BanUser { server_id, user_id })
             .is_ok()
     }
 }

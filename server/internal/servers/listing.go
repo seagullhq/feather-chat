@@ -15,6 +15,7 @@ func (s *ServerStore) ListForUser(ctx context.Context, userID int) ([]Server, er
 		   OR EXISTS (
 				SELECT 1 FROM server_members m
 				WHERE m.server_id = s.id AND m.user_id = $1
+				  AND COALESCE(m.banned, false) = false
 		   )
 		ORDER BY s.created_at DESC, s.id DESC
 	`
@@ -60,6 +61,7 @@ func (s *ServerStore) ListChannels(ctx context.Context, serverID, userID int) ([
 				OR EXISTS (
 					SELECT 1 FROM server_members m
 					WHERE m.server_id = c.server_id AND m.user_id = $2
+					  AND COALESCE(m.banned, false) = false
 				)
 		  )
 		ORDER BY c.created_at ASC, c.id ASC

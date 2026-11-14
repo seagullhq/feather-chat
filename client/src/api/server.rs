@@ -109,8 +109,14 @@ pub(super) fn list_channel_types(session: &mut Session) -> Result<Vec<ChannelTyp
 /// One person of a server, as returned by `LIST_MEMBERS`.
 #[derive(Clone)]
 pub struct ServerMember {
+    pub id: i64,
     pub name: String,
     pub owner: bool,
+    pub admin: bool,
+    /// The logged-in user's own row.
+    pub me: bool,
+    /// Banned from the server; only owner/admin get these rows.
+    pub banned: bool,
 }
 
 pub(super) fn list_members(
@@ -124,11 +130,77 @@ pub(super) fn list_members(
         .flatten()
         .filter_map(|m| {
             Some(ServerMember {
+                id: m["id"].as_i64().unwrap_or(0),
                 name: m["username"].as_str()?.to_string(),
                 owner: m["owner"].as_bool().unwrap_or(false),
+                admin: m["admin"].as_bool().unwrap_or(false),
+                me: m["me"].as_bool().unwrap_or(false),
+                banned: m["banned"].as_bool().unwrap_or(false),
             })
         })
         .collect())
+}
+
+pub(super) fn kick_user(session: &mut Session, server_id: i64, user_id: i64) -> Result<(), String> {
+    session
+        .call(json!({
+            "type": "KICK_USER_FROM_SERVER",
+            "serverId": server_id,
+            "userId": user_id
+        }))
+        .map(|_| ())
+}
+
+pub(super) fn ban_user(session: &mut Session, server_id: i64, user_id: i64) -> Result<(), String> {
+    session
+        .call(json!({
+            "type": "BAN_USER_FROM_SERVER",
+            "serverId": server_id,
+            "userId": user_id
+        }))
+        .map(|_| ())
+}
+
+pub(super) fn unban_user(
+    session: &mut Session,
+    server_id: i64,
+    user_id: i64,
+) -> Result<(), String> {
+    session
+        .call(json!({
+            "type": "UNBAN_USER_FROM_SERVER",
+            "serverId": server_id,
+            "userId": user_id
+        }))
+        .map(|_| ())
+}
+
+pub(super) fn make_admin(
+    session: &mut Session,
+    server_id: i64,
+    user_id: i64,
+) -> Result<(), String> {
+    session
+        .call(json!({
+            "type": "MAKE_SERVER_ADMIN",
+            "serverId": server_id,
+            "userId": user_id
+        }))
+        .map(|_| ())
+}
+
+pub(super) fn make_member(
+    session: &mut Session,
+    server_id: i64,
+    user_id: i64,
+) -> Result<(), String> {
+    session
+        .call(json!({
+            "type": "MAKE_SERVER_MEMBER",
+            "serverId": server_id,
+            "userId": user_id
+        }))
+        .map(|_| ())
 }
 
 pub(super) fn list_channels(

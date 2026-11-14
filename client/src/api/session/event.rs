@@ -48,6 +48,10 @@ pub enum Event {
     },
     /// Rename or delete refused (not the owner, name taken, ...).
     ServerEditFailed(String),
+    /// You were kicked or banned from a server: it leaves the sidebar.
+    RemovedFromServer {
+        server_id: i64,
+    },
     /// The account is gone: the login must be forgotten.
     UserDeleted,
     /// The user chose to sign out (sent by the settings window).

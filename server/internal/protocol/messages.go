@@ -26,6 +26,9 @@ type Control struct {
 	ChannelTypeList []ChannelTypeSummary  `json:"channelTypes,omitempty"`
 	Channels        []ChannelSummary      `json:"channels,omitempty"`
 	ServerMembers   []ServerMemberSummary `json:"serverMembers,omitempty"`
+	UserID          int                   `json:"userId,omitempty"`
+	TargetUserID    int                   `json:"targetUserId,omitempty"`
+	User            int                   `json:"user,omitempty"`
 }
 
 // ServerMemberSummary is one person of a server, for the members list.
@@ -33,6 +36,9 @@ type ServerMemberSummary struct {
 	ID       int    `json:"id"`
 	Username string `json:"username"`
 	Owner    bool   `json:"owner"`
+	Admin    bool   `json:"admin"`
+	Me       bool   `json:"me"`
+	Banned   bool   `json:"banned"`
 }
 
 // ServerSummary is the server identity the client needs to rebuild its sidebar.

@@ -84,7 +84,7 @@ func (s *Server) handleListMembers(c *client, msg protocol.Control) {
 	}
 	summaries := make([]protocol.ServerMemberSummary, 0, len(list))
 	for _, m := range list {
-		summaries = append(summaries, protocol.ServerMemberSummary{ID: m.ID, Username: m.Username, Owner: m.Owner})
+		summaries = append(summaries, protocol.ServerMemberSummary{ID: m.ID, Username: m.Username, Owner: m.Owner, Admin: m.Admin, Me: m.Me, Banned: m.Banned})
 	}
 	c.send(protocol.Control{Type: "ACK", ServerMembers: summaries})
 }
@@ -111,6 +111,14 @@ func (s *Server) handleCreateChannel(c *client, msg protocol.Control) {
 	if err != nil {
 		if errors.Is(err, servers.ErrTaken) {
 			c.sendError(servers.ErrTaken.Error())
+			return
+		}
+		if errors.Is(err, servers.ErrForbidden) {
+			c.sendError("only the owner and admins can add channels")
+			return
+		}
+		if errors.Is(err, servers.ErrNotFound) {
+			c.sendError("server not found")
 			return
 		}
 		log.Printf("[CREATION] failed to create channel: %v", err)

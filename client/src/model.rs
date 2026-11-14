@@ -58,6 +58,14 @@ pub struct Server {
     pub viewing: usize,
 }
 
+impl Server {
+    /// Owner or admin: may rename the server and add channels. `members` is
+    /// filled by `load_channels`, so this is false until the list arrives.
+    pub fn can_manage(&self) -> bool {
+        self.owner || self.members.iter().any(|m| m.me && m.admin)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

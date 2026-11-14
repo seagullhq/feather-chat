@@ -17,7 +17,7 @@ fn port_lock() -> MutexGuard<'static, ()> {
 fn login_flow() {
     let _guard = port_lock();
     let l = TcpListener::bind(("127.0.0.1", CONTROL_PORT)).unwrap();
-    std::thread::spawn(move || {
+    let server = std::thread::spawn(move || {
         let (mut s, _) = l.accept().unwrap();
         let m = read_frame(&mut s).unwrap();
         assert_eq!(m["type"], "LOGIN");
@@ -74,13 +74,14 @@ fn login_flow() {
         _ => panic!("expected ChannelTypesListed"),
     }
     assert!(matches!(rx.recv_blocking().unwrap(), Event::Disconnected));
+    server.join().unwrap();
 }
 
 #[test]
 fn create_server_flow() {
     let _guard = port_lock();
     let l = TcpListener::bind(("127.0.0.1", CONTROL_PORT)).unwrap();
-    std::thread::spawn(move || {
+    let server = std::thread::spawn(move || {
         let (mut s, _) = l.accept().unwrap();
         let m = read_frame(&mut s).unwrap();
         assert_eq!(m["type"], "LOGIN");
@@ -144,4 +145,75 @@ fn create_server_flow() {
             _ => panic!("unexpected event"),
         }
     }
+    server.join().unwrap();
+}
+
+#[test]
+fn change_role_flow() {
+    let _guard = port_lock();
+    let l = TcpListener::bind(("127.0.0.1", CONTROL_PORT)).unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut s, _) = l.accept().unwrap();
+        let m = read_frame(&mut s).unwrap();
+        assert_eq!(m["type"], "LOGIN");
+        write_frame(&mut s, &json!({"type":"ACK","name":"bob"})).unwrap();
+        let m = read_frame(&mut s).unwrap();
+        assert_eq!(m["type"], "HELLO");
+        write_frame(&mut s, &json!({"type":"ACK","ssrc":m["ssrc"]})).unwrap();
+        let m = read_frame(&mut s).unwrap();
+        assert_eq!(m["type"], "LIST_SERVERS");
+        write_frame(&mut s, &json!({"type":"ACK","servers":[]})).unwrap();
+        let m = read_frame(&mut s).unwrap();
+        assert_eq!(m["type"], "LIST_CHANNEL_TYPES");
+        write_frame(
+            &mut s,
+            &json!({"type":"ACK","channelTypes":[{"id":2,"name":"voice"}]}),
+        )
+        .unwrap();
+        let m = read_frame(&mut s).unwrap();
+        assert_eq!(m["type"], "MAKE_SERVER_ADMIN");
+        assert_eq!(m["serverId"], 7);
+        assert_eq!(m["userId"], 9);
+        write_frame(&mut s, &json!({"type":"ACK"})).unwrap();
+        let m = read_frame(&mut s).unwrap();
+        assert_eq!(m["type"], "MAKE_SERVER_MEMBER");
+        assert_eq!(m["serverId"], 7);
+        assert_eq!(m["userId"], 9);
+        write_frame(&mut s, &json!({"type":"ACK"})).unwrap();
+        // Keep the socket open so the ACK is read before the Disconnected event.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    });
+    let (tx, rx) = async_channel::unbounded();
+    let control = spawn(
+        "127.0.0.1".into(),
+        Request::Login {
+            identifier: "bob".into(),
+            password: "x".into(),
+        },
+        tx,
+    );
+    assert!(matches!(rx.recv_blocking().unwrap(), Event::AuthOk));
+    assert!(matches!(
+        rx.recv_blocking().unwrap(),
+        Event::ServersListed(servers) if servers.is_empty()
+    ));
+    for promote in [true, false] {
+        let sent = if promote {
+            control.make_user_admin(7, 9)
+        } else {
+            control.make_user_member(7, 9)
+        };
+        assert!(sent);
+        loop {
+            match rx.recv_blocking().unwrap() {
+                Event::MembersChanged { server_id } => {
+                    assert_eq!(server_id, 7);
+                    break;
+                }
+                Event::ChannelTypesListed(_) | Event::Disconnected => continue,
+                _ => panic!("unexpected event"),
+            }
+        }
+    }
+    server.join().unwrap();
 }
