@@ -46,9 +46,8 @@ pub fn open_settings(cx: &mut App) {
             return;
         }
     }
-    let opts = // Dialog: owned by the main window and blocks it while open (these are
-    // the app's important settings). Credits stays a plain window.
-    window_opts(
+    // Dialog: owned by the main window, so it stays above it.
+    let opts = window_opts(
         "Settings",
         (560., 480.),
         (440., 360.),
