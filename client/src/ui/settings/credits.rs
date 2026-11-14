@@ -57,11 +57,12 @@ pub(super) fn open_credits(cx: &mut App) {
             return;
         }
     }
+    // Dialog like settings: stays above the main window.
     let opts = window_opts(
         "Credits",
         (720., 640.),
         (480., 420.),
-        WindowKind::Normal,
+        WindowKind::Dialog,
         cx,
     );
     if let Ok(handle) = cx.open_window(opts, |window, cx| {
