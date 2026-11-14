@@ -211,6 +211,11 @@ fn commands(
                 }
             }
             Command::ListFriends => send_friends(&mut session, &events),
+            Command::SearchUsers { query } => {
+                if let Ok(users) = friends::search_users(&mut session, &query) {
+                    let _ = events.send_blocking(Event::UsersFound { query, users });
+                }
+            }
             Command::AddFriend { username } => match friends::add_friend(&mut session, &username) {
                 Ok(()) => {
                     let _ = events.send_blocking(Event::FriendRequested);

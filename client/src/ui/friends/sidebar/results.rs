@@ -71,30 +71,27 @@ impl FriendsView {
                 d.child(div().px_1().text_color(t.muted).child(empty))
             });
 
-        // Anyone not already related to you can be sent a request.
-        let known = |r: Option<Relation>| {
-            self.friends
-                .iter()
-                .any(|f| f.name.eq_ignore_ascii_case(query) && r.is_none_or(|r| r == f.relation))
-        };
-        let sent = known(Some(Relation::Outgoing));
-        let add = (!query.is_empty() && !known(None) || sent).then(|| {
-            let name = query.to_string();
+        // Search hits you have no relation with yet can be sent a request.
+        let strangers: Vec<_> = self
+            .found
+            .iter()
+            .filter(|f| f.relation == Relation::Stranger)
+            .collect();
+        let add = (!strangers.is_empty()).then(|| {
             div()
                 .flex()
                 .flex_col()
                 .gap_1()
                 .child(heading("Add friend", t.muted))
-                .child(row(&name).child(if sent {
-                    div()
-                        .text_color(t.muted)
-                        .child("Request sent")
-                        .into_any_element()
-                } else {
-                    ToolButton::new("send-request", "Send request", "plus")
-                        .color(t.accent)
-                        .on_click(cx.listener(move |this, _, _, cx| this.request(name.clone(), cx)))
-                        .into_any_element()
+                .children(strangers.iter().map(|f| {
+                    let name = f.name.clone();
+                    row(&f.name).child(
+                        ToolButton::new(("send-request", f.id as u64), "Send request", "plus")
+                            .color(t.accent)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.request(name.clone(), cx)
+                            })),
+                    )
                 }))
         });
 

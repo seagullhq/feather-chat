@@ -313,6 +313,9 @@ impl Root {
             Event::FriendsListed(list) => self
                 .friends
                 .update(cx, |view, cx| view.set_friends(list, cx)),
+            Event::UsersFound { query, users } => self
+                .friends
+                .update(cx, |view, cx| view.set_found(query, users, cx)),
             Event::FriendsChanged => self.friends.update(cx, |view, _| view.refresh()),
             Event::FriendRequested => self.friends.update(cx, |view, cx| view.on_requested(cx)),
             Event::FriendFailed(m) => self.friends.update(cx, |view, cx| view.on_failed(m, cx)),

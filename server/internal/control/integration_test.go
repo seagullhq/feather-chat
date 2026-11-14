@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -764,6 +765,18 @@ func TestIntegrationFriendRequest(t *testing.T) {
 	sendTest(t, c, protocol.Control{Type: "SEND_FRIENDSHIP_REQUEST", Username: addressee})
 	if e := awaitControl(t, c, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != friends.ErrAlreadyExists.Error() {
 		t.Fatalf("duplicate request error = %q, want %q", e.Error, friends.ErrAlreadyExists.Error())
+	}
+
+	sendTest(t, c, protocol.Control{Type: "FETCH_FRIENDSHIP_REQUEST"})
+	f := awaitControl(t, c, "FETCH ACK", func(m protocol.Control) bool { return m.Type == "ACK" && len(m.Friends) > 0 })
+	if len(f.Friends) != 1 || f.Friends[0].ID != ids[addressee] || f.Friends[0].Relation != "outgoing" {
+		t.Fatalf("fetch = %+v, want one outgoing request to %d", f.Friends, ids[addressee])
+	}
+
+	sendTest(t, c, protocol.Control{Type: "SEARCH_USERS", Query: strings.ToUpper(base) + "_B"})
+	u := awaitControl(t, c, "SEARCH ACK", func(m protocol.Control) bool { return m.Type == "ACK" && len(m.Users) > 0 })
+	if len(u.Users) != 1 || u.Users[0].ID != ids[addressee] || u.Users[0].Relation != "outgoing" {
+		t.Fatalf("search = %+v, want %d as outgoing", u.Users, ids[addressee])
 	}
 
 	sendTest(t, c, protocol.Control{Type: "SEND_FRIENDSHIP_REQUEST", Username: "missing_" + base})
