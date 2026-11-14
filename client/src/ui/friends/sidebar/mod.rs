@@ -1,4 +1,6 @@
-//! Friends sidebar: the DM list (more sections to come).
+//! Friends sidebar: search box, your friends and requests to new people.
+
+mod results;
 
 use super::{FriendsView, SIDEBAR_WIDTH};
 use crate::theme::ThemeExt;
@@ -7,6 +9,7 @@ use gpui::{prelude::*, *};
 impl FriendsView {
     pub(super) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
+        let query = self.search.read(cx).text().trim().to_string();
         div()
             .id("friends-sidebar")
             .w(px(SIDEBAR_WIDTH))
@@ -26,7 +29,7 @@ impl FriendsView {
                     .text_size(px(18.))
                     .child("Friends"),
             )
-            // TODO: friends list / DMs
-            .child(div().px_1().text_color(t.muted).child("No friends yet."))
+            .child(self.search.clone())
+            .child(self.results(&query, cx))
     }
 }
