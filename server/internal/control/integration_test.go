@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -696,5 +697,85 @@ func TestIntegrationRoster(t *testing.T) {
 	b.Close() // a dropped TCP link must clear the roster too
 	if l := awaitControl(t, a, "MEMBER_LEFT", func(m protocol.Control) bool { return m.Type == "MEMBER_LEFT" }); l.SSRC != 0x2222 || l.ChannelID != ch.ChannelID {
 		t.Fatalf("A got %+v", l)
+	}
+}
+
+// TestIntegrationAdminModeration: an admin may kick plain members, but not the
+// owner or another admin; a plain member may not kick anyone.
+func TestIntegrationAdminModeration(t *testing.T) {
+	store, db := testStore(t)
+	const password = "integration-password-123"
+	base := fmt.Sprintf("am_%d", time.Now().UnixNano())
+	names := []string{base + "_o", base + "_a", base + "_b", base + "_m"} // owner, admin, admin2, member
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, n := range names {
+			if _, err := db.ExecContext(ctx, "DELETE FROM users WHERE LOWER(username) = LOWER($1)", n); err != nil {
+				t.Logf("cleanup user %s: %v", n, err)
+			}
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ids := make([]int, len(names))
+	for i, n := range names {
+		if err := store.Register(ctx, n, n+"@example.test", password); err != nil {
+			t.Fatalf("Register %s: %v", n, err)
+		}
+		u, err := store.Authenticate(ctx, n, password)
+		if err != nil {
+			t.Fatalf("Authenticate %s: %v", n, err)
+		}
+		ids[i] = u.ID
+	}
+	owner, admin, admin2, member := ids[0], ids[1], ids[2], ids[3]
+
+	ss := servers.NewStore(db)
+	srv, err := ss.CreateServer(ctx, owner, base)
+	if err != nil {
+		t.Fatalf("CreateServer: %v", err)
+	}
+	for _, id := range ids[1:] {
+		if _, err := ss.JoinServer(ctx, id, srv.InviteCode); err != nil {
+			t.Fatalf("JoinServer: %v", err)
+		}
+	}
+	for _, id := range []int{admin, admin2} {
+		if err := ss.MakeAdmin(ctx, owner, srv.ID, id); err != nil {
+			t.Fatalf("MakeAdmin: %v", err)
+		}
+	}
+
+	if err := ss.KickUser(ctx, member, srv.ID, admin); err == nil {
+		t.Fatal("plain member kicked an admin")
+	}
+	if err := ss.KickUser(ctx, admin, srv.ID, owner); err == nil {
+		t.Fatal("admin kicked the owner")
+	}
+	if err := ss.BanUser(ctx, admin, srv.ID, admin2); err == nil {
+		t.Fatal("admin banned another admin")
+	}
+	if err := ss.BanUser(ctx, admin, srv.ID, member); err != nil {
+		t.Fatalf("admin could not ban a member: %v", err)
+	}
+
+	// Rename and new channels: owner and admins only; delete: owner only.
+	if _, err := ss.UpdateServer(ctx, admin, srv.ID, base+"_renamed"); err != nil {
+		t.Fatalf("admin could not rename: %v", err)
+	}
+	if _, err := ss.CreateChannel(ctx, "from-admin", 2, srv.ID, admin); err != nil {
+		t.Fatalf("admin could not add a channel: %v", err)
+	}
+	if _, err := ss.UpdateServer(ctx, member, srv.ID, base+"_hack"); !errors.Is(err, servers.ErrForbidden) {
+		t.Fatalf("member rename error = %v, want ErrForbidden", err)
+	}
+	if _, err := ss.CreateChannel(ctx, "from-member", 2, srv.ID, member); !errors.Is(err, servers.ErrForbidden) {
+		t.Fatalf("member channel error = %v, want ErrForbidden", err)
+	}
+	if err := ss.DeleteServer(ctx, admin, srv.ID); err == nil {
+		t.Fatal("admin deleted the server")
 	}
 }

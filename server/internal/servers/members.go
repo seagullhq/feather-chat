@@ -8,6 +8,8 @@ type ServerMember struct {
 	Username string
 	Owner    bool
 	Admin    bool
+	// Me marks the requesting user's own row.
+	Me bool
 }
 
 // ListMembers returns the people of a server, owner first. Same visibility
@@ -21,7 +23,8 @@ func (s *ServerStore) ListMembers(ctx context.Context, serverID, userID int) ([]
 					WHERE sp.server_id = m.server_id
 					  AND sp.user_id = u.id
 					  AND pl.permission_id = 'ADMIN'
-		       )
+		       ),
+		       u.id = $2
 		FROM server_members m
 		JOIN users u ON u.id = m.user_id
 		JOIN servers sv ON sv.id = m.server_id
@@ -42,7 +45,7 @@ func (s *ServerStore) ListMembers(ctx context.Context, serverID, userID int) ([]
 	members := []ServerMember{}
 	for rows.Next() {
 		var m ServerMember
-		if err := rows.Scan(&m.ID, &m.Username, &m.Owner, &m.Admin); err != nil {
+		if err := rows.Scan(&m.ID, &m.Username, &m.Owner, &m.Admin, &m.Me); err != nil {
 			return nil, err
 		}
 		members = append(members, m)

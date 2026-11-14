@@ -113,6 +113,8 @@ pub struct ServerMember {
     pub name: String,
     pub owner: bool,
     pub admin: bool,
+    /// The logged-in user's own row.
+    pub me: bool,
 }
 
 pub(super) fn list_members(
@@ -130,6 +132,7 @@ pub(super) fn list_members(
                 name: m["username"].as_str()?.to_string(),
                 owner: m["owner"].as_bool().unwrap_or(false),
                 admin: m["admin"].as_bool().unwrap_or(false),
+                me: m["me"].as_bool().unwrap_or(false),
             })
         })
         .collect())

@@ -39,6 +39,70 @@ func inviteCode(length int) (string, error) {
 	return string(b), nil
 }
 
+type queryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// isAdmin reports whether userID is a non-banned member holding ADMIN on serverID.
+func isAdmin(ctx context.Context, q queryer, serverID, userID int) (bool, error) {
+	var ok bool
+	err := q.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM server_permissions sp
+			JOIN permission_levels pl ON pl.id = sp.perm_level
+			JOIN server_members m ON m.server_id = sp.server_id AND m.user_id = sp.user_id
+			WHERE sp.server_id = $1 AND sp.user_id = $2
+			  AND pl.permission_id = 'ADMIN'
+			  AND COALESCE(m.banned, false) = false
+		)`, serverID, userID).Scan(&ok)
+	return ok, err
+}
+
+// canManage allows the owner and the admins of a server (rename, new channels).
+func canManage(ctx context.Context, q queryer, serverID, userID int) error {
+	var ownerID int
+	if err := q.QueryRowContext(ctx,
+		`SELECT owner_id FROM servers WHERE id = $1`, serverID,
+	).Scan(&ownerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if userID == ownerID {
+		return nil
+	}
+	if ok, err := isAdmin(ctx, q, serverID, userID); err != nil {
+		return err
+	} else if !ok {
+		return ErrForbidden
+	}
+	return nil
+}
+
+// canModerate says whether requesterID may kick or ban targetUserID. The owner
+// may act on anyone but themselves-as-owner; an admin only on plain members
+// (not the owner, not other admins). Everyone else may not.
+func canModerate(ctx context.Context, tx *sql.Tx, serverID, ownerID, requesterID, targetUserID int) error {
+	if targetUserID == ownerID {
+		return ErrCantDelete
+	}
+	if requesterID == ownerID {
+		return nil
+	}
+	if ok, err := isAdmin(ctx, tx, serverID, requesterID); err != nil {
+		return err
+	} else if !ok {
+		return ErrCantDelete
+	}
+	if ok, err := isAdmin(ctx, tx, serverID, targetUserID); err != nil {
+		return err
+	} else if ok {
+		return ErrCantDelete
+	}
+	return nil
+}
+
 // KickUser removes a user from a server.
 func (s *ServerStore) KickUser(ctx context.Context, requesterID int, serverID int, targetUserID int) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -59,12 +123,8 @@ func (s *ServerStore) KickUser(ctx context.Context, requesterID int, serverID in
 		return err
 	}
 
-	if requesterID != ownerID {
-		return ErrCantDelete
-	}
-
-	if targetUserID == ownerID {
-		return ErrCantDelete
+	if err := canModerate(ctx, tx, serverID, ownerID, requesterID, targetUserID); err != nil {
+		return err
 	}
 
 	res, err := tx.ExecContext(ctx,
@@ -106,12 +166,8 @@ func (s *ServerStore) BanUser(ctx context.Context, requesterID int, serverID int
 		return err
 	}
 
-	if requesterID != ownerID {
-		return ErrCantDelete
-	}
-
-	if targetUserID == ownerID {
-		return ErrCantDelete
+	if err := canModerate(ctx, tx, serverID, ownerID, requesterID, targetUserID); err != nil {
+		return err
 	}
 
 	res, err := tx.ExecContext(ctx,
@@ -257,38 +313,29 @@ func (s *ServerStore) DeleteServer(ctx context.Context, userID int, serverID int
 	return tx.Commit()
 }
 
-// UpdateServer renames a server, but only when userID owns it.
+// UpdateServer renames a server. The owner and the admins may.
 func (s *ServerStore) UpdateServer(ctx context.Context, userID int, serverID int, name string) (*Server, error) {
+	if err := canManage(ctx, s.db, serverID, userID); err != nil {
+		return nil, err
+	}
 	var srv Server
 	err := s.db.QueryRowContext(ctx, `
 		UPDATE servers
 		SET name = $1, updated_at = now()
-		WHERE id = $2 AND owner_id = $3
+		WHERE id = $2
 		RETURNING id, name, invite_code
-	`, name, serverID, userID).Scan(&srv.ID, &srv.Name, &srv.InviteCode)
+	`, name, serverID).Scan(&srv.ID, &srv.Name, &srv.InviteCode)
 	if err == nil {
 		return &srv, nil
 	}
-
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation
 		return nil, ErrTaken
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-
-	// No row updated: missing server or caller isn't the owner
-	var exists bool
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM servers WHERE id = $1)`, serverID,
-	).Scan(&exists); err != nil {
-		return nil, err
-	}
-	if !exists {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	return nil, ErrForbidden
+	return nil, err
 }
 
 // CreateServer inserts a server plus its owner's membership in one

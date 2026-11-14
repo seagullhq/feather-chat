@@ -10,6 +10,8 @@ impl MainView {
     pub(super) fn load_channels(&self) {
         if let (Some(c), Some(s)) = (&self.control, self.servers.get(self.server)) {
             c.list_channels(s.id);
+            // Also tells us our own role, which gates rename / new channels.
+            c.list_members(s.id);
         }
     }
 

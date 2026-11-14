@@ -147,13 +147,15 @@ impl super::MainView {
                             .entry("user-plus", "Invite", |_, _, _| {
                                 // TODO: invita persone
                             })
-                            .entry(
-                                "plus",
-                                "Add new channel",
-                                cx.listener(|this, _, window, cx| {
-                                    this.set_adding_channel(true, window, cx)
-                                }),
-                            )
+                            .when(s.can_manage(), |d| {
+                                d.entry(
+                                    "plus",
+                                    "Add new channel",
+                                    cx.listener(|this, _, window, cx| {
+                                        this.set_adding_channel(true, window, cx)
+                                    }),
+                                )
+                            })
                             .entry(
                                 "sliders-horizontal",
                                 "Manage server",

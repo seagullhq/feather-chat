@@ -17,6 +17,7 @@ impl super::super::MainView {
         cx: &mut Context<Self>,
     ) -> Div {
         let owner = server.owner;
+        let manage = server.can_manage();
         let confirm = self.sheet_ui.confirm_delete;
         let copied = self.sheet_ui.copied;
         div()
@@ -29,7 +30,7 @@ impl super::super::MainView {
                     .clone()
                     .map(|e| div().text_color(t.danger).child(e)),
             )
-            .when(owner, |d| {
+            .when(manage, |d| {
                 d.child(
                     div()
                         .flex()
@@ -56,7 +57,7 @@ impl super::super::MainView {
                         ),
                 )
             })
-            .when(!owner, |d| {
+            .when(!manage, |d| {
                 d.child(
                     div()
                         .flex()
