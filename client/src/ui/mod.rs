@@ -3,7 +3,9 @@
 
 mod auth;
 mod components;
-mod main_view;
+mod friends;
+mod servers;
+mod status_bar;
 
 mod markdown;
 mod settings;
@@ -12,12 +14,14 @@ mod userfiles;
 mod window_frame;
 
 pub use auth::{AuthRequest, AuthView};
-pub use main_view::MainView;
+pub use friends::FriendsView;
+pub use servers::{ServersEvent, ServersView};
 pub use settings::{
     Session, close_settings, on_password_update_failed, on_password_updated, on_user_delete_failed,
     on_username_update_failed, on_username_updated,
 };
-pub use titlebar::Titlebar;
+pub use status_bar::StatusBar;
+pub use titlebar::{Mode, Titlebar};
 pub use window_frame::{frame as window_frame, round_inner, round_inner_bl};
 
 use gpui::{App, KeyBinding, actions, prelude::*};

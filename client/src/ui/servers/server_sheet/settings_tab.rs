@@ -7,7 +7,7 @@ use crate::theme::Theme;
 use gpui::{prelude::*, *};
 use std::time::Duration;
 
-impl super::super::MainView {
+impl super::super::ServersView {
     pub(super) fn settings_tab(
         &self,
         t: &Theme,
