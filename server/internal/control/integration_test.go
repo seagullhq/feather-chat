@@ -516,6 +516,94 @@ func TestIntegrationKickAndBan(t *testing.T) {
 	}
 }
 
+// TestIntegrationMakeAdmin: only the owner may promote a member, the roster
+// reports the new role, and the promotion is pushed to the other sessions.
+func TestIntegrationMakeAdmin(t *testing.T) {
+	store, db := testStore(t)
+	owner := fmt.Sprintf("ma_%d", time.Now().UnixNano())
+	member := owner + "_m"
+	const password = "integration-password-123"
+	serverName := fmt.Sprintf("ma_%d", time.Now().UnixNano())
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := db.ExecContext(ctx, "DELETE FROM users WHERE LOWER(username) IN (LOWER($1), LOWER($2))", owner, member); err != nil {
+			t.Logf("cleanup users %s/%s: %v", owner, member, err)
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := store.Register(ctx, owner, owner+"@example.test", password); err != nil {
+		t.Fatalf("Register owner: %v", err)
+	}
+	if err := store.Register(ctx, member, member+"@example.test", password); err != nil {
+		t.Fatalf("Register member: %v", err)
+	}
+	ownerUser, err := store.Authenticate(ctx, owner, password)
+	if err != nil {
+		t.Fatalf("Authenticate owner: %v", err)
+	}
+	memberUser, err := store.Authenticate(ctx, member, password)
+	if err != nil {
+		t.Fatalf("Authenticate member: %v", err)
+	}
+
+	serverStore := servers.NewStore(db)
+	srv, err := serverStore.CreateServer(ctx, ownerUser.ID, serverName)
+	if err != nil {
+		t.Fatalf("CreateServer: %v", err)
+	}
+	if _, err := serverStore.JoinServer(ctx, memberUser.ID, srv.InviteCode); err != nil {
+		t.Fatalf("JoinServer: %v", err)
+	}
+
+	ltcp, _ := net.Listen("tcp", "127.0.0.1:0")
+	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	defer ltcp.Close()
+	defer ludp.Close()
+	serveTest(t, ltcp, ludp, store, serverStore)
+
+	ownerConn := dialControl(t, ltcp.Addr().String(), 0x8888, 0, owner, owner+"@example.test", password, false)
+	defer ownerConn.Close()
+	memberConn := dialControl(t, ltcp.Addr().String(), 0x9999, 0, member, member+"@example.test", password, false)
+	defer memberConn.Close()
+
+	// A member cannot promote themselves.
+	sendTest(t, memberConn, protocol.Control{Type: "MAKE_SERVER_ADMIN", ServerID: srv.ID, UserID: memberUser.ID})
+	if e := awaitControl(t, memberConn, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error == "" {
+		t.Fatal("member promotion was accepted")
+	}
+
+	// The owner promotes the member, who is told the roster is stale.
+	sendTest(t, ownerConn, protocol.Control{Type: "MAKE_SERVER_ADMIN", ServerID: srv.ID, UserID: memberUser.ID})
+	awaitControl(t, ownerConn, "MAKE_SERVER_ADMIN ACK", func(m protocol.Control) bool { return m.Type == "ACK" })
+	changed := awaitControl(t, memberConn, "SERVER_MEMBERS_CHANGED", func(m protocol.Control) bool {
+		return m.Type == "SERVER_MEMBERS_CHANGED"
+	})
+	if changed.ServerID != srv.ID {
+		t.Fatalf("SERVER_MEMBERS_CHANGED server = %d, want %d", changed.ServerID, srv.ID)
+	}
+
+	sendTest(t, ownerConn, protocol.Control{Type: "LIST_MEMBERS", ServerID: srv.ID})
+	roster := awaitControl(t, ownerConn, "LIST_MEMBERS ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.ServerMembers != nil
+	})
+	var found bool
+	for _, m := range roster.ServerMembers {
+		if m.ID == memberUser.ID {
+			found = true
+			if !m.Admin {
+				t.Fatalf("member %d is not reported as admin: %+v", memberUser.ID, m)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("promoted user %d missing from roster", memberUser.ID)
+	}
+}
+
 // TestIntegrationRoster: JOIN returns who is already there, the others are told
 // about joins, state changes and leaves, and an SSRC can't be claimed twice.
 func TestIntegrationRoster(t *testing.T) {

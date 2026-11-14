@@ -19,6 +19,7 @@ impl super::MainView {
             .items_center()
             .gap_2()
             .pr_2()
+            .overflow_hidden()
             .h(px(26.))
             .border_t_1()
             .border_color(t.line)
@@ -60,6 +61,7 @@ impl super::MainView {
                 };
                 div()
                     .id("ping")
+                    .flex_none()
                     .flex()
                     .items_center()
                     .gap_1()
@@ -68,25 +70,30 @@ impl super::MainView {
                     .mr_2()
             }))
             .child(icon("server", 14., t.muted))
-            .child(self.hostname.clone())
+            .child(label(self.hostname.clone()))
             .child(div().w(px(6.)))
             .child(icon("microphone", 14., t.muted))
-            .child(
+            .child(label(
                 crate::media::PREFS
                     .input
                     .lock()
                     .unwrap()
                     .clone()
                     .map_or_else(|| self.mic_name.clone(), Into::into),
-            )
+            ))
             .child(icon("speaker-high", 14., t.muted))
-            .child(
+            .child(label(
                 crate::media::PREFS
                     .output
                     .lock()
                     .unwrap()
                     .clone()
                     .map_or_else(|| self.audio_name.clone(), Into::into),
-            )
+            ))
     }
+}
+
+/// Text that shrinks and ends in "…" instead of overflowing on narrow windows.
+fn label(text: impl Into<SharedString>) -> Div {
+    div().min_w_0().truncate().child(text.into())
 }

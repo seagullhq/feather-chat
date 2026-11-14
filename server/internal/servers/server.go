@@ -135,6 +135,78 @@ func (s *ServerStore) BanUser(ctx context.Context, requesterID int, serverID int
 	return tx.Commit()
 }
 
+// MakeAdmin grants the ADMIN permission to a member of a server. Only the
+// owner may promote someone, and the owner already outranks every role.
+func (s *ServerStore) MakeAdmin(ctx context.Context, requesterID int, serverID int, targetUserID int) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var ownerID int
+	err = tx.QueryRowContext(ctx,
+		`SELECT owner_id FROM servers WHERE id = $1 FOR UPDATE`,
+		serverID,
+	).Scan(&ownerID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+
+	if requesterID != ownerID {
+		return ErrForbidden
+	}
+
+	if targetUserID == ownerID {
+		return ErrForbidden
+	}
+
+	var isMember bool
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(
+			SELECT 1 FROM server_members
+			WHERE server_id = $1 AND user_id = $2
+			  AND COALESCE(banned, false) = false
+		)`, serverID, targetUserID,
+	).Scan(&isMember); err != nil {
+		return err
+	}
+	if !isMember {
+		return ErrNotFound
+	}
+
+	var permID int
+	err = tx.QueryRowContext(ctx,
+		`SELECT id FROM permission_levels WHERE permission_id = 'ADMIN'`,
+	).Scan(&permID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+
+	// Keep a single permission row per member, so promoting twice is a no-op.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM server_permissions WHERE server_id = $1 AND user_id = $2`,
+		serverID, targetUserID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO server_permissions (perm_level, user_id, server_id)
+		 VALUES ($1, $2, $3)`,
+		permID, targetUserID, serverID,
+	); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
 // DeleteServer removes a server, but only when userID owns it.
 func (s *ServerStore) DeleteServer(ctx context.Context, userID int, serverID int) error {
 	tx, err := s.db.BeginTx(ctx, nil)

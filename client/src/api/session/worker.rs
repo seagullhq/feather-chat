@@ -192,6 +192,11 @@ fn commands(
                     let _ = events.send_blocking(Event::MembersChanged { server_id });
                 }
             }
+            Command::MakeAdmin { server_id, user_id } => {
+                if server::make_admin(&mut session, server_id, user_id).is_ok() {
+                    let _ = events.send_blocking(Event::MembersChanged { server_id });
+                }
+            }
         }
     }
     session.shutdown();

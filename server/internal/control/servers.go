@@ -215,6 +215,41 @@ func (s *Server) handleServerBan(c *client, msg protocol.Control) {
 	c.send(protocol.Control{Type: "ACK"})
 }
 
+// handleServerMakeAdmin answers MAKE_SERVER_ADMIN by granting the ADMIN role
+// to a member of a server owned by the session's user.
+func (s *Server) handleServerMakeAdmin(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	if msg.ServerID <= 0 {
+		c.sendError("server id required")
+		return
+	}
+	targetUserID := msg.UserID
+	if targetUserID == 0 {
+		targetUserID = msg.TargetUserID
+	}
+	if targetUserID == 0 {
+		targetUserID = msg.User
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	if err := s.servers.MakeAdmin(ctx, c.sess.UserID, msg.ServerID, targetUserID); err != nil {
+		switch {
+		case errors.Is(err, servers.ErrNotFound):
+			c.sendError("member not found")
+		case errors.Is(err, servers.ErrForbidden):
+			c.sendError("only the owner can make admins")
+		default:
+			log.Printf("[MAKE ADMIN] failed to promote %d in server %d: %v", targetUserID, msg.ServerID, err)
+			c.sendError("make admin failed")
+		}
+		return
+	}
+	s.notifyServer(msg.ServerID, c.sess, protocol.Control{Type: "SERVER_MEMBERS_CHANGED", ServerID: msg.ServerID})
+	c.send(protocol.Control{Type: "ACK"})
+}
+
 // handleJoinServer answers JOIN_SERVER by adding the user to the server
 // that owns the invite code.
 func (s *Server) handleJoinServer(c *client, msg protocol.Control) {

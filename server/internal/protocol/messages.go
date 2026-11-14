@@ -36,6 +36,7 @@ type ServerMemberSummary struct {
 	ID       int    `json:"id"`
 	Username string `json:"username"`
 	Owner    bool   `json:"owner"`
+	Admin    bool   `json:"admin"`
 }
 
 // ServerSummary is the server identity the client needs to rebuild its sidebar.

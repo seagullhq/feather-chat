@@ -112,6 +112,7 @@ pub struct ServerMember {
     pub id: i64,
     pub name: String,
     pub owner: bool,
+    pub admin: bool,
 }
 
 pub(super) fn list_members(
@@ -128,6 +129,7 @@ pub(super) fn list_members(
                 id: m["id"].as_i64().unwrap_or(0),
                 name: m["username"].as_str()?.to_string(),
                 owner: m["owner"].as_bool().unwrap_or(false),
+                admin: m["admin"].as_bool().unwrap_or(false),
             })
         })
         .collect())
@@ -147,6 +149,20 @@ pub(super) fn ban_user(session: &mut Session, server_id: i64, user_id: i64) -> R
     session
         .call(json!({
             "type": "BAN_USER_FROM_SERVER",
+            "serverId": server_id,
+            "userId": user_id
+        }))
+        .map(|_| ())
+}
+
+pub(super) fn make_admin(
+    session: &mut Session,
+    server_id: i64,
+    user_id: i64,
+) -> Result<(), String> {
+    session
+        .call(json!({
+            "type": "MAKE_SERVER_ADMIN",
             "serverId": server_id,
             "userId": user_id
         }))

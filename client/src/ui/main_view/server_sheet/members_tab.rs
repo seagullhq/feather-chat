@@ -49,8 +49,21 @@ impl super::super::MainView {
                             cx.notify();
                         })
                     })
-                    .item(item("Make admin"))
-                    .item(item("Make member"))
+                    .item(item("Make admin").on_click(cx.listener({
+                        move |this, _, _, _| {
+                            if let (Some(c), Some(s)) =
+                                (&this.control, this.servers.get(this.server))
+                            {
+                                c.make_user_admin(s.id, member_id);
+                            }
+                        }
+                    })))
+                    .item(item("Make member").on_click(cx.listener({
+                        move |this, _, _, _| {
+                            // TODO: wire once the server exposes a demote endpoint.
+                            let _ = (&this.control, this.servers.get(this.server));
+                        }
+                    })))
                     .item(item("Kick").on_click(cx.listener({
                         move |this, _, _, _| {
                             if let (Some(c), Some(s)) =
@@ -77,7 +90,16 @@ impl super::super::MainView {
                     .gap_3()
                     .child(Avatar::new(&m.name, 28.))
                     .child(div().flex_1().child(m.name.clone()))
-                    .child(label(t, if m.owner { "Owner" } else { "Member" }))
+                    .child(label(
+                        t,
+                        if m.owner {
+                            "Owner"
+                        } else if m.admin {
+                            "Admin"
+                        } else {
+                            "Member"
+                        },
+                    ))
                     .children(menu)
             }))
     }

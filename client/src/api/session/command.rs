@@ -51,6 +51,10 @@ pub(super) enum Command {
         server_id: i64,
         user_id: i64,
     },
+    MakeAdmin {
+        server_id: i64,
+        user_id: i64,
+    },
 }
 
 /// Handle to the authenticated control session. Cloning it shares the same
@@ -142,6 +146,12 @@ impl Control {
     pub fn kick_user(&self, server_id: i64, user_id: i64) -> bool {
         self.tx
             .try_send(Command::KickUser { server_id, user_id })
+            .is_ok()
+    }
+
+    pub fn make_user_admin(&self, server_id: i64, user_id: i64) -> bool {
+        self.tx
+            .try_send(Command::MakeAdmin { server_id, user_id })
             .is_ok()
     }
 
