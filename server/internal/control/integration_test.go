@@ -18,6 +18,7 @@ import (
 	"github.com/seagullhq/feather-chat/server/internal/accounts"
 	"github.com/seagullhq/feather-chat/server/internal/config"
 	"github.com/seagullhq/feather-chat/server/internal/control"
+	"github.com/seagullhq/feather-chat/server/internal/friends"
 	"github.com/seagullhq/feather-chat/server/internal/migrations"
 	"github.com/seagullhq/feather-chat/server/internal/protocol"
 	"github.com/seagullhq/feather-chat/server/internal/room"
@@ -52,11 +53,11 @@ func testStore(t *testing.T) (*accounts.Store, *sql.DB) {
 
 // serveTest starts a whole server (control TCP + media UDP) on the given
 // listeners, the same way main wires it.
-func serveTest(t *testing.T, ltcp net.Listener, ludp net.PacketConn, users *accounts.Store, serverStore *servers.ServerStore) {
+func serveTest(t *testing.T, ltcp net.Listener, ludp net.PacketConn, users *accounts.Store, serverStore *servers.ServerStore, friendStore *friends.ServerStore) {
 	t.Helper()
 	rooms := room.NewManager()
 	go rooms.ServeUDP(ludp.(*net.UDPConn))
-	go control.New(users, serverStore, rooms).Serve(ltcp)
+	go control.New(users, serverStore, friendStore, rooms).Serve(ltcp)
 }
 
 // dialControl connects a real client over TCP: HELLO, then LOGIN (and REGISTER
@@ -161,7 +162,7 @@ func TestIntegrationTwoClients(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	serveTest(t, ltcp, ludp, store, servers.NewStore(db))
+	serveTest(t, ltcp, ludp, store, servers.NewStore(db), friends.NewStore(db))
 
 	udpAddr := ludp.LocalAddr().String()
 
@@ -294,7 +295,7 @@ func TestIntegrationCreateServer(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	serveTest(t, ltcp, ludp, store, serverStore)
+	serveTest(t, ltcp, ludp, store, serverStore, friends.NewStore(db))
 
 	// CREATE_SERVER before LOGIN must be refused.
 	anon, err := net.Dial("tcp", ltcp.Addr().String())
@@ -379,7 +380,7 @@ func TestIntegrationListServers(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	serveTest(t, ltcp, ludp, store, serverStore)
+	serveTest(t, ltcp, ludp, store, serverStore, friends.NewStore(db))
 
 	// LIST_SERVERS before LOGIN must be refused.
 	anon, err := net.Dial("tcp", ltcp.Addr().String())
@@ -465,7 +466,7 @@ func TestIntegrationKickAndBan(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	serveTest(t, ltcp, ludp, store, serverStore)
+	serveTest(t, ltcp, ludp, store, serverStore, friends.NewStore(db))
 
 	ownerConn := dialControl(t, ltcp.Addr().String(), 0x6666, 0, owner, owner+"@example.test", password, false)
 	defer ownerConn.Close()
@@ -564,7 +565,7 @@ func TestIntegrationMakeAdmin(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	serveTest(t, ltcp, ludp, store, serverStore)
+	serveTest(t, ltcp, ludp, store, serverStore, friends.NewStore(db))
 
 	ownerConn := dialControl(t, ltcp.Addr().String(), 0x8888, 0, owner, owner+"@example.test", password, false)
 	defer ownerConn.Close()
@@ -639,7 +640,7 @@ func TestIntegrationRoster(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	serveTest(t, ltcp, ludp, store, servers.NewStore(db))
+	serveTest(t, ltcp, ludp, store, servers.NewStore(db), friends.NewStore(db))
 	addr := ltcp.Addr().String()
 
 	a := dialControl(t, addr, 0x1111, 0, username, username+"@example.test", password, true)
@@ -697,6 +698,77 @@ func TestIntegrationRoster(t *testing.T) {
 	b.Close() // a dropped TCP link must clear the roster too
 	if l := awaitControl(t, a, "MEMBER_LEFT", func(m protocol.Control) bool { return m.Type == "MEMBER_LEFT" }); l.SSRC != 0x2222 || l.ChannelID != ch.ChannelID {
 		t.Fatalf("A got %+v", l)
+	}
+}
+
+// TestIntegrationFriendRequest: SEND_FRIENDSHIP_REQUEST stores a pending request
+// and refuses a duplicate.
+func TestIntegrationFriendRequest(t *testing.T) {
+	store, db := testStore(t)
+	const password = "integration-password-123"
+	base := fmt.Sprintf("fr_%d", time.Now().UnixNano())
+	requester, addressee := base+"_a", base+"_b"
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, n := range []string{requester, addressee} {
+			if _, err := db.ExecContext(ctx, "DELETE FROM users WHERE LOWER(username) = LOWER($1)", n); err != nil {
+				t.Logf("cleanup user %s: %v", n, err)
+			}
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ids := make(map[string]int, 2)
+	for _, n := range []string{requester, addressee} {
+		if err := store.Register(ctx, n, n+"@example.test", password); err != nil {
+			t.Fatalf("Register %s: %v", n, err)
+		}
+		u, err := store.Authenticate(ctx, n, password)
+		if err != nil {
+			t.Fatalf("Authenticate %s: %v", n, err)
+		}
+		ids[n] = u.ID
+	}
+
+	ltcp, _ := net.Listen("tcp", "127.0.0.1:0")
+	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	defer ltcp.Close()
+	defer ludp.Close()
+	serveTest(t, ltcp, ludp, store, servers.NewStore(db), friends.NewStore(db))
+
+	c := dialControl(t, ltcp.Addr().String(), 0xAAAA, 0, requester, requester+"@example.test", password, false)
+	defer c.Close()
+
+	sendTest(t, c, protocol.Control{Type: "SEND_FRIENDSHIP_REQUEST", Username: addressee})
+	ack := awaitControl(t, c, "SEND_FRIENDSHIP_REQUEST ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.TargetUserID == ids[addressee]
+	})
+	if ack.TargetUserID != ids[addressee] {
+		t.Fatalf("ACK target = %d, want %d", ack.TargetUserID, ids[addressee])
+	}
+
+	var status string
+	if err := db.QueryRowContext(ctx,
+		`SELECT status FROM friendships WHERE requester_id = $1 AND addressee_id = $2`,
+		ids[requester], ids[addressee],
+	).Scan(&status); err != nil {
+		t.Fatalf("stored friend request: %v", err)
+	}
+	if status != "PENDING" {
+		t.Fatalf("stored status = %q, want PENDING", status)
+	}
+
+	sendTest(t, c, protocol.Control{Type: "SEND_FRIENDSHIP_REQUEST", Username: addressee})
+	if e := awaitControl(t, c, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != friends.ErrAlreadyExists.Error() {
+		t.Fatalf("duplicate request error = %q, want %q", e.Error, friends.ErrAlreadyExists.Error())
+	}
+
+	sendTest(t, c, protocol.Control{Type: "SEND_FRIENDSHIP_REQUEST", Username: "missing_" + base})
+	if e := awaitControl(t, c, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != accounts.ErrNotFound.Error() {
+		t.Fatalf("unknown user error = %q, want %q", e.Error, accounts.ErrNotFound.Error())
 	}
 }
 

@@ -37,14 +37,16 @@ pub(super) fn server_face(t: &Theme, name: &str, icon: Option<&std::path::PathBu
     }
 }
 
-impl super::MainView {
+impl super::ServersView {
     pub(super) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let server = self.servers.get(self.server);
         let view = cx.entity();
         div()
             .id("sidebar")
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| this.members_hover(0, *hovered, cx)))
+            .on_hover(
+                cx.listener(|this, hovered: &bool, _, cx| this.members_hover(0, *hovered, cx)),
+            )
             .w(px(WIDTH))
             .flex_none()
             .h_full()

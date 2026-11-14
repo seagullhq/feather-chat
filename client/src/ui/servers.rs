@@ -1,8 +1,8 @@
-//! The main window: servers sidebar, stage, controls and server sheet.
+//! The servers screen: servers sidebar, stage, controls and server sheet.
 //!
 //! This file holds the entity, its constructors and the render tree; the
 //! behaviour is grouped by concern in the private submodules:
-//! `servers` (control-plane state), `members` (voice roster and levels) and
+//! `state` (control-plane state), `members` (voice roster and levels) and
 //! `modals` (open/close state of the add dialogs).
 
 use super::{ToggleDeafen, ToggleMute, tab_nav};
@@ -22,30 +22,31 @@ mod members;
 mod members_panel;
 mod modals;
 mod server_sheet;
-mod servers;
 mod sidebar;
 mod stage;
-mod status_bar;
+mod state;
 
 use add_channel::AddChannelModal;
 use add_server::{AddServerModal, ModalEvent};
 
-fn default_mic() -> String {
-    use cpal::traits::HostTrait;
-    cpal::default_host()
-        .default_input_device()
-        .and_then(|d| media::dev_name(&d))
-        .unwrap_or_else(|| "No microphone".into())
+/// Tells the shell about things other screens care about.
+pub enum ServersEvent {
+    /// The voice session started (`Some`) or ended (`None`).
+    Media(Option<std::sync::Arc<media::Shared>>),
 }
 
-fn default_audio_device() -> String {
-    use cpal::traits::HostTrait;
-    cpal::default_host()
-        .default_output_device()
-        .and_then(|d| media::dev_name(&d))
-        .unwrap_or_else(|| "No audio device".into())
+impl EventEmitter<ServersEvent> for ServersView {}
+
+/// What a call bar shows about the voice call you are in.
+pub struct CallState {
+    pub channel: SharedString,
+    /// Mic shows "off" when muted or deafened.
+    pub mic_off: bool,
+    pub deafened: bool,
+    pub level: f32,
 }
-pub struct MainView {
+
+pub struct ServersView {
     servers: Vec<Server>,
     /// False until the first server list arrives: the sidebar shows a skeleton.
     servers_loaded: bool,
@@ -53,8 +54,6 @@ pub struct MainView {
     /// (server, channel) you are connected to.
     joined: Option<(usize, usize)>,
     me: Member,
-    mic_name: SharedString,
-    audio_name: SharedString,
     adding: bool,
     adding_channel: bool,
     focus: FocusHandle,
@@ -77,12 +76,11 @@ pub struct MainView {
     title_bottom: Rc<Cell<Pixels>>,
     row_top: Rc<Cell<Pixels>>,
     sheet_focus: FocusHandle,
-    hostname: String,
     /// Levels and mute flags of the running voice session, while joined.
     media: Option<std::sync::Arc<media::Shared>>,
 }
 
-impl MainView {
+impl ServersView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let add = cx.new(AddServerModal::new);
         cx.subscribe_in(
@@ -127,8 +125,6 @@ impl MainView {
             server: 0,
             joined: None,
             me: Member::new("Tu"),
-            mic_name: default_mic().into(),
-            audio_name: default_audio_device().into(),
             adding: false,
             adding_channel: false,
             focus: cx.focus_handle(),
@@ -147,9 +143,14 @@ impl MainView {
             title_bottom: Rc::default(),
             row_top: Rc::default(),
             sheet_focus: cx.focus_handle(),
-            hostname: String::new(),
             media: None,
         }
+    }
+
+    /// Sets the voice session and tells the status bar.
+    fn set_media(&mut self, media: Option<std::sync::Arc<media::Shared>>, cx: &mut Context<Self>) {
+        self.media = media.clone();
+        cx.emit(ServersEvent::Media(media));
     }
 
     pub fn viewing(&self) -> usize {
@@ -175,7 +176,7 @@ impl MainView {
     }
 }
 
-impl Render for MainView {
+impl Render for ServersView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.focused_once {
             self.focused_once = true;
@@ -214,7 +215,6 @@ impl Render for MainView {
                     .children(self.members_panel(cx))
                     .children(self.server_sheet(window, cx)),
             )
-            .child(self.status_bar(window, cx))
             .children(server_modal)
             .children(channel_modal)
     }

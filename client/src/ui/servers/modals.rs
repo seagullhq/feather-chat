@@ -1,9 +1,9 @@
 //! Open/close state of the "add server" and "add channel" dialogs.
 
-use super::MainView;
+use super::ServersView;
 use gpui::{prelude::*, *};
 
-impl MainView {
+impl ServersView {
     pub(super) fn set_adding(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.adding = on;
         if on {
