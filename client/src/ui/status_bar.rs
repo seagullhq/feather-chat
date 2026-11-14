@@ -1,18 +1,83 @@
-use super::super::components::icon;
-use super::super::settings::open_settings;
+//! Bottom bar shared by every screen: settings, ping, host and audio devices.
+
+use super::components::icon;
+use super::settings::open_settings;
+use crate::media;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
 
-impl super::MainView {
+fn default_mic() -> String {
+    use cpal::traits::HostTrait;
+    cpal::default_host()
+        .default_input_device()
+        .and_then(|d| media::dev_name(&d))
+        .unwrap_or_else(|| "No microphone".into())
+}
+
+fn default_audio_device() -> String {
+    use cpal::traits::HostTrait;
+    cpal::default_host()
+        .default_output_device()
+        .and_then(|d| media::dev_name(&d))
+        .unwrap_or_else(|| "No audio device".into())
+}
+
+pub struct StatusBar {
+    hostname: String,
+    mic_name: SharedString,
+    audio_name: SharedString,
+    /// Running voice session, for the ping; set by the servers screen.
+    media: Option<std::sync::Arc<media::Shared>>,
+}
+
+impl StatusBar {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        // The ping changes on its own: repaint once a second.
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(1))
+                    .await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+        Self {
+            hostname: String::new(),
+            mic_name: default_mic().into(),
+            audio_name: default_audio_device().into(),
+            media: None,
+        }
+    }
+
+    pub fn set_hostname(&mut self, host: String, cx: &mut Context<Self>) {
+        self.hostname = host;
+        cx.notify();
+    }
+
+    pub fn set_media(
+        &mut self,
+        media: Option<std::sync::Arc<media::Shared>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.media = media;
+        cx.notify();
+    }
+}
+
+impl Render for StatusBar {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.bar(window, cx)
+    }
+}
+
+impl StatusBar {
     /// Settings on the left; connected server and microphone on the right.
     /// Deliberately small and muted: it is not the focus.
-    pub(super) fn status_bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
-
-        let _server = match self.joined {
-            Some((s, _)) => self.servers[s].name.clone(),
-            None => "No server".into(),
-        };
         div()
             .flex_none()
             .flex()
@@ -26,7 +91,7 @@ impl super::MainView {
             .text_size(t.font_size * 0.92)
             .text_color(t.muted)
             .child(
-                super::super::round_inner_bl(div(), window)
+                super::round_inner_bl(div(), window)
                     .id("settings")
                     .focusable()
                     .tab_stop(true)
@@ -74,7 +139,7 @@ impl super::MainView {
             .child(div().w(px(6.)))
             .child(icon("microphone", 14., t.muted))
             .child(label(
-                crate::media::PREFS
+                media::PREFS
                     .input
                     .lock()
                     .unwrap()
@@ -83,7 +148,7 @@ impl super::MainView {
             ))
             .child(icon("speaker-high", 14., t.muted))
             .child(label(
-                crate::media::PREFS
+                media::PREFS
                     .output
                     .lock()
                     .unwrap()

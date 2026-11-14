@@ -1,8 +1,8 @@
 //! Quick member list: a panel that slides out next to the sidebar and
 //! collapses as soon as the mouse leaves it.
 
-use super::sidebar::WIDTH;
 use super::super::components::Avatar;
+use super::sidebar::WIDTH;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
 use std::time::Duration;
@@ -12,7 +12,7 @@ const PANEL_W: f32 = WIDTH;
 const CLOSE_DELAY: Duration = Duration::from_millis(350);
 const SLIDE: Duration = Duration::from_millis(160);
 
-impl super::MainView {
+impl super::ServersView {
     pub(super) fn toggle_members_panel(&mut self, cx: &mut Context<Self>) {
         if self.members_panel {
             self.close_members_panel(cx);
@@ -66,7 +66,10 @@ impl super::MainView {
     }
 
     pub(super) fn members_panel(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let server = self.servers.get(self.server).filter(|_| self.members_visible)?;
+        let server = self
+            .servers
+            .get(self.server)
+            .filter(|_| self.members_visible)?;
         let opening = self.members_panel;
         let t = cx.theme();
         let (owners, others): (Vec<_>, Vec<_>) = server
@@ -119,7 +122,9 @@ impl super::MainView {
             .bg(t.opaque_panel())
             .border_r_1()
             .border_color(t.line)
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| this.members_hover(1, *hovered, cx)))
+            .on_hover(
+                cx.listener(|this, hovered: &bool, _, cx| this.members_hover(1, *hovered, cx)),
+            )
             .child(
                 div()
                     .id("members-panel-list")
@@ -134,7 +139,11 @@ impl super::MainView {
             )
             .with_animation(
                 // Another id when closing restarts the animation, played backwards.
-                if opening { "members-panel-in" } else { "members-panel-out" },
+                if opening {
+                    "members-panel-in"
+                } else {
+                    "members-panel-out"
+                },
                 Animation::new(SLIDE).with_easing(ease_out_quint()),
                 move |el, d| {
                     let d = if opening { d } else { 1. - d };

@@ -21,11 +21,24 @@ pub fn height(window: &Window) -> Pixels {
     }
 }
 
+/// What the main window shows: servers, or friends with DMs and calls.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    #[default]
+    Servers,
+    Friends,
+}
+
 pub struct Titlebar {
     title: SharedString,
     should_move: bool,
     sheet: bool,
+    /// Servers/Friends toggle, shown only in the main window once logged in.
+    toggle: bool,
+    mode: Mode,
 }
+
+impl EventEmitter<Mode> for Titlebar {}
 
 impl Titlebar {
     pub fn new(title: impl Into<SharedString>) -> Self {
@@ -33,6 +46,15 @@ impl Titlebar {
             title: title.into(),
             should_move: false,
             sheet: false,
+            toggle: false,
+            mode: Mode::default(),
+        }
+    }
+
+    pub fn set_toggle(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.toggle != on {
+            self.toggle = on;
+            cx.notify();
         }
     }
 
@@ -121,6 +143,7 @@ impl Render for Titlebar {
                     d.pl_2()
                 }
             })
+            .when(self.toggle, |d| d.child(self.mode_toggle(cx)))
             .child(
                 div()
                     .flex_1()
@@ -141,6 +164,53 @@ impl Render for Titlebar {
                     )
                 }
             })
+    }
+}
+
+impl Titlebar {
+    fn mode_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme();
+        let button = |id: &'static str, glyph: &'static str, label: &'static str, mode: Mode| {
+            let on = self.mode == mode;
+            div()
+                .id(id)
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap_1p5()
+                .h(px(24.))
+                .px_2()
+                .text_color(if on { t.text } else { t.muted })
+                .rounded(t.radius)
+                .cursor_pointer()
+                .when(on, |d| d.bg(t.fill))
+                .hover(|s| s.bg(t.fill_hover))
+                .child(icon(glyph, 16., if on { t.text } else { t.muted }))
+                .child(label)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    if this.mode != mode {
+                        this.mode = mode;
+                        cx.emit(mode);
+                        cx.notify();
+                    }
+                }))
+        };
+        div()
+            .id("mode-toggle")
+            .flex()
+            .items_center()
+            .gap_1()
+            .px_2()
+            // Keep clicks from starting a window drag.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(button("mode-servers", "server", "Server", Mode::Servers))
+            .child(button(
+                "mode-friends",
+                "chats-teardrop",
+                "Friends",
+                Mode::Friends,
+            ))
     }
 }
 

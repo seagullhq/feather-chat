@@ -1,13 +1,13 @@
 //! Voice roster, levels and mute/deafen state.
 
-use super::MainView;
+use super::{CallState, ServersView};
 use crate::api::RosterMember;
 use crate::media;
 use crate::model::{self, Member};
 use gpui::prelude::*;
 use std::sync::Arc;
 
-impl MainView {
+impl ServersView {
     /// Copies mic and speaker levels from the voice engine into the model.
     pub(super) fn poll_media(&mut self, cx: &mut Context<Self>) {
         let (Some(m), Some((s, c))) = (&self.media, self.joined) else {
@@ -27,6 +27,17 @@ impl MainView {
         cx.notify();
     }
 
+    /// The call you are in, for any screen that shows its controls.
+    pub fn call_state(&self) -> Option<CallState> {
+        let (s, c) = self.joined?;
+        Some(CallState {
+            channel: self.servers.get(s)?.channels.get(c)?.name.clone().into(),
+            mic_off: self.me.muted || self.me.deafened,
+            deafened: self.me.deafened,
+            level: self.me.level,
+        })
+    }
+
     /// Joins the channel being viewed. `joined` is set when the server says yes.
     pub(super) fn join_viewing(&mut self) {
         let (Some(channel), Some(control)) = (self.channel_view(), &self.control) else {
@@ -35,12 +46,12 @@ impl MainView {
         control.join(channel.id, self.me.muted, self.me.deafened);
     }
 
-    pub(super) fn leave(&mut self, cx: &mut Context<Self>) {
+    pub fn leave(&mut self, cx: &mut Context<Self>) {
         if let Some(control) = &self.control {
             control.leave();
         }
         self.joined = None;
-        self.media = None;
+        self.set_media(None, cx);
         self.me.level = 0.;
         cx.notify();
     }
@@ -65,7 +76,7 @@ impl MainView {
         self.servers[si].channels[ci].members =
             members.into_iter().map(Member::from_roster).collect();
         self.joined = Some((si, ci));
-        self.media = media;
+        self.set_media(media, cx);
         cx.notify();
     }
 
@@ -124,7 +135,7 @@ impl MainView {
         }
     }
 
-    pub(super) fn toggle_mute(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_mute(&mut self, cx: &mut Context<Self>) {
         // Unmuting while deafened also undeafens, as the mic shows "off" in both cases.
         if self.me.deafened {
             self.me.deafened = false;
@@ -136,7 +147,7 @@ impl MainView {
         cx.notify();
     }
 
-    pub(super) fn toggle_deafen(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_deafen(&mut self, cx: &mut Context<Self>) {
         self.me.deafened = !self.me.deafened;
         self.sync_state();
         cx.notify();

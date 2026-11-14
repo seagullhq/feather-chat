@@ -1,11 +1,11 @@
 //! Control-plane state: servers, channels and the events that change them.
 
-use super::MainView;
+use super::ServersView;
 use crate::api::{ChannelSummary, ChannelTypeSummary, Control, ServerMember, ServerSummary};
 use crate::model::{self, Member, Server};
 use gpui::prelude::*;
 
-impl MainView {
+impl ServersView {
     /// Asks the control plane for the channels of the selected server.
     pub(super) fn load_channels(&self) {
         if let (Some(c), Some(s)) = (&self.control, self.servers.get(self.server)) {
@@ -45,10 +45,6 @@ impl MainView {
             s.members = members;
             cx.notify();
         }
-    }
-
-    pub fn set_hostname(&mut self, host: String) {
-        self.hostname = host;
     }
 
     pub fn set_control(&mut self, control: Control, cx: &mut Context<Self>) {
@@ -273,7 +269,7 @@ impl MainView {
         self.servers.remove(i);
         self.joined = match self.joined {
             Some((s, _)) if s == i => {
-                self.media = None;
+                self.set_media(None, cx);
                 self.me.level = 0.;
                 None
             }
@@ -302,7 +298,7 @@ impl MainView {
             if let Some(control) = &self.control {
                 control.leave();
             }
-            self.media = None;
+            self.set_media(None, cx);
             self.me.level = 0.;
             self.joined = None;
         }
@@ -323,7 +319,7 @@ impl MainView {
         self.control = None;
         self.servers_loaded = true;
         self.joined = None;
-        self.media = None;
+        self.set_media(None, cx);
         self.add.update(cx, |modal, cx| {
             modal.on_failed("Connection lost.".into(), cx)
         });

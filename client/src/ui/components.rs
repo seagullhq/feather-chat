@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 mod avatar;
 mod button;
+mod call_bar;
 mod dropdown;
 mod field;
 mod modal;
@@ -15,6 +16,7 @@ mod tool_button;
 
 pub use avatar::Avatar;
 pub use button::Button;
+pub use call_bar::CallBar;
 pub use dropdown::{Dropdown, DropdownItem};
 pub use field::Field;
 pub use modal::{Modal, ModalHeader};

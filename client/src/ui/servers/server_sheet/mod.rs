@@ -32,7 +32,7 @@ pub(super) struct SheetUi {
 }
 
 impl SheetUi {
-    pub(super) fn new(cx: &mut Context<super::MainView>) -> Self {
+    pub(super) fn new(cx: &mut Context<super::ServersView>) -> Self {
         Self {
             rename: cx.new(|cx| TextInput::new("Server name", false, cx)),
             confirm_delete: false,
@@ -53,7 +53,7 @@ pub(super) fn label(t: &Theme, s: &'static str) -> Div {
     div().text_color(t.muted).child(s)
 }
 
-impl super::MainView {
+impl super::ServersView {
     /// Opens the sheet on `tab`.
     pub(super) fn open_sheet(
         &mut self,

@@ -2,7 +2,7 @@ use super::super::components::{Avatar, Button};
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
 
-impl super::MainView {
+impl super::ServersView {
     pub(super) fn stage(&self, viewport: Size<Pixels>, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let joined_here = self.joined == Some((self.server, self.viewing()));
