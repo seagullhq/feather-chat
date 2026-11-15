@@ -63,6 +63,15 @@ pub fn open_settings(cx: &mut App) {
     }
 }
 
+/// Opens settings on the Voice page (devices), e.g. from the mic check.
+pub fn open_voice_settings(cx: &mut App) {
+    open_settings(cx);
+    with_settings(cx, |view, _, cx| {
+        view.page = super::Page::Voice;
+        cx.notify();
+    });
+}
+
 /// Runs `f` on the open settings window, if any.
 pub(super) fn with_settings(
     cx: &mut App,

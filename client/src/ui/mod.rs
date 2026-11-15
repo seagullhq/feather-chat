@@ -11,6 +11,7 @@ mod markdown;
 mod settings;
 mod titlebar;
 mod userfiles;
+mod voice_check;
 mod window_frame;
 
 pub use auth::{AuthRequest, AuthView};

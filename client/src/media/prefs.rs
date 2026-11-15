@@ -39,6 +39,15 @@ pub fn dev_name(d: &cpal::Device) -> Option<String> {
     d.description().ok().map(|d| d.name().to_string())
 }
 
+/// Name of the device a voice session would open: the one picked in Settings,
+/// else the OS default. `None` = no such device. Enumerates devices: slow on
+/// some hosts, so don't call it every frame.
+pub fn current_device(input: bool) -> Option<String> {
+    let picked = if input { &PREFS.input } else { &PREFS.output };
+    let name = picked.lock().unwrap().clone();
+    device(&cpal::default_host(), name, input).and_then(|d| dev_name(&d))
+}
+
 /// The named device, else the OS default.
 pub(super) fn device(host: &cpal::Host, name: Option<String>, input: bool) -> Option<cpal::Device> {
     let all = if input {

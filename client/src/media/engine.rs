@@ -38,7 +38,7 @@ impl Engine {
         let (out_tx, out_rx) = rtrb::RingBuffer::<f32>::new(OUT_RING);
 
         let s = shared.clone();
-        let audio = std::thread::spawn(move || audio(s, cap_tx, out_rx));
+        let audio = std::thread::spawn(move || audio(s, true, cap_tx, out_rx));
         let s = shared.clone();
         let worker = std::thread::spawn(move || worker(s, sock, ssrc, cap_rx, out_tx));
         Ok(Self {

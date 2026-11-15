@@ -6,6 +6,7 @@
 //! thread does everything else on a 5 ms loop: ping, receive, encode, mix.
 
 mod audio;
+mod check;
 mod engine;
 mod peer;
 mod prefs;
@@ -17,8 +18,9 @@ mod worker;
 #[cfg(test)]
 mod tests;
 
+pub use check::{MicCheck, Step};
 pub use engine::Engine;
-pub use prefs::{PREFS, dev_name};
+pub use prefs::{PREFS, current_device, dev_name};
 pub use shared::Shared;
 
 use std::time::Duration;

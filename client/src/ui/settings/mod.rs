@@ -12,7 +12,7 @@ mod voice;
 mod window;
 
 pub use account::Session;
-pub use window::open_settings;
+pub use window::{open_settings, open_voice_settings};
 
 use super::components::Tab;
 use super::titlebar::Titlebar;

@@ -34,3 +34,12 @@ fn resampler_keeps_rate_ratio() {
         "pulled {pulled} for 1 s at 96k"
     );
 }
+
+#[test]
+fn test_tone_fades_in_and_out() {
+    use super::check::tone;
+    assert_eq!(tone(0), 0.);
+    let peak = (0..28_800).map(|i| tone(i).abs()).fold(0., f32::max);
+    assert!(peak > 0.2 && peak <= 0.25, "peak {peak}");
+    assert!(tone(28_799).abs() < 0.001, "no click at the end");
+}

@@ -11,7 +11,13 @@ use super::prefs::{PREFS, device};
 use super::resample::{Pull, Push};
 use super::shared::Shared;
 
-pub(super) fn audio(shared: Arc<Shared>, cap: rtrb::Producer<i16>, out: rtrb::Consumer<f32>) {
+/// `mic: false` opens only the speakers (test sound: no reason to hold the mic).
+pub(super) fn audio(
+    shared: Arc<Shared>,
+    mic: bool,
+    cap: rtrb::Producer<i16>,
+    out: rtrb::Consumer<f32>,
+) {
     // ponytail: the rings' ends sit behind a mutex so they outlive a stream
     // rebuild; uncontended, so the callbacks don't notice.
     let (cap, out) = (Arc::new(Mutex::new(cap)), Arc::new(Mutex::new(out)));
@@ -25,16 +31,18 @@ pub(super) fn audio(shared: Arc<Shared>, cap: rtrb::Producer<i16>, out: rtrb::Co
             // Release the old devices before opening the new ones.
             (_mic, _speakers) = (None, None);
             let name = PREFS.input.lock().unwrap().clone();
-            _mic = match device(&host, name, true).map(|d| mic_stream(&d, cap.clone())) {
+            let dev = if mic { device(&host, name, true) } else { None };
+            _mic = match dev.map(|d| mic_stream(&d, cap.clone())) {
                 Some(Ok(s)) => Some(s),
                 Some(Err(e)) => {
                     eprintln!("microphone: {e}");
                     None
                 }
-                None => {
+                None if mic => {
                     eprintln!("microphone: no input device");
                     None
                 }
+                None => None,
             };
             let name = PREFS.output.lock().unwrap().clone();
             _speakers = match device(&host, name, false).map(|d| speaker_stream(&d, out.clone())) {

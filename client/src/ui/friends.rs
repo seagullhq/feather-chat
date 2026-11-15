@@ -1,6 +1,5 @@
 //! The friends screen (titlebar toggle): friends and requests in the
-//! sidebar, and the stage of the open conversation or call (placeholder until
-//! DMs exist).
+//! sidebar; the stage is a mic check until DMs exist.
 
 mod call_bar;
 mod sidebar;
@@ -33,6 +32,8 @@ impl FriendsView {
     pub fn new(servers: Entity<ServersView>, cx: &mut Context<Self>) -> Self {
         // Repaint with the call (mic level, joined / left).
         cx.observe(&servers, |_, _, cx| cx.notify()).detach();
+        let check = servers.read(cx).voice_check();
+        cx.observe(&check, |_, _, cx| cx.notify()).detach();
         let search = cx.new(|cx| TextInput::new("Search or add friends", false, cx));
         // The input repaints itself on typing; repaint the results with it.
         cx.observe(&search, |this, search, cx| {
@@ -119,6 +120,14 @@ impl FriendsView {
         self.error = None;
         if let Some(c) = &self.control {
             c.accept_friend(user_id);
+        }
+        cx.notify();
+    }
+
+    fn decline(&mut self, user_id: i64, cx: &mut Context<Self>) {
+        self.error = None;
+        if let Some(c) = &self.control {
+            c.decline_friend(user_id);
         }
         cx.notify();
     }
