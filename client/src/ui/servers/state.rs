@@ -31,6 +31,26 @@ impl ServersView {
                     members: c.members.into_iter().map(Member::from_roster).collect(),
                 })
                 .collect();
+            // First list since start: reopen the channel saved last time
+            // (nothing to do when the home page was saved).
+            if s.viewing.is_none()
+                && let Some(&Some(id)) = self.last.channels.get(&server_id)
+            {
+                s.viewing = s.channels.iter().position(|c| c.id == id);
+            }
+            // Saved or open channel gone (deleted): fall back to the home page.
+            if s.viewing.is_some_and(|i| i >= s.channels.len())
+                || (s.viewing.is_none()
+                    && self
+                        .last
+                        .channels
+                        .get(&server_id)
+                        .is_some_and(|c| c.is_some()))
+            {
+                s.viewing = None;
+                self.last.channels.insert(server_id, None);
+                self.last.save();
+            }
             cx.notify();
         }
     }
@@ -54,12 +74,17 @@ impl ServersView {
 
     /// Replaces the sidebar with the servers the logged-in user belongs to.
     pub fn set_servers(&mut self, servers: Vec<ServerSummary>, cx: &mut Context<Self>) {
-        let old_viewing: std::collections::HashMap<i64, usize> =
-            self.servers.iter().map(|s| (s.id, s.viewing)).collect();
+        // Keep what each server already had (open view, channels) until the
+        // fresh channel list arrives: no flash of an empty or home page.
+        let mut old: std::collections::HashMap<i64, Server> =
+            self.servers.drain(..).map(|s| (s.id, s)).collect();
         self.servers = servers
             .into_iter()
             .map(|server| {
-                let viewing = old_viewing.get(&server.id).copied().unwrap_or(0);
+                let (viewing, channels) = old
+                    .remove(&server.id)
+                    .map(|s| (s.viewing, s.channels))
+                    .unwrap_or_default();
                 Server {
                     id: server.id,
                     name: server.name,
@@ -67,11 +92,20 @@ impl ServersView {
                     owner: server.owner,
                     members: vec![],
                     icon: None,
-                    channels: vec![],
+                    channels,
                     viewing,
                 }
             })
             .collect();
+        // First list since start: reopen the server saved last time.
+        if !self.servers_loaded
+            && let Some(i) = self
+                .last
+                .server
+                .and_then(|id| self.servers.iter().position(|s| s.id == id))
+        {
+            self.server = i;
+        }
         self.servers_loaded = true;
         self.server = self.server.min(self.servers.len().saturating_sub(1));
         self.joined = None;
@@ -127,7 +161,7 @@ impl ServersView {
                     members: vec![],
                     icon: None,
                     channels: vec![],
-                    viewing: 0,
+                    viewing: None,
                 });
                 self.servers.len() - 1
             }
@@ -187,7 +221,9 @@ impl ServersView {
                 channel_type,
                 members: vec![],
             });
-            server.viewing = created;
+            server.viewing = Some(created);
+            self.last.channels.insert(server_id, Some(id));
+            self.last.save();
         }
         self.add_channel.update(cx, |modal, cx| modal.reset(cx));
         self.adding_channel = false;
@@ -245,7 +281,7 @@ impl ServersView {
             members: vec![],
             icon: None,
             channels: vec![],
-            viewing: 0,
+            viewing: None,
         });
         self.server = self.servers.len() - 1;
         self.joined = None;

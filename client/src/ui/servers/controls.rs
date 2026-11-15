@@ -4,13 +4,16 @@ use gpui::prelude::*;
 
 impl super::ServersView {
     /// Call bar under the stage: join / move buttons for the viewed channel
-    /// plus the controls of the call you are in.
+    /// plus the controls of the call you are in. On a server's home page only
+    /// the call you are in.
     pub(super) fn controls(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let t = cx.theme();
-        let target = (self.server, self.viewing());
-        self.channel_view()?;
+        let target = self.viewing().map(|v| (self.server, v));
         let joined = self.joined.is_some();
         let call = self.call_state();
+        if target.is_none() && call.is_none() {
+            return None;
+        }
 
         // Same widget (and height) as the other bar buttons; accent color marks "Join".
         let join = |label: &'static str, primary: bool, cx: &mut Context<Self>| {
@@ -28,10 +31,10 @@ impl super::ServersView {
                 bar.connected_to(Some(call.channel))
                     .state(call.mic_off, call.deafened, call.level);
         }
-        if !joined {
-            bar = bar.lead(join("Join", true, cx));
-        } else if self.joined != Some(target) {
-            bar = bar.lead(join("Move here", false, cx));
+        match target {
+            Some(_) if !joined => bar = bar.lead(join("Join", true, cx)),
+            Some(_) if self.joined != target => bar = bar.lead(join("Move here", false, cx)),
+            _ => {}
         }
         Some(bar)
     }

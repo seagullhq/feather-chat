@@ -1,11 +1,14 @@
 use super::super::components::{Avatar, Button};
+use super::super::voice_check::compact;
+use super::sidebar::server_face;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
 
 impl super::ServersView {
     pub(super) fn stage(&self, viewport: Size<Pixels>, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
-        let joined_here = self.joined == Some((self.server, self.viewing()));
+        let joined_here =
+            self.viewing().is_some() && self.joined == self.viewing().map(|v| (self.server, v));
         let mut tiles: Vec<(String, f32, bool, bool)> = self
             .channel_view()
             .map(|c| {
@@ -54,14 +57,41 @@ impl super::ServersView {
                         .on_click(cx.listener(|this, _, w, cx| this.set_adding(true, w, cx))),
                 )
                 .into_any_element()
-        } else if self.channel_view().is_none() {
+        } else if self.channel_pending() {
+            div().flex_1().into_any_element()
+        } else if let (None, Some(s)) = (self.channel_view(), self.servers.get(self.server)) {
+            // Server home page. ponytail: fixed layout; a per-server
+            // customizable home (banner, welcome text, links) will go here.
             div()
+                .id("server-home")
                 .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
                 .flex()
+                .flex_col()
                 .items_center()
                 .justify_center()
-                .text_color(t.muted)
-                .child("Nessun canale ancora.")
+                .gap_4()
+                .p_6()
+                .child(
+                    div()
+                        .size(px(72.))
+                        // The face inherits text size: scale the initial with the icon.
+                        .text_size(px(30.))
+                        .child(server_face(&t, &s.name, s.icon.as_ref())),
+                )
+                .child(
+                    div()
+                        .text_size(px(22.))
+                        .font_weight(FontWeight::BOLD)
+                        .child(s.name.clone()),
+                )
+                .child(div().text_color(t.muted).child(if s.channels.is_empty() {
+                    "No channels yet."
+                } else {
+                    "Pick a channel on the left to join."
+                }))
+                .child(compact(&self.voice_check, cx))
                 .into_any_element()
         } else if tiles.is_empty() {
             div()

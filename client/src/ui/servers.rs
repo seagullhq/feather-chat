@@ -5,6 +5,7 @@
 //! `state` (control-plane state), `members` (voice roster and levels) and
 //! `modals` (open/close state of the add dialogs).
 
+use super::voice_check::VoiceCheck;
 use super::{ToggleDeafen, ToggleMute, tab_nav};
 use crate::api::{ChannelTypeSummary, Control};
 use crate::media;
@@ -18,6 +19,7 @@ use std::time::Duration;
 mod add_channel;
 mod add_server;
 mod controls;
+mod last_view;
 mod members;
 mod members_panel;
 mod modals;
@@ -78,10 +80,17 @@ pub struct ServersView {
     sheet_focus: FocusHandle,
     /// Levels and mute flags of the running voice session, while joined.
     media: Option<std::sync::Arc<media::Shared>>,
+    /// Mic check on the server home pages, shared with the friends stage.
+    voice_check: Entity<VoiceCheck>,
+    /// Open server and last channels, saved for the next start.
+    last: last_view::LastView,
 }
 
 impl ServersView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let me = cx.entity().downgrade();
+        let voice_check = cx.new(|_| VoiceCheck::new(me));
+        cx.observe(&voice_check, |_, _, cx| cx.notify()).detach();
         let add = cx.new(AddServerModal::new);
         cx.subscribe_in(
             &add,
@@ -144,7 +153,13 @@ impl ServersView {
             row_top: Rc::default(),
             sheet_focus: cx.focus_handle(),
             media: None,
+            voice_check,
+            last: last_view::LastView::load(),
         }
+    }
+
+    pub fn voice_check(&self) -> Entity<VoiceCheck> {
+        self.voice_check.clone()
     }
 
     /// Sets the voice session and tells the status bar.
@@ -153,26 +168,53 @@ impl ServersView {
         cx.emit(ServersEvent::Media(media));
     }
 
-    pub fn viewing(&self) -> usize {
-        let Some(server) = self.servers.get(self.server) else {
-            return 0;
-        };
-        if server.channels.is_empty() {
-            0
-        } else {
-            server.viewing.min(server.channels.len().saturating_sub(1))
+    /// Channel open on the current server; None = the server's home page.
+    pub fn viewing(&self) -> Option<usize> {
+        let server = self.servers.get(self.server)?;
+        server.viewing.filter(|&i| i < server.channels.len())
+    }
+
+    /// Shows a channel, or the home page with `None`; saved per server, so
+    /// a restart or coming back to the server reopens the same view.
+    /// Opening a channel leaves the home page, so its mic check closes.
+    pub fn set_viewing(&mut self, viewing: Option<usize>, cx: &mut Context<Self>) {
+        if viewing.is_some() {
+            self.voice_check.update(cx, |v, cx| v.stop(cx));
+        }
+        if let Some(server) = self.servers.get_mut(self.server) {
+            server.viewing = viewing;
+            let channel = viewing.and_then(|i| server.channels.get(i)).map(|c| c.id);
+            self.last.channels.insert(server.id, channel);
+            self.last.save();
         }
     }
 
-    pub fn set_viewing(&mut self, viewing: usize) {
-        if let Some(server) = self.servers.get_mut(self.server) {
-            server.viewing = viewing;
+    /// Another server reopens its last view; the open one goes back to its
+    /// home page. Remembered as the open server.
+    pub(super) fn open_server(&mut self, i: usize, cx: &mut Context<Self>) {
+        if self.server == i {
+            self.set_viewing(None, cx);
+        } else {
+            self.server = i;
+            self.voice_check.update(cx, |v, cx| v.stop(cx));
         }
+        self.last.server = self.servers.get(i).map(|s| s.id);
+        self.last.save();
+    }
+
+    /// A channel will open as soon as its server's channel list arrives (saved
+    /// last time or open before a refresh): show nothing yet, not the home page.
+    pub(super) fn channel_pending(&self) -> bool {
+        let Some(s) = self.servers.get(self.server) else {
+            return false;
+        };
+        s.channels.is_empty()
+            && (s.viewing.is_some() || matches!(self.last.channels.get(&s.id), Some(Some(_))))
     }
 
     fn channel_view(&self) -> Option<&model::Channel> {
         let server = self.servers.get(self.server)?;
-        server.channels.get(self.viewing())
+        server.channels.get(self.viewing()?)
     }
 }
 

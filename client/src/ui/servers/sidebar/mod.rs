@@ -3,7 +3,7 @@
 mod channel_row;
 mod server_chip;
 
-use super::super::components::{Dropdown, ToolButton};
+use super::super::components::{Dropdown, ghost, icon};
 use super::server_sheet::SheetTab;
 use crate::theme::{Theme, ThemeExt};
 use channel_row::ChannelRow;
@@ -84,7 +84,7 @@ impl super::ServersView {
                             s,
                             i == self.server,
                             Box::new(cx.listener(move |this, _, _, cx| {
-                                this.server = i;
+                                this.open_server(i, cx);
                                 this.server_menu = false;
                                 this.load_channels();
                                 cx.notify();
@@ -92,8 +92,27 @@ impl super::ServersView {
                         )
                     }))
                     .child(
-                        ToolButton::new("explore", "", "plus")
-                            .on_click(cx.listener(|this, _, w, cx| this.set_adding(true, w, cx))),
+                        // Same box as a server chip (ring space included).
+                        div()
+                            .id("explore")
+                            .role(Role::Button)
+                            .aria_label("Add server")
+                            .size(px(32.))
+                            .flex_none()
+                            .p(px(3.))
+                            .cursor_pointer()
+                            .hover(|s| s.opacity(0.8))
+                            .on_click(cx.listener(|this, _, w, cx| this.set_adding(true, w, cx)))
+                            .child(
+                                div()
+                                    .size_full()
+                                    .rounded(t.radius)
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .bg(t.fill)
+                                    .child(icon("plus", 14., t.muted)),
+                            ),
                     ),
             )
             .when_some(server, |d, s| {
@@ -117,19 +136,21 @@ impl super::ServersView {
                         .child(
                             div()
                                 .flex_1()
+                                .min_w_0()
+                                .truncate()
                                 .font_weight(FontWeight::BOLD)
                                 .text_size(px(18.))
                                 .child(s.name.clone()),
                         )
                         .child(
-                            ToolButton::new("server-members-btn", "Members", "users").on_click(
+                            ghost("server-members-btn", "Members", "users", &t).on_click(
                                 cx.listener(|this, _, _, cx| this.toggle_members_panel(cx)),
                             ),
                         )
                         .child(
                             Dropdown::new(
                                 "server-menu",
-                                ToolButton::new("server-menu-btn", "", "dots-three").on_click(
+                                ghost("server-menu-btn", "Server menu", "dots-three", &t).on_click(
                                     cx.listener(|this, _, _, cx| {
                                         this.server_menu = !this.server_menu;
                                         cx.notify();
@@ -201,10 +222,10 @@ impl super::ServersView {
                                 name: c.name.clone().into(),
                                 channel_type: c.channel_type,
                                 members,
-                                viewing: i == viewing,
+                                viewing: viewing == Some(i),
                                 joined: here,
                                 on_click: Box::new(cx.listener(move |this, _, _, cx| {
-                                    this.set_viewing(i);
+                                    this.set_viewing(Some(i), cx);
                                     cx.notify();
                                 })),
                             }

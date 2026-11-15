@@ -35,11 +35,14 @@ impl Root {
         let servers = cx.new(|cx| ServersView::new(window, cx));
         let friends = cx.new(|cx| FriendsView::new(servers.clone(), cx));
         let status_bar = cx.new(StatusBar::new);
-        let titlebar = cx.new(|_| Titlebar::new("Feather Chat"));
+        let titlebar = cx.new(|_| Titlebar::new(""));
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         cx.subscribe(&titlebar, |this, _, mode: &Mode, cx| {
             this.mode = *mode;
+            // Switching screens closes the mic check.
+            let check = this.servers.read(cx).voice_check();
+            check.update(cx, |v, cx| v.stop(cx));
             cx.notify();
         })
         .detach();

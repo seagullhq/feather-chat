@@ -54,8 +54,8 @@ pub struct Server {
     /// Profile picture (local file). None = initial on a system-color tint.
     pub icon: Option<std::path::PathBuf>,
     pub channels: Vec<Channel>,
-    /// Index of the channel being watched on this server.
-    pub viewing: usize,
+    /// Index of the channel being watched on this server; None = its home page.
+    pub viewing: Option<usize>,
 }
 
 impl Server {
@@ -79,18 +79,18 @@ mod tests {
             members: vec![],
             icon: None,
             channels: vec![],
-            viewing: 0,
+            viewing: None,
         }
     }
 
     #[test]
     fn server_tracks_viewing_channel() {
         let mut servers = [server(1, "Casa"), server(2, "Band")];
-        assert_eq!(servers[0].viewing, 0);
-        assert_eq!(servers[1].viewing, 0);
+        assert_eq!(servers[0].viewing, None);
+        assert_eq!(servers[1].viewing, None);
 
-        servers[0].viewing = 2;
-        assert_eq!(servers[0].viewing, 2);
-        assert_eq!(servers[1].viewing, 0);
+        servers[0].viewing = Some(2);
+        assert_eq!(servers[0].viewing, Some(2));
+        assert_eq!(servers[1].viewing, None);
     }
 }
