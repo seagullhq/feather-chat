@@ -3,32 +3,29 @@
 
 use super::super::FriendsView;
 use crate::api::{Friend, Relation};
-use crate::theme::ThemeExt;
-use crate::ui::components::{Avatar, ToolButton};
+use crate::theme::{Theme, ThemeExt};
+use crate::ui::components::{Avatar, ghost, tonal};
 use gpui::{prelude::*, *};
 
 fn heading(text: &'static str, muted: Hsla) -> Div {
     div().px_1().text_color(muted).child(text)
 }
 
-fn row(name: &str) -> Div {
+/// A person: avatar and name, the row lit on hover, optional action on the right.
+fn row(id: i64, name: &str, theme: &Theme, action: Option<AnyElement>) -> Stateful<Div> {
+    // Stateful (with id) like the channel rows: gpui tracks its hover reliably.
     div()
+        .id(("friend-row", id as u64))
         .flex()
         .items_center()
         .gap_2()
         .px_1()
-        .h(px(32.))
+        .h(px(36.))
+        .rounded(theme.radius)
+        .hover(|s| s.bg(theme.fill))
         .child(Avatar::new(name, 24.))
         .child(div().flex_1().min_w_0().truncate().child(name.to_string()))
-}
-
-/// A person with their action button below the name.
-fn under(name: &str, button: impl IntoElement) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .child(row(name))
-        .child(div().pl(px(40.)).child(button))
+        .children(action)
 }
 
 impl FriendsView {
@@ -49,7 +46,7 @@ impl FriendsView {
             "No friends match."
         };
 
-                let requests = (!incoming.is_empty()).then(|| {
+        let requests = (!incoming.is_empty()).then(|| {
             div()
                 .flex()
                 .flex_col()
@@ -57,12 +54,15 @@ impl FriendsView {
                 .child(heading("Requests", t.muted))
                 .children(incoming.iter().map(|f| {
                     let id = f.id;
-                    under(
-                        &f.name,
-                        ToolButton::new(("accept", f.id as u64), "Accept", "check")
-                            .color(t.success)
-                            .on_click(cx.listener(move |this, _, _, cx| this.accept(id, cx))),
-                    )
+                    // Decline stays grey (not the main action), red only on hover.
+                    let decline = tonal(("decline", f.id as u64), "Decline", "x", t.muted, &t)
+                        .bg(t.fill)
+                        .hover(|s| s.bg(t.danger.opacity(0.22)))
+                        .on_click(cx.listener(move |this, _, _, cx| this.decline(id, cx)));
+                    let accept = tonal(("accept", f.id as u64), "Accept", "check", t.success, &t)
+                        .on_click(cx.listener(move |this, _, _, cx| this.accept(id, cx)));
+                    let actions = div().flex().gap_1().child(decline).child(accept);
+                    row(f.id, &f.name, &t, Some(actions.into_any_element()))
                 }))
         });
 
@@ -71,7 +71,15 @@ impl FriendsView {
             .flex_col()
             .gap_1()
             .child(heading("Friends", t.muted))
-            .children(friends.iter().map(|f| row(&f.name)))
+            .children(friends.iter().map(|f| {
+                // ponytail: no-ops until DM calls and the friend menu exist.
+                let actions = div()
+                    .flex()
+                    .gap_1()
+                    .child(ghost(("call", f.id as u64), "Call", "phone", &t))
+                    .child(ghost(("more", f.id as u64), "More", "dots-three", &t));
+                row(f.id, &f.name, &t, Some(actions.into_any_element()))
+            }))
             .when(friends.is_empty(), |d| {
                 d.child(div().px_1().text_color(t.muted).child(empty))
             });
@@ -90,14 +98,15 @@ impl FriendsView {
                 .child(heading("Add friend", t.muted))
                 .children(strangers.iter().map(|f| {
                     let name = f.name.clone();
-                    under(
-                        &f.name,
-                        ToolButton::new(("send-request", f.id as u64), "Send request", "plus")
-                            .color(t.accent)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.request(name.clone(), cx)
-                            })),
+                    let send = tonal(
+                        ("send-request", f.id as u64),
+                        "Send request",
+                        "plus",
+                        t.accent,
+                        &t,
                     )
+                    .on_click(cx.listener(move |this, _, _, cx| this.request(name.clone(), cx)));
+                    row(f.id, &f.name, &t, Some(send.into_any_element()))
                 }))
         });
 

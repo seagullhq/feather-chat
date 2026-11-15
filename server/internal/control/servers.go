@@ -357,6 +357,31 @@ func (s *Server) handleAcceptFriendRequest(c *client, msg protocol.Control) {
 	c.send(protocol.Control{Type: "ACK", TargetUserID: msg.UserID})
 }
 
+// handleDeclineFriendRequest answers DECLINE_FRIENDSHIP_REQUEST by dropping the
+// pending request that user userId sent to the session's user.
+func (s *Server) handleDeclineFriendRequest(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	if msg.UserID <= 0 {
+		c.sendError("requester id required")
+		return
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	if err := s.friends.DeclineFriendship(ctx, c.sess.UserID, msg.UserID); err != nil {
+		if errors.Is(err, friends.ErrNotFound) {
+			c.sendError("friend request not found")
+			return
+		}
+		log.Printf("[FRIENDS] failed to decline %d for %d: %v", msg.UserID, c.sess.UserID, err)
+		c.sendError("decline failed")
+		return
+	}
+	s.friendsChanged(msg.UserID)
+	c.send(protocol.Control{Type: "ACK", TargetUserID: msg.UserID})
+}
+
 // handleSearchUsers answers SEARCH_USERS with the users whose name contains
 // the query, each with its relation to the session's user.
 func (s *Server) handleSearchUsers(c *client, msg protocol.Control) {

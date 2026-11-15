@@ -70,6 +70,9 @@ pub(super) enum Command {
     AcceptFriend {
         user_id: i64,
     },
+    DeclineFriend {
+        user_id: i64,
+    },
     AddFriend {
         username: String,
     },
@@ -201,6 +204,10 @@ impl Control {
 
     pub fn accept_friend(&self, user_id: i64) -> bool {
         self.tx.try_send(Command::AcceptFriend { user_id }).is_ok()
+    }
+
+    pub fn decline_friend(&self, user_id: i64) -> bool {
+        self.tx.try_send(Command::DeclineFriend { user_id }).is_ok()
     }
 
     pub fn add_friend(&self, username: String) -> bool {

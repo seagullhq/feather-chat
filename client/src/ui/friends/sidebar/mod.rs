@@ -22,19 +22,20 @@ impl FriendsView {
             .bg(t.panel)
             .border_r_1()
             .border_color(t.line)
-            .child(
-                div()
-                    .px_1()
-                    .font_weight(FontWeight::BOLD)
-                    .text_size(px(18.))
-                    .child("Friends"),
-            )
             .child(self.search.clone())
             .children(
                 self.error
                     .clone()
                     .map(|e| div().px_1().text_color(t.danger).child(e)),
             )
-            .child(self.results(&query, cx))
+            // Title and search stay put; only the list scrolls.
+            .child(
+                div()
+                    .id("friends-results")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(self.results(&query, cx)),
+            )
     }
 }

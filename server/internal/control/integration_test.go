@@ -783,6 +783,28 @@ func TestIntegrationFriendRequest(t *testing.T) {
 	if e := awaitControl(t, c, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != accounts.ErrNotFound.Error() {
 		t.Fatalf("unknown user error = %q, want %q", e.Error, accounts.ErrNotFound.Error())
 	}
+
+	// The addressee declines: the row is gone, a second decline fails, and
+	// the requester may ask again.
+	d := dialControl(t, ltcp.Addr().String(), 0xBBBB, 0, addressee, addressee+"@example.test", password, false)
+	defer d.Close()
+	sendTest(t, d, protocol.Control{Type: "DECLINE_FRIENDSHIP_REQUEST", UserID: ids[requester]})
+	awaitControl(t, d, "DECLINE ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.TargetUserID == ids[requester]
+	})
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM friendships WHERE requester_id = $1 AND addressee_id = $2`,
+		ids[requester], ids[addressee]).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("after decline: %d rows, err %v; want 0", n, err)
+	}
+	sendTest(t, d, protocol.Control{Type: "DECLINE_FRIENDSHIP_REQUEST", UserID: ids[requester]})
+	if e := awaitControl(t, d, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != "friend request not found" {
+		t.Fatalf("second decline error = %q", e.Error)
+	}
+	sendTest(t, c, protocol.Control{Type: "SEND_FRIENDSHIP_REQUEST", Username: addressee})
+	awaitControl(t, c, "RESEND ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.TargetUserID == ids[addressee]
+	})
 }
 
 // TestIntegrationAdminModeration: an admin may kick plain members, but not the

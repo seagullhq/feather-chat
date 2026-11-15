@@ -127,6 +127,24 @@ func (s *ServerStore) AcceptFriendship(ctx context.Context, userID, requesterID 
 	return nil
 }
 
+// DeclineFriendship drops the pending request from requesterID to userID.
+// ponytail: deletes the row (no REJECTED), so they can ask again later.
+func (s *ServerStore) DeclineFriendship(ctx context.Context, userID, requesterID int) error {
+	res, err := s.db.ExecContext(ctx, `
+		DELETE FROM friendships
+		WHERE requester_id = $2 AND addressee_id = $1 AND status = 'PENDING'`,
+		userID, requesterID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // Person is another user as seen by the asking user. Relation is "friend",
 // "incoming" (they asked you), "outgoing" (you asked them) or "" for nobody
 // in particular.
