@@ -131,8 +131,10 @@ impl Render for Titlebar {
                 },
             )
             .map(|d| {
+                // Toggle bg edge sits 5px from the left, like top/bottom (34-24)/2.
+                let pad = if self.toggle { px(5.) } else { px(8.) };
                 if fullscreen {
-                    d.pl_2()
+                    d.pl(pad)
                 } else if mac && !sheet {
                     d.pl(px(TRAFFIC_LIGHT_PADDING))
                 } else if let Some(c) =
@@ -140,7 +142,7 @@ impl Render for Titlebar {
                 {
                     d.child(c)
                 } else {
-                    d.pl_2()
+                    d.pl(pad)
                 }
             })
             .when(self.toggle, |d| d.child(self.mode_toggle(cx)))
@@ -201,7 +203,8 @@ impl Titlebar {
             .flex()
             .items_center()
             .gap_1()
-            .px_2()
+            // Extra left inset only on macOS; elsewhere hug the left edge.
+            .when(cfg!(target_os = "macos"), |d| d.pl_2())
             // Keep clicks from starting a window drag.
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(button("mode-servers", "server", "Server", Mode::Servers))
