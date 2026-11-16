@@ -9,7 +9,7 @@ use std::time::Duration;
 use super::audio::audio;
 use super::prefs::PREFS;
 use super::shared::Shared;
-use super::wire::rms;
+use super::wire::{rms, smooth_level};
 use super::{FRAME, OUT_RING, RATE};
 
 const RECORD: usize = 5 * RATE as usize;
@@ -101,7 +101,8 @@ impl Meter {
         self.have += 1;
         if self.have == FRAME {
             self.have = 0;
-            self.level = self.level * 0.55 + rms(self.frame.iter().copied(), FRAME) * 0.45;
+            let level = rms(self.frame.iter().copied(), FRAME);
+            self.level = smooth_level(self.level, level);
             shared.mic.store(self.level.to_bits(), Relaxed);
         }
     }

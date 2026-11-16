@@ -4,7 +4,7 @@ use opus_rs::OpusDecoder;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use super::wire::rms;
+use super::wire::{rms, smooth_level};
 use super::{FRAME, MAX_PRIME, MAX_QUEUED, PRIME, RATE};
 
 pub(super) struct Peer {
@@ -71,7 +71,7 @@ impl Peer {
     pub(super) fn step(&mut self, acc: &mut [f32; FRAME]) {
         if !self.primed {
             if self.queue.len() < self.target() {
-                self.level *= 0.55;
+                self.level *= 0.93;
                 return;
             }
             self.next = *self.queue.keys().next().unwrap();
@@ -92,7 +92,7 @@ impl Peer {
                 self.missed += 1;
                 if self.queue.is_empty() && self.missed > 3 {
                     self.primed = false; // speaker went quiet: re-prime on return
-                    self.level *= 0.55;
+                    self.level *= 0.93;
                     return;
                 }
                 let _ = self.dec.decode(&[], FRAME, &mut pcm); // concealment
@@ -103,7 +103,8 @@ impl Peer {
         if ended {
             self.primed = false; // T flag: talkspurt over, no concealment after it
         }
-        self.level = self.level * 0.55 + rms(pcm.iter().copied(), FRAME) * 0.45;
+        let level = rms(pcm.iter().copied(), FRAME);
+        self.level = smooth_level(self.level, level);
         for (a, p) in acc.iter_mut().zip(pcm) {
             *a += p;
         }

@@ -10,7 +10,7 @@ mod status_bar;
 mod markdown;
 mod settings;
 mod titlebar;
-mod userfiles;
+pub(crate) mod userfiles;
 mod voice_check;
 mod window_frame;
 

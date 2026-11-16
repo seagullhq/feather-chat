@@ -38,9 +38,11 @@ struct SettingsView {
     open: Option<&'static str>,
     mics: Vec<String>,
     outs: Vec<String>,
-    mic: usize,
-    out: usize,
+    /// `None` = follow the OS default device.
+    mic: Option<usize>,
+    out: Option<usize>,
     volume: i32,
+    sensitivity: i32,
     titlebar: Entity<Titlebar>,
     /// Change-username field.
     edit_user: Entity<TextInput>,
@@ -64,42 +66,36 @@ struct SettingsView {
     open_item: Option<&'static str>,
 }
 
+/// Device names as the Settings pickers show them. Enumerates the host, so
+/// keep it off the render path.
+fn device_lists() -> (Vec<String>, Vec<String>) {
+    use cpal::traits::HostTrait;
+    let host = cpal::default_host();
+    let names = |it: Option<Vec<cpal::Device>>| {
+        it.unwrap_or_default()
+            .iter()
+            .filter_map(crate::media::dev_name)
+            // ponytail: PulseAudio lists every output's loopback as a mic.
+            .filter(|n| !n.starts_with("Monitor of "))
+            .collect::<Vec<_>>()
+    };
+    (
+        names(host.input_devices().ok().map(|i| i.collect())),
+        names(host.output_devices().ok().map(|i| i.collect())),
+    )
+}
+
 impl SettingsView {
     fn new(cx: &mut Context<Self>) -> Self {
-        use cpal::traits::HostTrait;
-        let host = cpal::default_host();
-        let names = |it: Option<Vec<cpal::Device>>| {
-            it.unwrap_or_default()
-                .iter()
-                .filter_map(crate::media::dev_name)
-                // ponytail: PulseAudio lists every output's loopback as a mic.
-                .filter(|n| !n.starts_with("Monitor of "))
-                .collect::<Vec<_>>()
-        };
-        let mics = names(host.input_devices().ok().map(|i| i.collect()));
-        let outs = names(host.output_devices().ok().map(|i| i.collect()));
-        // Start on the OS default device.
-        let pos = |list: &[String], d: Option<cpal::Device>| {
-            d.and_then(|d| crate::media::dev_name(&d))
-                .and_then(|n| list.iter().position(|x| *x == n))
-                .unwrap_or(0)
-        };
+        let (mics, outs) = device_lists();
         // The window is rebuilt on every open: start from what is in use.
-        let chosen = |list: &[String], name: &Option<String>, d: Option<cpal::Device>| match name {
-            Some(n) => list.iter().position(|x| x == n).unwrap_or(0),
-            None => pos(list, d),
+        let chosen = |list: &[String], name: &Option<String>| match name {
+            Some(n) => list.iter().position(|x| x == n).map(Some).unwrap_or(None),
+            None => None,
         };
         let (mic, out) = (
-            chosen(
-                &mics,
-                &PREFS.input.lock().unwrap(),
-                host.default_input_device(),
-            ),
-            chosen(
-                &outs,
-                &PREFS.output.lock().unwrap(),
-                host.default_output_device(),
-            ),
+            chosen(&mics, &PREFS.input.lock().unwrap()),
+            chosen(&outs, &PREFS.output.lock().unwrap()),
         );
         // Start from the signed-in user; the password is never shown.
         let current_user = cx
@@ -113,7 +109,7 @@ impl SettingsView {
         let edit_old_pw = account::input("Current password", true, cx);
         let edit_pw = account::input("New password", true, cx);
         let conf_pass: Entity<TextInput> = account::input("Confirm new password", true, cx);
-        Self {
+        let view = Self {
             focus: cx.focus_handle(),
             page: Page::Account,
             mic,
@@ -122,6 +118,7 @@ impl SettingsView {
             mics,
             outs,
             volume: PREFS.volume.load(Relaxed) as i32,
+            sensitivity: PREFS.sensitivity.load(Relaxed) as i32,
             titlebar: cx.new(|_| Titlebar::new("Settings").sheet()),
             edit_user,
             edit_old_pw,
@@ -137,6 +134,49 @@ impl SettingsView {
             password_error: None,
             error: None,
             open_item: None,
+        };
+        // Keep the pickers in sync with devices plugged in, unplugged or made
+        // the OS default while the window stays open. Ends when it closes.
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(3))
+                    .await;
+                if this
+                    .update(cx, |this, cx| this.refresh_devices(cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+        view
+    }
+
+    /// Re-reads the device lists, keeping the current picks when they are
+    /// still there. Cheap enough every few seconds, too slow for every frame.
+    fn refresh_devices(&mut self, cx: &mut Context<Self>) {
+        let (mics, outs) = device_lists();
+        let listed = mics != self.mics || outs != self.outs;
+        if listed {
+            self.mics = mics;
+            self.outs = outs;
+        }
+        // Saved names are the source of truth: a device that comes back is
+        // picked up again, one that goes away reads as "System default".
+        let position = |list: &[String], name: Option<String>| {
+            name.and_then(|n| list.iter().position(|x| *x == n))
+        };
+        let (mic, out) = (
+            position(&self.mics, PREFS.input.lock().unwrap().clone()),
+            position(&self.outs, PREFS.output.lock().unwrap().clone()),
+        );
+        let picked = mic != self.mic || out != self.out;
+        (self.mic, self.out) = (mic, out);
+        // The "System default (name)" labels follow the OS default too.
+        if listed || picked || self.page == Page::Voice {
+            cx.notify();
         }
     }
 }

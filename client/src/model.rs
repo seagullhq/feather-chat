@@ -7,11 +7,10 @@ pub struct Member {
     pub name: String,
     pub muted: bool,
     pub deafened: bool,
-    /// Smoothed audio level, 0..1. Above `SPEAKING` the member counts as speaking.
+    /// Smoothed audio level, 0..1. Above the speaking threshold the member
+    /// counts as speaking.
     pub level: f32,
 }
-
-pub const SPEAKING: f32 = 0.12;
 
 impl Member {
     pub fn new(name: &str) -> Self {

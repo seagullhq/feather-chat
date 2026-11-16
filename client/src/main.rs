@@ -30,6 +30,7 @@ fn main() {
     let Ok(lock) = single_instance::claim() else {
         return; // already running: it was brought to the front
     };
+    media::PREFS.load();
     gpui_platform::application()
         .with_assets(Assets)
         .run(|cx: &mut App| {

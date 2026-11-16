@@ -27,7 +27,7 @@ impl Avatar {
     }
 
     pub fn state(mut self, level: f32, muted: bool, deafened: bool) -> Self {
-        self.speaking = level > crate::model::SPEAKING && !muted && !deafened;
+        self.speaking = level > crate::media::PREFS.speaking() && !muted && !deafened;
         self.muted = muted;
         self.deafened = deafened;
         self

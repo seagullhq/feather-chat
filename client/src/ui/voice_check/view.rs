@@ -3,7 +3,6 @@
 
 use super::{Heard, VoiceCheck};
 use crate::media::Step;
-use crate::model::SPEAKING;
 use crate::theme::{Theme, ThemeExt};
 use crate::ui::components::{Button, ghost, icon, tonal};
 use crate::ui::settings::open_voice_settings;
@@ -17,7 +16,7 @@ pub fn disc(level: f32, size: f32, t: &Theme) -> Div {
         .size(px(size))
         .rounded_full()
         .border(px(ring))
-        .border_color(if level > SPEAKING {
+        .border_color(if level > crate::media::PREFS.speaking() {
             t.success
         } else {
             gpui::transparent_black()
@@ -37,6 +36,7 @@ pub fn disc(level: f32, size: f32, t: &Theme) -> Div {
 
 /// Level bar with a tick where the speaking ring turns on.
 pub fn meter(level: f32, t: &Theme) -> Div {
+    let speaking = crate::media::PREFS.speaking();
     div()
         .w_full()
         .flex()
@@ -54,14 +54,14 @@ pub fn meter(level: f32, t: &Theme) -> Div {
                         .h_full()
                         .w(relative(level.clamp(0., 1.)))
                         .rounded(px(5.))
-                        .bg(if level > SPEAKING { t.success } else { t.muted }),
+                        .bg(if level > speaking { t.success } else { t.muted }),
                 )
                 .child(
                     div()
                         .absolute()
                         .top(px(-2.))
                         .bottom(px(-2.))
-                        .left(relative(SPEAKING))
+                        .left(relative(speaking))
                         .w(px(2.))
                         .bg(t.text.opacity(0.5)),
                 ),
@@ -374,7 +374,11 @@ pub fn compact(vc: &Entity<VoiceCheck>, cx: &App) -> Div {
                         .h_full()
                         .w(relative(level.clamp(0., 1.)))
                         .rounded(px(3.))
-                        .bg(if level > SPEAKING { t.success } else { t.muted }),
+                        .bg(if level > crate::media::PREFS.speaking() {
+                            t.success
+                        } else {
+                            t.muted
+                        }),
                 )
                 .into_any_element(),
         }

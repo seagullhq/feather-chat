@@ -144,7 +144,9 @@ impl StatusBar {
                     .lock()
                     .unwrap()
                     .clone()
-                    .map_or_else(|| self.mic_name.clone(), Into::into),
+                    .or_else(|| media::system_default_device_name(true))
+                    .map(SharedString::from)
+                    .unwrap_or_else(|| self.mic_name.clone()),
             ))
             .child(icon("speaker-high", 14., t.muted))
             .child(label(
@@ -153,7 +155,9 @@ impl StatusBar {
                     .lock()
                     .unwrap()
                     .clone()
-                    .map_or_else(|| self.audio_name.clone(), Into::into),
+                    .or_else(|| media::system_default_device_name(false))
+                    .map(SharedString::from)
+                    .unwrap_or_else(|| self.audio_name.clone()),
             ))
     }
 }
