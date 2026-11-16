@@ -22,5 +22,5 @@ indent_size = 2
 [*.md]
 trim_trailing_whitespace = false   # two trailing spaces mean a line break
 
-[justfile]
-indent_size = 4
+[Taskfile.yml]
+indent_size = 2

@@ -1,0 +1,162 @@
+# Task (https://taskfile.dev): one file, same commands on Linux, macOS and
+# Windows. Commands run in Task's built-in POSIX-style shell (mvdan/sh), so no
+# Git Bash, PowerShell or make is needed. Platform-only steps use `platforms:`
+# and are skipped everywhere else.
+#
+# Each entry in `cmds` runs in its own shell: a `cd` or `export` does not carry
+# over to the next entry, so use `dir:` and `env:` instead.
+
+version: '3'
+
+vars:
+  # Cargo output directory (relative to client/, where the cargo tasks run).
+  CLIENT_TARGET: ../dist/client
+  # Executable suffix for the Go server binary.
+  EXE: '{{if eq OS "windows"}}.exe{{end}}'
+  # The race detector needs cgo and a C compiler, which we don't require on Windows.
+  RACE: '{{if ne OS "windows"}}-race {{end}}'
+  PORT: ':7700'
+
+env:
+  # Dev and test builds keep line tables (backtraces and file:line still work)
+  # instead of full debug info: most of gpui's debug size is DWARF for its own
+  # crates. Exported, so every cargo command picks it up on every platform.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+tasks:
+  default:
+    desc: List the tasks
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the client for shipping (small, fat LTO, slow) into dist/client/release/
+    dir: client
+    cmds:
+      - cargo build --release --target-dir {{.CLIENT_TARGET}}
+
+  build-debug:
+    desc: Debug build (line tables only) into dist/client/debug/
+    dir: client
+    cmds:
+      - cargo build --target-dir {{.CLIENT_TARGET}}
+
+  build-fast:
+    desc: Fast optimized build (no LTO) into dist/client/fast/, for development
+    dir: client
+    cmds:
+      - cargo build --profile fast --target-dir {{.CLIENT_TARGET}}
+
+  client:
+    desc: Build (fast profile) and run the client
+    dir: client
+    cmds:
+      - cargo run --profile fast --target-dir {{.CLIENT_TARGET}}
+
+  install-client:
+    desc: Install the client, desktop entry and icons for the current user
+    platforms: [linux]
+    deps: [build]
+    dir: client
+    cmds:
+      - install -Dm755 {{.CLIENT_TARGET}}/release/feather-chat ~/.local/bin/feather-chat
+      - install -Dm644 assets/icon.png ~/.local/share/icons/hicolor/256x256/apps/feather-chat.png
+      - install -Dm644 assets/feather.svg ~/.local/share/icons/hicolor/scalable/apps/feather-chat.svg
+      - install -Dm644 ../packaging/linux/feather-chat.desktop ~/.local/share/applications/feather-chat.desktop
+      - cmd: gtk-update-icon-cache -q -t ~/.local/share/icons/hicolor
+        ignore_error: true
+
+  bundle-client:
+    desc: Build a macOS .app bundle into dist/
+    platforms: [darwin]
+    deps: [build]
+    cmds:
+      - rm -rf "dist/Feather Chat.app"
+      - mkdir -p "dist/Feather Chat.app/Contents/MacOS" "dist/Feather Chat.app/Contents/Resources"
+      - install -m 755 dist/client/release/feather-chat "dist/Feather Chat.app/Contents/MacOS/feather-chat"
+      - install -m 644 packaging/macos/Info.plist "dist/Feather Chat.app/Contents/Info.plist"
+      - install -m 644 client/assets/icon.icns "dist/Feather Chat.app/Contents/Resources/icon.icns"
+
+  build-server:
+    desc: Build the server binary into dist/server/
+    dir: server
+    cmds:
+      - mkdir -p ../dist/server
+      - go build -o ../dist/server/feather-chat-server{{.EXE}} ./cmd/server
+
+  server:
+    desc: Build and run the server (task server PORT=:5000 to change the port)
+    deps: [build-server]
+    cmds:
+      - ./dist/server/feather-chat-server{{.EXE}} -tcp {{.PORT}}
+
+  test:
+    desc: Run every test in the repository
+    cmds:
+      - task: test-server
+      - task: test-client
+
+  test-client:
+    dir: client
+    cmds:
+      - cargo test --target-dir {{.CLIENT_TARGET}}
+
+  test-server:
+    desc: Run the server's Go tests, verbose, no result cache
+    dir: server
+    cmds:
+      - go test {{.RACE}}-v ./...
+
+  fmt:
+    desc: Format everything that has a formatter
+    cmds:
+      - task: fmt-go
+      - task: fmt-client
+
+  fmt-check:
+    desc: Fail if anything is unformatted
+    cmds:
+      - task: fmt-check-go
+      - task: fmt-check-client
+
+  fmt-client:
+    dir: client
+    cmds:
+      - cargo fmt
+
+  fmt-check-client:
+    dir: client
+    cmds:
+      - cargo fmt --check
+
+  fmt-go:
+    dir: server
+    cmds:
+      - gofmt -w .
+
+  fmt-check-go:
+    desc: Fail if any Go file needs gofmt
+    dir: server
+    cmds:
+      - cmd: test -z "$(gofmt -l .)"
+        silent: true
+
+  vet:
+    dir: server
+    cmds:
+      - go vet ./...
+
+  check:
+    desc: Format, vet, test and build. Run before pushing
+    cmds:
+      - task: fmt-check
+      - task: vet
+      - task: test
+      - task: build
+      - task: build-server
+
+  clean:
+    desc: Delete build output
+    dir: client
+    cmds:
+      - cargo clean --target-dir {{.CLIENT_TARGET}}
