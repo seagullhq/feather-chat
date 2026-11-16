@@ -22,7 +22,7 @@ talk — as a native binary, on a server you own.
 
 ## Quick start
 
-With Rust (stable), Go and [just](https://github.com/casey/just) in place:
+With Rust (stable), Go and [Task](https://taskfile.dev) in place:
 
 ```bash
 git clone https://github.com/seagullhq/feather-chat
@@ -31,14 +31,14 @@ cd feather-chat
 cp .env.example .env     # local PostgreSQL credentials (docker compose reads it)
 docker compose up -d     # the PostgreSQL the server stores accounts and servers in
 
-just server              # control on :7700, media on :7701
-just client              # builds and opens the desktop client
+task server              # control on :7700, media on :7701
+task client              # builds and opens the desktop client
 ```
 
 They talk now: register from the client, create a server, drop into a voice
 channel. What is missing is on the [roadmap](#roadmap).
 
-No `just`? Every recipe is a plain command, listed [below](#commands).
+No `task`? Every task is a plain command, listed [below](#commands).
 
 On Linux, gpui needs the usual Wayland/X11, Vulkan, xkbcommon and ALSA
 development packages. The first client build compiles gpui from source
@@ -54,23 +54,23 @@ development packages. The first client build compiles gpui from source
 
 ## Commands
 
-[just](https://github.com/casey/just) is a convenience, never a requirement:
-`dnf install just`, `brew install just`, `pacman -S just`,
-`winget install Casey.Just`, or `cargo install just`.
+[Task](https://taskfile.dev) is a convenience, never a requirement: one binary,
+no shell or make needed on any OS. `brew install go-task`, `winget install Task.Task`,
+`scoop install task`, `snap install task --classic`, or `go install github.com/go-task/task/v3/cmd/task@latest`.
 
 | | | plain equivalent |
 |---|---|---|
-| `just build` | build the client | `cd client && cargo build --release` |
-| `just client` | build it, then run it | `cd client && cargo run --release` |
-| `just server` | build and run the server on `:7700` | `cd server && go build -o ../dist/server/feather-chat-server ./cmd/server && ../dist/server/feather-chat-server -tcp :7700` |
-| `just test` | run the Go and Rust tests | `cd server && go test -race ./... && cd ../client && cargo test` |
-| `just check` | format, vet, test and build | all of the above |
-| `just clean` | delete build output | `rm -rf client/target dist/server` |
+| `task build` | build the client | `cd client && cargo build --release` |
+| `task client` | build it, then run it | `cd client && cargo run --release` |
+| `task server` | build and run the server on `:7700` | `cd server && go build -o ../dist/server/feather-chat-server ./cmd/server && ../dist/server/feather-chat-server -tcp :7700` |
+| `task test` | run the Go and Rust tests | `cd server && go test -race ./... && cd ../client && cargo test` |
+| `task check` | format, vet, test and build | all of the above |
+| `task clean` | delete build output | `rm -rf client/target dist/server` |
 
-`just server :5000` picks another control port for the server; the client always
+`task server PORT=:5000` picks another control port for the server; the client always
 dials `7700` (`CONTROL_PORT` in `client/src/api/transport.rs`).
 
-`just fmt` runs `cargo fmt` and `gofmt`.
+`task fmt` runs `cargo fmt` and `gofmt`.
 
 ## Roadmap
 

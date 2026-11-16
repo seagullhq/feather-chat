@@ -3,7 +3,7 @@
 
 # Always LF, even checked out on Windows: shells and build tools choke on CRLF.
 *.sh      text eol=lf
-justfile  text eol=lf
+Taskfile.yml  text eol=lf
 
 # gofmt has no CRLF mode and reports every line of a CRLF file as unformatted,
 # so Go sources must never be checked out with native Windows endings.

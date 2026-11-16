@@ -4,8 +4,8 @@ version = "0.18.32"
 edition = "2024"
 
 [profile.release]
-# ponytail: size over speed; opt-level measured, see commit message
-opt-level = "s"
+# Smallest binary: opt-level "z" trades some speed for size (the user's priority).
+opt-level = "z"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
