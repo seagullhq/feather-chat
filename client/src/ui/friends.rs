@@ -1,7 +1,8 @@
-//! The friends screen (titlebar toggle): friends and requests in the
-//! sidebar; the stage is a mic check until DMs exist.
+//! The friends screen (titlebar toggle): friends in the sidebar; requests and
+//! blocked users in the friends sheet; the stage is the open DM or the mic check.
 
 mod call_bar;
+mod sheet;
 mod sidebar;
 mod stage;
 
@@ -10,9 +11,20 @@ use crate::api::{Control, Friend};
 use crate::input::TextInput;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
+use std::cell::Cell;
+use std::rc::Rc;
 
 /// Same width as the servers sidebar, so the layout does not jump on switch.
 const SIDEBAR_WIDTH: f32 = 240.;
+
+/// Tabs of the friends sheet.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum FriendsTab {
+    Friends,
+    Pending,
+    Blocked,
+    Add,
+}
 
 pub struct FriendsView {
     /// Owner of the voice call, shown in the call bar while you are in one.
@@ -32,6 +44,15 @@ pub struct FriendsView {
     selected_friend: Option<i64>,
     /// Text chat panel beside the call. Collapsed by default: voice is the focus.
     chat_open: bool,
+    /// Friends sheet (pending requests, blocked users), over the whole screen.
+    sheet_open: bool,
+    sheet_tab: FriendsTab,
+    sheet_focus: FocusHandle,
+    /// Measured while painting: bottom of the sidebar's "Manage friends" button,
+    /// and top of the area the sheet covers. The sheet starts under that button,
+    /// like the server sheet starts under the server title.
+    sheet_anchor: Rc<Cell<Pixels>>,
+    area_top: Rc<Cell<Pixels>>,
 }
 
 impl FriendsView {
@@ -58,6 +79,11 @@ impl FriendsView {
             friend_menu: None,
             selected_friend: None,
             chat_open: false,
+            sheet_open: false,
+            sheet_tab: FriendsTab::Friends,
+            sheet_focus: cx.focus_handle(),
+            sheet_anchor: Rc::default(),
+            area_top: Rc::default(),
         }
     }
 
@@ -123,7 +149,34 @@ impl FriendsView {
         self.error = None;
         self.selected_friend = None;
         self.chat_open = false;
+        self.sheet_open = false;
         self.search.update(cx, |input, cx| input.set_text("", cx));
+        cx.notify();
+    }
+
+    /// Opens the friends sheet on `tab`, focused so Esc reaches it.
+    pub(super) fn open_sheet(&mut self, tab: FriendsTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.sheet_tab = tab;
+        self.sheet_open = true;
+        self.error = None;
+        window.focus(&self.sheet_focus, cx);
+        cx.notify();
+    }
+
+    pub(super) fn close_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sheet_open = false;
+        window.focus(&self.sheet_focus, cx);
+        cx.notify();
+    }
+
+    /// "Message" from the sheet: open that friend's DM with the chat card up,
+    /// and get out of the sheet.
+    pub(super) fn message_friend(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        self.selected_friend = Some(id);
+        self.chat_open = true;
+        self.friend_menu = None;
+        self.sheet_open = false;
+        window.focus(&self.sheet_focus, cx);
         cx.notify();
     }
 
@@ -144,7 +197,7 @@ impl FriendsView {
         cx.notify();
     }
 
-    fn accept(&mut self, user_id: i64, cx: &mut Context<Self>) {
+    pub(super) fn accept(&mut self, user_id: i64, cx: &mut Context<Self>) {
         self.error = None;
         if let Some(c) = &self.control {
             c.accept_friend(user_id);
@@ -152,7 +205,7 @@ impl FriendsView {
         cx.notify();
     }
 
-    fn decline(&mut self, user_id: i64, cx: &mut Context<Self>) {
+    pub(super) fn decline(&mut self, user_id: i64, cx: &mut Context<Self>) {
         self.error = None;
         if let Some(c) = &self.control {
             c.decline_friend(user_id);
@@ -178,6 +231,22 @@ impl FriendsView {
         cx.notify();
     }
 
+    pub(super) fn cancel_friend(&mut self, user_id: i64, cx: &mut Context<Self>) {
+        self.error = None;
+        if let Some(c) = &self.control {
+            c.cancel_friend(user_id);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn unblock_friend(&mut self, user_id: i64, cx: &mut Context<Self>) {
+        self.error = None;
+        if let Some(c) = &self.control {
+            c.unblock_friend(user_id);
+        }
+        cx.notify();
+    }
+
     /// The DM view of a friend who is gone should not stay open.
     fn close_if_selected(&mut self, user_id: i64) {
         if self.selected_friend == Some(user_id) {
@@ -187,7 +256,7 @@ impl FriendsView {
     }
 
     /// Send a request to `name`.
-    fn request(&mut self, name: String, cx: &mut Context<Self>) {
+    pub(super) fn request(&mut self, name: String, cx: &mut Context<Self>) {
         self.error = None;
         if let Some(c) = &self.control {
             c.add_friend(name);
@@ -197,13 +266,24 @@ impl FriendsView {
 }
 
 impl Render for FriendsView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
+        let area_top = self.area_top.clone();
         div()
+            .relative()
             .size_full()
             .flex()
             .bg(t.bg)
+            .child({
+                canvas(
+                    move |bounds, _, _| area_top.set(bounds.origin.y),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full()
+            })
             .child(self.sidebar(cx))
             .child(self.stage(cx))
+            .children(self.sheet(window, cx))
     }
 }

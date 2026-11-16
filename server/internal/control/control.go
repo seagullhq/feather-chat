@@ -72,6 +72,8 @@ var handlers = map[string]func(*Server, *client, protocol.Control){
 	"DECLINE_FRIENDSHIP_REQUEST": (*Server).handleDeclineFriendRequest,
 	"REMOVE_FRIENDSHIP": 		  (*Server).handleRemoveFriend,
 	"BLOCK_FRIENDSHIP": 		  (*Server).handleBlockFriend,
+	"UNBLOCK_FRIENDSHIP":         (*Server).handleUnblockFriend,
+	"CANCEL_FRIENDSHIP_REQUEST":  (*Server).handleCancelFriendRequest,
 	"SEARCH_USERS":               (*Server).handleSearchUsers,
 }
 

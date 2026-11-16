@@ -165,11 +165,63 @@ func (s *ServerStore) DeclineFriendship(ctx context.Context, userID, requesterID
 	return nil
 }
 
-func (s *ServerStore) BlockFriendship(ctx context.Context, userID, requesterID int) error {
+// CancelFriendship withdraws the pending request requesterID sent to addresseeID.
+// ErrNotFound when requesterID has no pending request to that user.
+func (s *ServerStore) CancelFriendship(ctx context.Context, requesterID, addresseeID int) error {
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE friendships SET status = 'BLOCKED', updated_at = $3
-		WHERE requester_id = $2 AND addressee_id = $1`,
-		userID, requesterID, time.Now().UTC())
+		DELETE FROM friendships
+		WHERE requester_id = $1 AND addressee_id = $2 AND status = 'PENDING'`,
+		requesterID, addresseeID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// BlockFriendship makes userID the blocker of blockedID. Any row between the
+// pair is replaced by a BLOCKED row whose requester is the blocker (see the
+// friendships schema). The unique pair index then also stops blockedID from
+// sending a request.
+func (s *ServerStore) BlockFriendship(ctx context.Context, userID, blockedID int) error {
+	if userID == blockedID {
+		return ErrSelfRequest
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM friendships
+		WHERE (requester_id = $1 AND addressee_id = $2)
+		   OR (requester_id = $2 AND addressee_id = $1)`,
+		userID, blockedID); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO friendships (requester_id, addressee_id, status, created_at, updated_at)
+		VALUES ($1, $2, 'BLOCKED', $3, $3)`,
+		userID, blockedID, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// UnblockFriendship removes the block userID placed on blockedID. The pair goes
+// back to nobody in particular: the old friendship does not come back, and
+// either side can send a new request. ErrNotFound when userID blocks nobody there.
+func (s *ServerStore) UnblockFriendship(ctx context.Context, userID, blockedID int) error {
+	res, err := s.db.ExecContext(ctx, `
+		DELETE FROM friendships
+		WHERE status = 'BLOCKED' AND requester_id = $1 AND addressee_id = $2`,
+		userID, blockedID)
 	if err != nil {
 		return err
 	}
@@ -182,8 +234,8 @@ func (s *ServerStore) BlockFriendship(ctx context.Context, userID, requesterID i
 }
 
 // Person is another user as seen by the asking user. Relation is "friend",
-// "incoming" (they asked you), "outgoing" (you asked them) or "" for nobody
-// in particular.
+// "incoming" (they asked you), "outgoing" (you asked them), "blocked" (you
+// blocked them; only from FetchRequests) or "" for nobody in particular.
 type Person struct {
 	ID       int
 	Username string
@@ -215,12 +267,15 @@ func scanPeople(rows *sql.Rows) ([]Person, error) {
 // FetchRequests lists the friends and pending requests (both directions) of
 // userID.
 func (s *ServerStore) FetchRequests(ctx context.Context, userID int) ([]Person, error) {
+	// A BLOCKED row counts only for its blocker, the requester (see BlockFriendship).
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT u.id, u.username, `+relationSQL+`
+		SELECT u.id, u.username,
+		  CASE WHEN f.status = 'BLOCKED' THEN 'blocked' ELSE (`+relationSQL+`) END
 		FROM friendships f
 		JOIN users u ON u.id = CASE WHEN f.requester_id = $1 THEN f.addressee_id ELSE f.requester_id END
 		WHERE (f.requester_id = $1 OR f.addressee_id = $1)
-		  AND f.status IN ('PENDING', 'ACCEPTED')
+		  AND (f.status IN ('PENDING', 'ACCEPTED')
+		       OR (f.status = 'BLOCKED' AND f.requester_id = $1))
 		ORDER BY LOWER(u.username)`, userID)
 	if err != nil {
 		return nil, err

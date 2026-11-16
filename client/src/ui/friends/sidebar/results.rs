@@ -1,5 +1,5 @@
-//! Sidebar body: incoming requests, friends matching the search, plus "send
-//! request" for the typed name. With an empty search: requests and friends.
+//! Sidebar body: friends matching the search, plus "send request" for the typed
+//! name. Pending and blocked live in the friends sheet.
 
 use super::super::FriendsView;
 use crate::api::{Friend, Relation};
@@ -40,32 +40,11 @@ impl FriendsView {
                 .filter(|f| f.name.to_lowercase().contains(&query.to_lowercase()))
         };
         let friends: Vec<_> = matching(Relation::Friend).collect();
-        let incoming: Vec<_> = matching(Relation::Incoming).collect();
         let empty = if self.friends.is_empty() {
             "No friends yet."
         } else {
             "No friends match."
         };
-
-        let requests = (!incoming.is_empty()).then(|| {
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(heading("Requests", t.muted))
-                .children(incoming.iter().map(|f| {
-                    let id = f.id;
-                    // Decline stays grey (not the main action), red only on hover.
-                    let decline = tonal(("decline", f.id as u64), "Decline", "x", t.muted, &t)
-                        .bg(t.fill)
-                        .hover(|s| s.bg(t.danger.opacity(0.22)))
-                        .on_click(cx.listener(move |this, _, _, cx| this.decline(id, cx)));
-                    let accept = tonal(("accept", f.id as u64), "Accept", "check", t.success, &t)
-                        .on_click(cx.listener(move |this, _, _, cx| this.accept(id, cx)));
-                    let actions = div().flex().gap_1().child(decline).child(accept);
-                    row(f.id, &f.name, &t, false, Some(actions.into_any_element()))
-                }))
-        });
 
         let view = cx.entity();
         let friends = div()
@@ -159,7 +138,6 @@ impl FriendsView {
             .flex()
             .flex_col()
             .gap_3()
-            .children(requests)
             .child(friends)
             .children(add)
     }

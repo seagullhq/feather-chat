@@ -442,12 +442,62 @@ func (s *Server) handleBlockFriend(c *client, msg protocol.Control) {
 	ctx, cancel := storeCtx()
 	defer cancel()
 	if err := s.friends.BlockFriendship(ctx, c.sess.UserID, msg.UserID); err != nil {
+		if errors.Is(err, friends.ErrSelfRequest) {
+			c.sendError(err.Error())
+			return
+		}
+		log.Printf("[FRIENDS] failed to block %d for %d: %v", msg.UserID, c.sess.UserID, err)
+		c.sendError("block failed")
+		return
+	}
+	s.friendsChanged(msg.UserID)
+	c.send(protocol.Control{Type: "ACK", TargetUserID: msg.UserID})
+}
+
+// handleCancelFriendRequest answers CANCEL_FRIENDSHIP_REQUEST by withdrawing the
+// pending request the session's user sent to userId.
+func (s *Server) handleCancelFriendRequest(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	if msg.UserID <= 0 {
+		c.sendError("addressee id required")
+		return
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	if err := s.friends.CancelFriendship(ctx, c.sess.UserID, msg.UserID); err != nil {
 		if errors.Is(err, friends.ErrNotFound) {
 			c.sendError("friend request not found")
 			return
 		}
-		log.Printf("[FRIENDS] failed to decline %d for %d: %v", msg.UserID, c.sess.UserID, err)
-		c.sendError("decline failed")
+		log.Printf("[FRIENDS] failed to cancel %d for %d: %v", msg.UserID, c.sess.UserID, err)
+		c.sendError("cancel failed")
+		return
+	}
+	s.friendsChanged(msg.UserID)
+	c.send(protocol.Control{Type: "ACK", TargetUserID: msg.UserID})
+}
+
+// handleUnblockFriend answers UNBLOCK_FRIENDSHIP by lifting the block the
+// session's user placed on userId. Nothing is restored: they are strangers again.
+func (s *Server) handleUnblockFriend(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	if msg.UserID <= 0 {
+		c.sendError("requester id required")
+		return
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	if err := s.friends.UnblockFriendship(ctx, c.sess.UserID, msg.UserID); err != nil {
+		if errors.Is(err, friends.ErrNotFound) {
+			c.sendError("user is not blocked")
+			return
+		}
+		log.Printf("[FRIENDS] failed to unblock %d for %d: %v", msg.UserID, c.sess.UserID, err)
+		c.sendError("unblock failed")
 		return
 	}
 	s.friendsChanged(msg.UserID)

@@ -14,6 +14,8 @@ pub enum Relation {
     Outgoing,
     /// Nobody in particular: a search hit you can send a request to.
     Stranger, // Like cecco25 <https://github.com/cecco25>
+    /// You blocked them.
+    Blocked,
 }
 
 impl Relation {
@@ -22,6 +24,7 @@ impl Relation {
             "friend" => Self::Friend,
             "incoming" => Self::Incoming,
             "outgoing" => Self::Outgoing,
+            "blocked" => Self::Blocked,
             _ => Self::Stranger,
         }
     }
@@ -81,6 +84,18 @@ pub(super) fn remove_friend(session: &mut Session, user_id: i64) -> Result<(), S
 pub(super) fn block_friend(session: &mut Session, user_id: i64) -> Result<(), String> {
     session
         .call(json!({"type":"BLOCK_FRIENDSHIP","userId":user_id}))
+        .map(drop)
+}
+
+pub(super) fn cancel_friend(session: &mut Session, user_id: i64) -> Result<(), String> {
+    session
+        .call(json!({"type":"CANCEL_FRIENDSHIP_REQUEST","userId":user_id}))
+        .map(drop)
+}
+
+pub(super) fn unblock_friend(session: &mut Session, user_id: i64) -> Result<(), String> {
+    session
+        .call(json!({"type":"UNBLOCK_FRIENDSHIP","userId":user_id}))
         .map(drop)
 }
 
