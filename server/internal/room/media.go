@@ -51,9 +51,11 @@ func (m *Manager) ServeUDP(pc *net.UDPConn) {
 		if s == nil {
 			continue
 		}
-		if s.UDPAddr == nil {
-			s.UDPAddr = udpAddr
-		}
+		// Follow the latest source address: each JOIN opens a new client UDP
+		// socket (new port) on the same session, and NATs rebind ports too.
+		// ponytail: SSRC is not authenticated, so a spoofer could redirect the
+		// stream; a per-session media token in HELLO would close that.
+		s.UDPAddr = udpAddr
 		packet := make([]byte, n)
 		m.forward(pc, s, packet[:copy(packet, buf[:n])])
 	}

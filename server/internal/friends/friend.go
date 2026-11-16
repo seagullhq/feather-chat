@@ -129,12 +129,16 @@ func (s *ServerStore) AcceptFriendship(ctx context.Context, userID, requesterID 
 }
 
 
-// RemoveFriendship remove the friendship from requesterID to userID. ErrNotFound when there is no such .
-func (s *ServerStore) RemoveFriendship(ctx context.Context, userID, requesterID int) error {
+// RemoveFriendship ends the friendship between userID and friendID, whoever
+// asked first. Only ACCEPTED rows: a blocked user must not lift a block this
+// way. ErrRemoveFriend when they are not friends.
+func (s *ServerStore) RemoveFriendship(ctx context.Context, userID, friendID int) error {
 	res, err := s.db.ExecContext(ctx, `
-		REMOVE FROM friendships
-		WHERE requester_id = $2 AND addressee_id = $1`,
-		userID, requesterID)
+		DELETE FROM friendships
+		WHERE status = 'ACCEPTED'
+		  AND ((requester_id = $1 AND addressee_id = $2)
+		    OR (requester_id = $2 AND addressee_id = $1))`,
+		userID, friendID)
 	if err != nil {
 		return err
 	}

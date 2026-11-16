@@ -83,10 +83,13 @@ tasks:
       - install -m 755 dist/client/release/feather-chat "dist/Feather Chat.app/Contents/MacOS/feather-chat"
       - install -m 644 packaging/macos/Info.plist "dist/Feather Chat.app/Contents/Info.plist"
       - install -m 644 client/assets/icon.icns "dist/Feather Chat.app/Contents/Resources/icon.icns"
-      # Ad-hoc signature: TCC ties the microphone grant to the code signature, and
-      # macOS refuses one for an unsigned app. No entitlement is needed outside
-      # App Sandbox / hardened runtime.
-      - codesign --force --sign - "dist/Feather Chat.app"
+      # Ad-hoc signature over the whole bundle, as Alacritty does. Without it
+      # Gatekeeper calls the downloaded app "damaged", and TCC refuses the
+      # microphone grant (it is tied to the code signature). No entitlement is
+      # needed outside App Sandbox / hardened runtime. No Apple Developer ID,
+      # so the first launch still needs right-click > Open.
+      - codesign --remove-signature "dist/Feather Chat.app"
+      - codesign --force --deep --sign - "dist/Feather Chat.app"
 
   build-server:
     desc: Build the server binary into dist/server/

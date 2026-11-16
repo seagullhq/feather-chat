@@ -183,6 +183,9 @@ impl FriendsView {
     pub(super) fn select_friend(&mut self, id: i64, cx: &mut Context<Self>) {
         self.selected_friend = Some(id);
         self.friend_menu = None;
+        // The DM view hides the mic check: close it rather than keep the mic open.
+        let check = self.servers.read(cx).voice_check();
+        check.update(cx, |v, cx| v.stop(cx));
         cx.notify();
     }
 

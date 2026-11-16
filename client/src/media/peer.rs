@@ -46,6 +46,13 @@ impl Peer {
         let now = Instant::now();
         if let Some(prev) = self.newest {
             let step = seq.wrapping_sub(prev) as i32;
+            // Far behind the newest: the sender rejoined (seq restarts at 0,
+            // new encoder) before PEER_TIMEOUT dropped us. Start over, or its
+            // packets count as late and the jitter estimate freezes.
+            if step < -(4 * MAX_QUEUED as i32) {
+                *self = Self::new();
+                return self.insert(seq, frame, term);
+            }
             let gap = now.duration_since(self.last).as_secs_f32() * 1000.;
             // Only consecutive packets of one talkspurt say something about the network.
             if (1..50).contains(&step) && gap < 200. {
@@ -147,5 +154,9 @@ mod tests {
             p.queue.len() <= 1,
             "late packets accepted only while unprimed"
         );
+        // Sender rejoined: seq restarts far behind the newest one.
+        p.insert(100, frame(100), false);
+        p.insert(0, frame(0), false);
+        assert!(p.newest == Some(0) && p.queue.len() == 1, "restarted stream resets the peer");
     }
 }

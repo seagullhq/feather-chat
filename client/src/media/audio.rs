@@ -2,7 +2,7 @@
 
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{FromSample, Sample, SizedSample, Stream, StreamConfig, SupportedStreamConfig};
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -44,7 +44,8 @@ pub(super) fn audio(
                 let name = PREFS.output.lock().unwrap().clone();
                 device(&host, name, false).and_then(|d| dev_name(&d))
             };
-            built == Some(generation) && (want_in != built_in || want_out != built_out)
+            let dead = STREAM_DEAD.swap(false, Relaxed);
+            built == Some(generation) && (dead || want_in != built_in || want_out != built_out)
         } else {
             false
         };
@@ -90,15 +91,30 @@ pub(super) fn audio(
     }
 }
 
+/// Set by a stream that died (device gone or reset, host restarted, config
+/// invalidated). The audio thread rebuilds on its next device check: a
+/// headset that reconnects under the same name would otherwise stay silent.
+// ponytail: one global for every audio thread; a spurious rebuild of a
+// healthy stream costs one short gap.
+static STREAM_DEAD: AtomicBool = AtomicBool::new(false);
+
 /// Stream error callback (runs on the audio thread). An xrun is a dropped
 /// buffer, not a dead stream: the rings and jitter buffer absorb the gap, and
 /// WASAPI also reports one at the start of a fresh stream. It is not actionable
 /// and would flood stderr from the audio thread, so ignore it; other errors
 /// still show.
 fn log_stream_error(prefix: &'static str) -> impl FnMut(cpal::Error) + Send + 'static {
+    use cpal::ErrorKind::*;
     move |e| {
-        if e.kind() != cpal::ErrorKind::Xrun {
-            eprintln!("{prefix}: {e}");
+        if e.kind() == Xrun {
+            return;
+        }
+        eprintln!("{prefix}: {e}");
+        if matches!(
+            e.kind(),
+            DeviceNotAvailable | DeviceBusy | HostUnavailable | StreamInvalidated
+        ) {
+            STREAM_DEAD.store(true, Relaxed);
         }
     }
 }
