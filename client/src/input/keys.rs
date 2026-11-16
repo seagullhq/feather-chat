@@ -12,11 +12,23 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("right", Right, Some("TextInput")),
         KeyBinding::new("shift-left", SelectLeft, Some("TextInput")),
         KeyBinding::new("shift-right", SelectRight, Some("TextInput")),
+        KeyBinding::new("home", Home, Some("TextInput")),
+        KeyBinding::new("end", End, Some("TextInput")),
+    ]);
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    cx.bind_keys([
         KeyBinding::new("ctrl-a", SelectAll, Some("TextInput")),
         KeyBinding::new("ctrl-v", Paste, Some("TextInput")),
         KeyBinding::new("ctrl-c", Copy, Some("TextInput")),
         KeyBinding::new("ctrl-x", Cut, Some("TextInput")),
-        KeyBinding::new("home", Home, Some("TextInput")),
-        KeyBinding::new("end", End, Some("TextInput")),
+    ]);
+
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([
+        KeyBinding::new("secondary-a", SelectAll, Some("TextInput")),
+        KeyBinding::new("secondary-v", Paste, Some("TextInput")),
+        KeyBinding::new("secondary-c", Copy, Some("TextInput")),
+        KeyBinding::new("secondary-x", Cut, Some("TextInput")),
     ]);
 }
