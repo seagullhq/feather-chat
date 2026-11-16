@@ -111,18 +111,13 @@ impl StatusBar {
             )
             .child(div().flex_1())
             .children(self.media.as_ref().and_then(|m| m.ping_ms()).map(|ms| {
-                // Green below 80 ms,yellow > 80 and < 200, red from 200 ms.
+                // Good below 80 ms, warning below 200, bad from 200 ms.
                 let color = if ms < 80 {
-                    gpui::hsla(120.0 / 360.0, 1.0, 0.5, 1.0)
+                    t.success
                 } else if ms < 200 {
-                    gpui::hsla(60.0 / 360.0, 1.0, 0.5, 1.0)
+                    t.warning
                 } else {
-                    gpui::Hsla {
-                        h: 0.0,
-                        s: 1.0,
-                        l: 0.5,
-                        a: 1.0,
-                    }
+                    t.danger
                 };
                 div()
                     .id("ping")
