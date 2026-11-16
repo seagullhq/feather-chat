@@ -3,6 +3,7 @@ package control
 import (
 	"errors"
 	"log"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -36,6 +37,40 @@ func (s *Server) handleListServers(c *client, _ protocol.Control) {
 		})
 	}
 	c.send(protocol.Control{Type: "ACK", Servers: summaries})
+}
+
+func (s *Server) handleSendDM(c *client, msg protocol.Control){
+	if !c.requireAuth() {
+		return
+	}
+
+	c.send(protocol.Control{Type: "ACK"})
+}
+
+func (s *Server) handleRecieveDM(c *client, msg protocol.Control){
+	if !c.requireAuth() {
+		return
+	}
+
+	c.send(protocol.Control{Type: "ACK"})
+}
+
+func (s *Server) handleUpdateDM(c *client, msg protocol.Control){
+	if !c.requireAuth() {
+		return
+	}
+
+	senderID := c.sess.UserID
+
+	if strings.EqualFold(msg.DirectRecipientID, "") {
+    	return
+	}
+
+	recipientID,_ := strconv.Atoi( msg.DirectRecipientID);
+	ctx, cancel := storeCtx()
+	defer cancel()
+	a, err := s.messages.SendDM(ctx, senderID, recipientID, msg.DirectContent)
+	c.send(protocol.Control{Type: "ACK"})
 }
 
 // handleCreateServer answers CREATE_SERVER by creating a server owned by

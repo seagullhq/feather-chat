@@ -32,6 +32,8 @@ type Control struct {
 	Query           string                `json:"query,omitempty"`
 	Friends         []PersonSummary       `json:"friends,omitempty"`
 	Users           []PersonSummary       `json:"users,omitempty"`
+	DirectRecipientID	string			  `json:"directRecipientID,omitempty"`
+	DirectContent	string				  `json:"directContent,omitempty"`
 }
 
 // PersonSummary is another user with the asking user's relation to them:

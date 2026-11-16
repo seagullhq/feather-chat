@@ -97,8 +97,10 @@ func (s *ServerStore) ListChannels(ctx context.Context, serverID, userID int) ([
 
 func (s *ServerStore) ListChannelType(ctx context.Context) ([]ChannelType, error) {
 	query := `
-		SELECT id, type_name FROM channel_types
-		ORDER BY id
+		SELECT id, type_name
+		FROM channel_types
+		WHERE type_name != 'direct'
+		ORDER BY id;
 	`
 
 	rows, err := s.db.QueryContext(ctx, query)

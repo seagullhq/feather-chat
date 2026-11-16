@@ -9,6 +9,7 @@ import (
 
 	"github.com/seagullhq/feather-chat/server/internal/accounts"
 	"github.com/seagullhq/feather-chat/server/internal/friends"
+	"github.com/seagullhq/feather-chat/server/internal/messages"
 	"github.com/seagullhq/feather-chat/server/internal/protocol"
 	"github.com/seagullhq/feather-chat/server/internal/room"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
@@ -21,6 +22,7 @@ type Server struct {
 	users   *accounts.Store
 	servers *servers.ServerStore
 	friends *friends.ServerStore
+	messages *messages.ServerStore
 }
 
 // New wires a control server around the stores and the room state.
@@ -75,6 +77,9 @@ var handlers = map[string]func(*Server, *client, protocol.Control){
 	"UNBLOCK_FRIENDSHIP":         (*Server).handleUnblockFriend,
 	"CANCEL_FRIENDSHIP_REQUEST":  (*Server).handleCancelFriendRequest,
 	"SEARCH_USERS":               (*Server).handleSearchUsers,
+	"SEND_DIRECT_MESSAGE":		  (*Server).handleSendDM,
+	"RECIEVE_DIRECT_MESSAGE":	  (*Server).handleRecieveDM,
+	"UPDATE_DIRECT_MESSAGE":	  (*Server).handleUpdateDM,
 }
 
 // dispatch routes one decoded message, ignoring unknown types (§7 interop
