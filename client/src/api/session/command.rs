@@ -73,6 +73,12 @@ pub(super) enum Command {
     DeclineFriend {
         user_id: i64,
     },
+    RemoveFriend {
+        user_id: i64,
+    },
+    BlockFriend {
+        user_id: i64,
+    },
     AddFriend {
         username: String,
     },
@@ -208,6 +214,14 @@ impl Control {
 
     pub fn decline_friend(&self, user_id: i64) -> bool {
         self.tx.try_send(Command::DeclineFriend { user_id }).is_ok()
+    }
+
+    pub fn remove_friend(&self, user_id: i64) -> bool {
+        self.tx.try_send(Command::RemoveFriend { user_id }).is_ok()
+    }
+
+    pub fn block_friend(&self, user_id: i64) -> bool {
+        self.tx.try_send(Command::BlockFriend { user_id }).is_ok()
     }
 
     pub fn add_friend(&self, username: String) -> bool {

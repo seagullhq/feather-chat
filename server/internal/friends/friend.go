@@ -16,6 +16,7 @@ var (
 	ErrBadCredentials = errors.New("invalid credentials")
 	ErrNotFound       = errors.New("user not found")
 	ErrSelfRequest    = errors.New("cannot send a friend request to yourself")
+	ErrRemoveFriend   = errors.New("could not remove the friendship")
 	ErrAlreadyExists  = errors.New("friend request already exists")
 )
 
@@ -127,6 +128,25 @@ func (s *ServerStore) AcceptFriendship(ctx context.Context, userID, requesterID 
 	return nil
 }
 
+
+// RemoveFriendship remove the friendship from requesterID to userID. ErrNotFound when there is no such .
+func (s *ServerStore) RemoveFriendship(ctx context.Context, userID, requesterID int) error {
+	res, err := s.db.ExecContext(ctx, `
+		REMOVE FROM friendships
+		WHERE requester_id = $2 AND addressee_id = $1`,
+		userID, requesterID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrRemoveFriend
+	}
+	return nil
+}
+
+
 // DeclineFriendship drops the pending request from requesterID to userID.
 // ponytail: deletes the row (no REJECTED), so they can ask again later.
 func (s *ServerStore) DeclineFriendship(ctx context.Context, userID, requesterID int) error {
@@ -134,6 +154,22 @@ func (s *ServerStore) DeclineFriendship(ctx context.Context, userID, requesterID
 		DELETE FROM friendships
 		WHERE requester_id = $2 AND addressee_id = $1 AND status = 'PENDING'`,
 		userID, requesterID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *ServerStore) BlockFriendship(ctx context.Context, userID, requesterID int) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE friendships SET status = 'BLOCKED', updated_at = $3
+		WHERE requester_id = $2 AND addressee_id = $1`,
+		userID, requesterID, time.Now().UTC())
 	if err != nil {
 		return err
 	}

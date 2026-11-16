@@ -72,7 +72,19 @@ pub(super) fn decline_friend(session: &mut Session, user_id: i64) -> Result<(), 
         .map(drop)
 }
 
-/// Sends a request. Unfriend / cancel wait for backend messages.
+pub(super) fn remove_friend(session: &mut Session, user_id: i64) -> Result<(), String> {
+    session
+        .call(json!({"type":"REMOVE_FRIENDSHIP","userId":user_id}))
+        .map(drop)
+}
+
+pub(super) fn block_friend(session: &mut Session, user_id: i64) -> Result<(), String> {
+    session
+        .call(json!({"type":"BLOCK_FRIENDSHIP","userId":user_id}))
+        .map(drop)
+}
+
+/// Sends a request. Cancel waits for a backend message.
 pub(super) fn add_friend(session: &mut Session, username: &str) -> Result<(), String> {
     session
         .call(json!({"type":"SEND_FRIENDSHIP_REQUEST","username":username}))

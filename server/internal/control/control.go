@@ -70,6 +70,8 @@ var handlers = map[string]func(*Server, *client, protocol.Control){
 	"FETCH_FRIENDSHIP_REQUEST":   (*Server).handleFetchFriendRequest,
 	"ACCEPT_FRIENDSHIP_REQUEST":  (*Server).handleAcceptFriendRequest,
 	"DECLINE_FRIENDSHIP_REQUEST": (*Server).handleDeclineFriendRequest,
+	"REMOVE_FRIENDSHIP": 		  (*Server).handleRemoveFriend,
+	"BLOCK_FRIENDSHIP": 		  (*Server).handleBlockFriend,
 	"SEARCH_USERS":               (*Server).handleSearchUsers,
 }
 

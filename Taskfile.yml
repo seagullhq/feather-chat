@@ -6,20 +6,23 @@
 # Each entry in `cmds` runs in its own shell: a `cd` or `export` does not carry
 # over to the next entry, so use `dir:` and `env:` instead.
 
-version: '3'
+version: "3"
 
 vars:
   # Cargo output directory (relative to client/, where the cargo tasks run).
   CLIENT_TARGET: ../dist/client
   # The race detector needs cgo and a C compiler, which we don't require on Windows.
   RACE: '{{if ne OS "windows"}}-race {{end}}'
-  PORT: ':7700'
+  PORT: ":7700"
 
 env:
   # Dev and test builds keep line tables (backtraces and file:line still work)
   # instead of full debug info: most of gpui's debug size is DWARF for its own
   # crates. Exported, so every cargo command picks it up on every platform.
   CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  # Uncomment if sccache is installed: keeps the cache across `cargo clean`
+  # and profile switches. Do not change RUSTFLAGS between tasks.
+  # RUSTC_WRAPPER: sccache
 
 tasks:
   default:
@@ -50,6 +53,12 @@ tasks:
     dir: client
     cmds:
       - cargo run --profile fast --target-dir {{.CLIENT_TARGET}}
+
+  check-client:
+    desc: Type-check the client only (no codegen, fastest feedback)
+    dir: client
+    cmds:
+      - cargo check --target-dir {{.CLIENT_TARGET}}
 
   install-client:
     desc: Install the client, desktop entry and icons for the current user
@@ -95,9 +104,10 @@ tasks:
       - task: test-client
 
   test-client:
+    desc: Run the client tests (fast profile, shares cached deps with build-fast)
     dir: client
     cmds:
-      - cargo test --target-dir {{.CLIENT_TARGET}}
+      - cargo test --profile fast --target-dir {{.CLIENT_TARGET}}
 
   test-server:
     desc: Run the server's Go tests, verbose, no result cache
@@ -146,9 +156,8 @@ tasks:
 
   check:
     desc: Format, vet, test and build. Run before pushing
+    deps: [fmt-check, vet]
     cmds:
-      - task: fmt-check
-      - task: vet
       - task: test
       - task: build
       - task: build-server

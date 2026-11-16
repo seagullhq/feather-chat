@@ -315,6 +315,55 @@ func (s *Server) handleSendFriendRequest(c *client, msg protocol.Control) {
 	c.send(protocol.Control{Type: "ACK", TargetUserID: request.AddresseeID})
 }
 
+
+// handleSendFriendRequest answers SEND_FRIENDSHIP_REQUEST by storing a pending
+// request from the session's user to a user named by ID or username.
+func (s *Server) handleRemoveFriend(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+
+	addresseeID := msg.TargetUserID
+	if addresseeID == 0 {
+		addresseeID = msg.UserID
+	}
+	if addresseeID == 0 {
+		username := strings.TrimSpace(msg.Username)
+		if username == "" {
+			c.sendError("target user or username required")
+			return
+		}
+		user, err := s.users.FindByUsername(ctx, username)
+		if err != nil {
+			if errors.Is(err, accounts.ErrNotFound) {
+				c.sendError(accounts.ErrNotFound.Error())
+				return
+			}
+			log.Printf("[FRIENDS] failed to look up %q: %v", username, err)
+			c.sendError("friend request failed")
+			return
+		}
+		addresseeID = user.ID
+	}
+
+	err := s.friends.RemoveFriendship(ctx, c.sess.UserID, addresseeID)
+	if err != nil {
+		switch {
+		case errors.Is(err, friends.ErrRemoveFriend):
+			c.sendError(err.Error())
+		default:
+			log.Printf("[FRIENDS] failed to remove from %d to %d: %v", c.sess.UserID, addresseeID, err)
+			c.sendError("remove friendship failed")
+		}
+		return
+	}
+	s.friendsChanged(addresseeID)
+	c.send(protocol.Control{Type: "ACK", TargetUserID: addresseeID})
+}
+
+
 // handleFetchFriendRequest answers FETCH_FRIENDSHIP_REQUEST with the pending
 // requests of the session's user.
 func (s *Server) handleFetchFriendRequest(c *client, msg protocol.Control) {
@@ -370,6 +419,29 @@ func (s *Server) handleDeclineFriendRequest(c *client, msg protocol.Control) {
 	ctx, cancel := storeCtx()
 	defer cancel()
 	if err := s.friends.DeclineFriendship(ctx, c.sess.UserID, msg.UserID); err != nil {
+		if errors.Is(err, friends.ErrNotFound) {
+			c.sendError("friend request not found")
+			return
+		}
+		log.Printf("[FRIENDS] failed to decline %d for %d: %v", msg.UserID, c.sess.UserID, err)
+		c.sendError("decline failed")
+		return
+	}
+	s.friendsChanged(msg.UserID)
+	c.send(protocol.Control{Type: "ACK", TargetUserID: msg.UserID})
+}
+
+func (s *Server) handleBlockFriend(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	if msg.UserID <= 0 {
+		c.sendError("requester id required")
+		return
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	if err := s.friends.BlockFriendship(ctx, c.sess.UserID, msg.UserID); err != nil {
 		if errors.Is(err, friends.ErrNotFound) {
 			c.sendError("friend request not found")
 			return

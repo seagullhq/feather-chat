@@ -26,6 +26,12 @@ pub struct FriendsView {
     found: Vec<Friend>,
     searched: String,
     error: Option<String>,
+    /// Friend whose "..." menu is open.
+    friend_menu: Option<i64>,
+    /// Friend open in the stage, if any.
+    selected_friend: Option<i64>,
+    /// Text chat panel beside the call. Collapsed by default: voice is the focus.
+    chat_open: bool,
 }
 
 impl FriendsView {
@@ -49,6 +55,9 @@ impl FriendsView {
             found: Vec::new(),
             searched: String::new(),
             error: None,
+            friend_menu: None,
+            selected_friend: None,
+            chat_open: false,
         }
     }
 
@@ -112,7 +121,26 @@ impl FriendsView {
         self.friends.clear();
         self.found.clear();
         self.error = None;
+        self.selected_friend = None;
+        self.chat_open = false;
         self.search.update(cx, |input, cx| input.set_text("", cx));
+        cx.notify();
+    }
+
+    pub(super) fn select_friend(&mut self, id: i64, cx: &mut Context<Self>) {
+        self.selected_friend = Some(id);
+        self.friend_menu = None;
+        cx.notify();
+    }
+
+    pub(super) fn close_friend(&mut self, cx: &mut Context<Self>) {
+        self.selected_friend = None;
+        self.chat_open = false;
+        cx.notify();
+    }
+
+    pub(super) fn toggle_chat(&mut self, cx: &mut Context<Self>) {
+        self.chat_open = !self.chat_open;
         cx.notify();
     }
 
@@ -130,6 +158,32 @@ impl FriendsView {
             c.decline_friend(user_id);
         }
         cx.notify();
+    }
+
+    pub(super) fn remove_friend(&mut self, user_id: i64, cx: &mut Context<Self>) {
+        self.error = None;
+        if let Some(c) = &self.control {
+            c.remove_friend(user_id);
+        }
+        self.close_if_selected(user_id);
+        cx.notify();
+    }
+
+    pub(super) fn block_friend(&mut self, user_id: i64, cx: &mut Context<Self>) {
+        self.error = None;
+        if let Some(c) = &self.control {
+            c.block_friend(user_id);
+        }
+        self.close_if_selected(user_id);
+        cx.notify();
+    }
+
+    /// The DM view of a friend who is gone should not stay open.
+    fn close_if_selected(&mut self, user_id: i64) {
+        if self.selected_friend == Some(user_id) {
+            self.selected_friend = None;
+            self.chat_open = false;
+        }
     }
 
     /// Send a request to `name`.
