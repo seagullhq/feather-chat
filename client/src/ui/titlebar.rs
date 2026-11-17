@@ -51,6 +51,12 @@ impl Titlebar {
         }
     }
 
+    /// Starts with `mode` selected (restored from the last session).
+    pub fn with_mode(mut self, mode: Mode) -> Self {
+        self.mode = mode;
+        self
+    }
+
     pub fn set_toggle(&mut self, on: bool, cx: &mut Context<Self>) {
         if self.toggle != on {
             self.toggle = on;

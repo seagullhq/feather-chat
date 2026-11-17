@@ -84,6 +84,14 @@ impl FriendsView {
             cx.notify();
         })
         .detach();
+        // Reopen on the friend and chat left open last time.
+        let (selected_friend, chat_open) = match super::userfiles::read_user_file("last_friend") {
+            Ok(Some(s)) => match s.trim().split_once(',') {
+                Some((id, open)) => (id.parse().ok(), open == "1"),
+                None => (None, false),
+            },
+            _ => (None, false),
+        };
         Self {
             servers,
             search,
@@ -93,8 +101,8 @@ impl FriendsView {
             searched: String::new(),
             error: None,
             friend_menu: None,
-            selected_friend: None,
-            chat_open: false,
+            selected_friend,
+            chat_open,
             chat_input: cx.new(|cx| TextInput::multiline("Message (Shift+Enter for a new line)", cx).with_right_inset(30.)),
             chat_log: HashMap::new(),
             chat_scroll: ScrollHandle::new(),
@@ -157,6 +165,16 @@ impl FriendsView {
         cx.notify();
     }
 
+    /// Remembers the open friend and chat for the next start.
+    // ponytail: write errors ignored, it just isn't remembered.
+    fn remember_chat(&self) {
+        let value = match self.selected_friend {
+            Some(id) => format!("{id},{}", u8::from(self.chat_open)),
+            None => String::new(),
+        };
+        let _ = super::userfiles::write_user_file("last_friend", &value);
+    }
+
     fn load_dm(&self, peer: i64) {
         if let Some(c) = &self.control {
             c.load_dm(peer);
@@ -165,6 +183,17 @@ impl FriendsView {
 
     pub fn set_friends(&mut self, friends: Vec<Friend>, cx: &mut Context<Self>) {
         self.friends = friends;
+        if let Some(id) = self.selected_friend {
+            if !self.friends.iter().any(|f| f.id == id) {
+                // The remembered friend is gone: forget them.
+                self.selected_friend = None;
+                self.chat_open = false;
+                self.remember_chat();
+            } else if !self.chat_log.contains_key(&id) {
+                // A restored friend has no history yet: fetch it now.
+                self.load_dm(id);
+            }
+        }
         cx.notify();
     }
 
@@ -227,6 +256,7 @@ impl FriendsView {
         self.friend_menu = None;
         self.sheet_open = false;
         self.load_dm(id);
+        self.remember_chat();
         window.focus(&self.sheet_focus, cx);
         cx.notify();
     }
@@ -235,6 +265,7 @@ impl FriendsView {
         self.selected_friend = Some(id);
         self.friend_menu = None;
         self.load_dm(id);
+        self.remember_chat();
         // The DM view hides the mic check: close it rather than keep the mic open.
         let check = self.servers.read(cx).voice_check();
         check.update(cx, |v, cx| v.stop(cx));
@@ -244,11 +275,13 @@ impl FriendsView {
     pub(super) fn close_friend(&mut self, cx: &mut Context<Self>) {
         self.selected_friend = None;
         self.chat_open = false;
+        self.remember_chat();
         cx.notify();
     }
 
     pub(super) fn toggle_chat(&mut self, cx: &mut Context<Self>) {
         self.chat_open = !self.chat_open;
+        self.remember_chat();
         cx.notify();
     }
 
@@ -307,6 +340,7 @@ impl FriendsView {
         if self.selected_friend == Some(user_id) {
             self.selected_friend = None;
             self.chat_open = false;
+            self.remember_chat();
         }
     }
 

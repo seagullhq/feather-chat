@@ -35,11 +35,21 @@ impl Root {
         let servers = cx.new(|cx| ServersView::new(window, cx));
         let friends = cx.new(|cx| FriendsView::new(servers.clone(), cx));
         let status_bar = cx.new(StatusBar::new);
-        let titlebar = cx.new(|_| Titlebar::new(""));
+        // Reopen on the screen used last time.
+        let mode = match ui::userfiles::read_user_file("last_view") {
+            Ok(Some(s)) if s.trim() == "friends" => Mode::Friends,
+            _ => Mode::Servers,
+        };
+        let titlebar = cx.new(|_| Titlebar::new("").with_mode(mode));
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         cx.subscribe(&titlebar, |this, _, mode: &Mode, cx| {
             this.mode = *mode;
+            // ponytail: write errors ignored, the view just isn't remembered.
+            let _ = ui::userfiles::write_user_file(
+                "last_view",
+                if *mode == Mode::Friends { "friends" } else { "servers" },
+            );
             // Switching screens closes the mic check.
             let check = this.servers.read(cx).voice_check();
             check.update(cx, |v, cx| v.stop(cx));
@@ -69,7 +79,7 @@ impl Root {
             servers,
             friends,
             status_bar,
-            mode: Mode::Servers,
+            mode,
             titlebar,
             focus,
             pending: None,
