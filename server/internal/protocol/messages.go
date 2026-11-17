@@ -1,5 +1,7 @@
 package protocol
 
+import "github.com/seagullhq/feather-chat/server/internal/messages"
+
 // Control is a TCP control message (§7): HELLO, JOIN, LEAVE, ACK, ROSTER.
 type Control struct {
 	Type            string                `json:"type"`
@@ -34,6 +36,7 @@ type Control struct {
 	Users           []PersonSummary       `json:"users,omitempty"`
 	DirectRecipientID	string			  `json:"directRecipientID,omitempty"`
 	DirectContent	string				  `json:"directContent,omitempty"`
+	DirectInfo		*messages.Direct		  `json:"directInfo,omitempty"`
 }
 
 // PersonSummary is another user with the asking user's relation to them:

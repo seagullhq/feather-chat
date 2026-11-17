@@ -44,22 +44,6 @@ func (s *Server) handleSendDM(c *client, msg protocol.Control){
 		return
 	}
 
-	c.send(protocol.Control{Type: "ACK"})
-}
-
-func (s *Server) handleRecieveDM(c *client, msg protocol.Control){
-	if !c.requireAuth() {
-		return
-	}
-
-	c.send(protocol.Control{Type: "ACK"})
-}
-
-func (s *Server) handleUpdateDM(c *client, msg protocol.Control){
-	if !c.requireAuth() {
-		return
-	}
-
 	senderID := c.sess.UserID
 
 	if strings.EqualFold(msg.DirectRecipientID, "") {
@@ -69,7 +53,28 @@ func (s *Server) handleUpdateDM(c *client, msg protocol.Control){
 	recipientID,_ := strconv.Atoi( msg.DirectRecipientID);
 	ctx, cancel := storeCtx()
 	defer cancel()
-	a, err := s.messages.SendDM(ctx, senderID, recipientID, msg.DirectContent)
+	dm, err := s.messages.SendDM(ctx, senderID, recipientID, msg.DirectContent)
+
+	if err != nil {
+		c.sendError("The server could not elaborate this Direct Message session!")
+		return
+	}
+
+
+	c.send(protocol.Control{Type: "ACK", DirectInfo: dm})
+}
+
+func (s *Server) handleRecieveDM(c *client, msg protocol.Control){
+	if !c.requireAuth() {
+		return
+	}
+	c.send(protocol.Control{Type: "ACK"})
+}
+
+func (s *Server) handleUpdateDM(c *client, msg protocol.Control){
+	if !c.requireAuth() {
+		return
+	}
 	c.send(protocol.Control{Type: "ACK"})
 }
 
