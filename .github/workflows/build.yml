@@ -70,6 +70,16 @@ jobs:
         if: runner.os == 'macOS'
         run: task bundle-client
 
+      # signtool is not on PATH on windows-2025: add the newest Windows SDK
+      # copy to PATH for the signing steps below.
+      - name: Locate signtool
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $st = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1
+          if (-not $st) { throw "signtool.exe not found: install the Windows SDK" }
+          Add-Content -Path $env:GITHUB_PATH -Value $st.DirectoryName
+
       # Optional: signs the exe and the msi when the secrets are set (a PFX
       # from a paid or free OSS code-signing certificate). Without them the
       # installer ships unsigned and Windows SmartScreen warns on first run.

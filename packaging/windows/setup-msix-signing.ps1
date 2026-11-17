@@ -38,18 +38,27 @@ Import-Certificate -FilePath $cerPath -CertStoreLocation "Cert:\LocalMachine\Tru
 
 $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($pfxPath))
 
+# The two GitHub secrets, written to files to copy into the repo settings
+$b64File = Join-Path $dir "WINDOWS_SIGN_PFX_BASE64.txt"
+$passFile = Join-Path $dir "WINDOWS_SIGN_PFX_PASSWORD.txt"
+Set-Content -Path $b64File -Value $b64 -NoNewline -Encoding ASCII
+Set-Content -Path $passFile -Value $pass -NoNewline -Encoding ASCII
+
 Write-Host ""
-Write-Host "=== GitHub repo secrets (Settings > Secrets and variables > Actions > Secrets) ===" -ForegroundColor Yellow
-Write-Host "WINDOWS_SIGN_PFX_BASE64:"
+Write-Host "=== WINDOWS_SIGN_PFX_BASE64 (secret) ===" -ForegroundColor Yellow
 Write-Host $b64
 Write-Host ""
-Write-Host "WINDOWS_SIGN_PFX_PASSWORD:"
+Write-Host "=== WINDOWS_SIGN_PFX_PASSWORD (secret) ===" -ForegroundColor Yellow
 Write-Host $pass
 Write-Host ""
-Write-Host "=== GitHub repo variables (Settings > Secrets and variables > Actions > Variables) ===" -ForegroundColor Yellow
-Write-Host "MSIX_PUBLISHER        = $Subject"
-Write-Host "MSIX_IDENTITY_NAME    = com.feather.chat"
+Write-Host "Files in ${dir}:" -ForegroundColor Yellow
+Write-Host "  WINDOWS_SIGN_PFX_BASE64.txt   -> secret WINDOWS_SIGN_PFX_BASE64"
+Write-Host "  WINDOWS_SIGN_PFX_PASSWORD.txt -> secret WINDOWS_SIGN_PFX_PASSWORD"
+Write-Host "  feather-sign.cer              -> public cert, already trusted on this PC"
 Write-Host ""
-Write-Host "PFX and CER are in $dir (keep the PFX private, never commit it)."
-Write-Host "After adding the secrets and variables, re-run the build workflow, then install with:"
-Write-Host "  Add-AppxPackage -Path <file>.msix"
+Write-Host "Repo variables to add by hand (Settings > Secrets and variables > Actions > Variables):"
+Write-Host "  MSIX_PUBLISHER      = $Subject"
+Write-Host "  MSIX_IDENTITY_NAME  = com.feather.chat"
+Write-Host ""
+Write-Host "Keep feather-sign.pfx and the two .txt files private. Delete the .txt files after pasting them into GitHub."
+Write-Host "Then re-run the build workflow and install with: Add-AppxPackage -Path <file>.msix"
