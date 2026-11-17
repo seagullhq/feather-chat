@@ -90,6 +90,51 @@ tasks:
       # so the first launch still needs right-click > Open.
       - codesign --remove-signature "dist/Feather Chat.app"
       - codesign --force --deep --sign - "dist/Feather Chat.app"
+      # Fail the build on a broken bundle seal instead of shipping it.
+      - codesign --verify --deep --strict "dist/Feather Chat.app"
+
+  dmg:
+    desc: Wrap the .app bundle into a drag-to-Applications .dmg in dist/
+    platforms: [darwin]
+    deps: [bundle-client]
+    cmds:
+      - rm -rf dist/dmg-staging dist/feather-chat-macos.dmg
+      - mkdir -p dist/dmg-staging
+      - cp -R "dist/Feather Chat.app" dist/dmg-staging/
+      - ln -s /Applications dist/dmg-staging/Applications
+      - hdiutil create -volname "Feather Chat" -srcfolder dist/dmg-staging -ov -format UDZO dist/feather-chat-macos.dmg
+      - rm -rf dist/dmg-staging
+
+  package-msi:
+    desc: Build the Windows .msi installer (WiX) into dist/packages/
+    platforms: [windows]
+    deps: [build]
+    dir: client
+    # cargo-packager finds the binary through the cargo target dir, not
+    # --binaries-dir (that flag is ignored for the copy step), so point it at dist/client.
+    env:
+      CARGO_TARGET_DIR: ../dist/client
+    cmds:
+      - cargo packager --release --formats wix --out-dir ../dist/packages
+
+  package-msix:
+    desc: Build the Microsoft Store .msix package into dist/packages/ (Windows only)
+    platforms: [windows]
+    deps: [build]
+    cmds:
+      - powershell -NoProfile -ExecutionPolicy Bypass -File packaging/windows/build-msix.ps1
+
+  package-appimage:
+    desc: Build the Linux .AppImage into dist/packages/
+    platforms: [linux]
+    deps: [build]
+    dir: client
+    env:
+      CARGO_TARGET_DIR: ../dist/client
+      # linuxdeploy's bundled strip chokes on newer system libs (.relr.dyn section).
+      NO_STRIP: "1"
+    cmds:
+      - cargo packager --release --formats appimage --out-dir ../dist/packages
 
   build-server:
     desc: Build the server binary into dist/server/
