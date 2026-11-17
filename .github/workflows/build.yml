@@ -126,9 +126,9 @@ jobs:
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: |
-          ditto -c -k --keepParent "dist/Feather Chat.app" "feather-chat-macos-$(uname -m).zip"
+          ditto -c -k --keepParent "dist/Feather Chat.app" feather-chat-macos-arm64.zip
           task dmg
-          mv dist/feather-chat-macos.dmg "feather-chat-macos-$(uname -m).dmg"
+          mv dist/feather-chat-macos.dmg feather-chat-macos-arm64.dmg
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -142,10 +142,75 @@ jobs:
         if: runner.os == 'Linux'
         run: cp dist/packages/*.AppImage feather-chat-linux-x86_64.AppImage
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      # One artifact per file, not zipped: GitHub otherwise wraps each upload
+      # in an extra zip, so the run shows one zip per OS.
+      - name: Upload Linux AppImage
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: feather-chat-${{ runner.os }}
-          path: feather-chat-*
+          name: feather-chat-linux-x86_64.AppImage
+          path: feather-chat-linux-x86_64.AppImage
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Linux tarball
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: feather-chat-linux-x86_64.tar.gz
+          path: feather-chat-linux-x86_64.tar.gz
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload macOS dmg
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: feather-chat-macos-arm64.dmg
+          path: feather-chat-macos-arm64.dmg
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload macOS zip
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: feather-chat-macos-arm64.zip
+          path: feather-chat-macos-arm64.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Windows msi
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: feather-chat-windows-x86_64.msi
+          path: feather-chat-windows-x86_64.msi
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Windows msix
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: feather-chat-windows-x86_64.msix
+          path: feather-chat-windows-x86_64.msix
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Windows zip
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: feather-chat-windows-x86_64.zip
+          path: feather-chat-windows-x86_64.zip
+          archive: false
           if-no-files-found: error
           retention-days: 7
 
