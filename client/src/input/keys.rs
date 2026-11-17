@@ -30,9 +30,9 @@ pub fn bind_keys(cx: &mut App) {
 
     #[cfg(target_os = "macos")]
     cx.bind_keys([
-        KeyBinding::new("secondary-a", SelectAll, Some("TextInput")),
-        KeyBinding::new("secondary-v", Paste, Some("TextInput")),
-        KeyBinding::new("secondary-c", Copy, Some("TextInput")),
-        KeyBinding::new("secondary-x", Cut, Some("TextInput")),
+        KeyBinding::new("cmd-a", SelectAll, Some("TextInput")),
+        KeyBinding::new("cmd-v", Paste, Some("TextInput")),
+        KeyBinding::new("cmd-c", Copy, Some("TextInput")),
+        KeyBinding::new("cmd-x", Cut, Some("TextInput")),
     ]);
 }
