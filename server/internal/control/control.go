@@ -79,7 +79,6 @@ var handlers = map[string]func(*Server, *client, protocol.Control){
 	"SEARCH_USERS":               (*Server).handleSearchUsers,
 	"SEND_DIRECT_MESSAGE":        (*Server).handleSendDM,
 	"RECIEVE_DIRECT_MESSAGE":     (*Server).handleReceiveDM, // legacy spelling kept for existing clients
-	"RECEIVE_DIRECT_MESSAGE":     (*Server).handleReceiveDM,
 	"UPDATE_DIRECT_MESSAGE":      (*Server).handleUpdateDM,
 }
 
