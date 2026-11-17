@@ -16,6 +16,7 @@ import (
 	"github.com/seagullhq/feather-chat/server/internal/config"
 	"github.com/seagullhq/feather-chat/server/internal/control"
 	"github.com/seagullhq/feather-chat/server/internal/friends"
+	"github.com/seagullhq/feather-chat/server/internal/messages"
 	"github.com/seagullhq/feather-chat/server/internal/migrations"
 	"github.com/seagullhq/feather-chat/server/internal/room"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
@@ -69,6 +70,7 @@ func main() {
 	users := accounts.NewStore(db)
 	serverStore := servers.NewStore(db)
 	friendStore := friends.NewStore(db)
+	msgStore := messages.NewStore(db)
 
 	listenerTCP, err := net.Listen("tcp", *tcpAddr)
 	if err != nil {
@@ -86,5 +88,5 @@ func main() {
 	log.Printf("feather-chat server: control=%s media=%s", *tcpAddr, *udpAddr)
 	rooms := room.NewManager()
 	go rooms.ServeUDP(listenerUDP.(*net.UDPConn))
-	control.New(users, serverStore, friendStore, rooms).Serve(listenerTCP)
+	control.New(users, serverStore, friendStore, msgStore, rooms).Serve(listenerTCP)
 }

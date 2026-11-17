@@ -9,6 +9,7 @@ import (
 
 	"github.com/seagullhq/feather-chat/server/internal/accounts"
 	"github.com/seagullhq/feather-chat/server/internal/friends"
+	"github.com/seagullhq/feather-chat/server/internal/messages"
 	"github.com/seagullhq/feather-chat/server/internal/protocol"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
 )
@@ -39,43 +40,104 @@ func (s *Server) handleListServers(c *client, _ protocol.Control) {
 	c.send(protocol.Control{Type: "ACK", Servers: summaries})
 }
 
-func (s *Server) handleSendDM(c *client, msg protocol.Control){
+// directRecipientID parses the peer ID shared by the DM request types.
+func directRecipientID(msg protocol.Control) (int, error) {
+	id, err := strconv.Atoi(strings.TrimSpace(msg.DirectRecipientID))
+	if err != nil || id <= 0 {
+		return 0, errors.New("direct recipient id required")
+	}
+	return id, nil
+}
+
+func (s *Server) handleSendDM(c *client, msg protocol.Control) {
 	if !c.requireAuth() {
 		return
 	}
-
-	senderID := c.sess.UserID
-
-	if strings.EqualFold(msg.DirectRecipientID, "") {
-    	return
+	recipientID, err := directRecipientID(msg)
+	if err != nil {
+		c.sendError(err.Error())
+		return
+	}
+	content := msg.DirectContent
+	if strings.TrimSpace(content) == "" {
+		c.sendError("direct message content required")
+		return
+	}
+	if n := utf8.RuneCountInString(content); n > 4000 {
+		c.sendError("direct message must be at most 4000 characters")
+		return
 	}
 
-	recipientID,_ := strconv.Atoi( msg.DirectRecipientID);
 	ctx, cancel := storeCtx()
 	defer cancel()
-	dm, err := s.messages.SendDM(ctx, senderID, recipientID, msg.DirectContent)
-
+	dm, err := s.messages.SendDM(ctx, c.sess.UserID, recipientID, content)
 	if err != nil {
-		c.sendError("The server could not elaborate this Direct Message session!")
+		switch {
+		case errors.Is(err, messages.ErrSelfRequest),
+			errors.Is(err, messages.ErrAlreadyExists),
+			errors.Is(err, messages.ErrNotFound):
+			c.sendError(err.Error())
+		default:
+			log.Printf("[DM] send from %d to %d failed: %v", c.sess.UserID, recipientID, err)
+			c.sendError("direct message send failed")
+		}
 		return
 	}
 
-
-	c.send(protocol.Control{Type: "ACK", DirectInfo: dm})
+	summary := directMessageSummary(dm.DirectMsg)
+	notify(s.rooms.SessionsOf(map[int]bool{recipientID: true}),
+		protocol.Control{Type: "DIRECT_MESSAGE", DirectInfo: &summary})
+	c.send(protocol.Control{Type: "ACK", DirectInfo: &summary})
 }
 
-func (s *Server) handleRecieveDM(c *client, msg protocol.Control){
+// handleReceiveDM answers RECIEVE_DIRECT_MESSAGE with the conversation between
+// the session's user and the named peer, newest first.
+func (s *Server) handleReceiveDM(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	peerID, err := directRecipientID(msg)
+	if err != nil {
+		c.sendError(err.Error())
+		return
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	list, err := s.messages.ListDM(ctx, c.sess.UserID, peerID, 50, 0)
+	if err != nil {
+		switch {
+		case errors.Is(err, messages.ErrSelfRequest):
+			c.sendError(err.Error())
+		default:
+			log.Printf("[DM] list for %d with %d failed: %v", c.sess.UserID, peerID, err)
+			c.sendError("direct message history failed")
+		}
+		return
+	}
+	c.send(protocol.Control{Type: "ACK", DirectMessages: directMessageSummaries(list)})
+}
+
+func (s *Server) handleUpdateDM(c *client, msg protocol.Control) {
 	if !c.requireAuth() {
 		return
 	}
 	c.send(protocol.Control{Type: "ACK"})
 }
 
-func (s *Server) handleUpdateDM(c *client, msg protocol.Control){
-	if !c.requireAuth() {
-		return
+func directMessageSummary(m messages.DirectMessage) protocol.DirectMessageSummary {
+	return protocol.DirectMessageSummary{
+		ID: m.ID, ChannelID: m.ChannelID, AuthorID: m.Author,
+		Content: m.Content, ReplyTo: m.ReplyTo,
+		CreatedAt: m.CreatedAt, EditedAt: m.EditedAt, DeletedAt: m.DeletedAt,
 	}
-	c.send(protocol.Control{Type: "ACK"})
+}
+
+func directMessageSummaries(list []messages.DirectMessage) []protocol.DirectMessageSummary {
+	out := make([]protocol.DirectMessageSummary, len(list))
+	for i, m := range list {
+		out[i] = directMessageSummary(m)
+	}
+	return out
 }
 
 // handleCreateServer answers CREATE_SERVER by creating a server owned by
@@ -355,7 +417,6 @@ func (s *Server) handleSendFriendRequest(c *client, msg protocol.Control) {
 	c.send(protocol.Control{Type: "ACK", TargetUserID: request.AddresseeID})
 }
 
-
 // handleSendFriendRequest answers SEND_FRIENDSHIP_REQUEST by storing a pending
 // request from the session's user to a user named by ID or username.
 func (s *Server) handleRemoveFriend(c *client, msg protocol.Control) {
@@ -402,7 +463,6 @@ func (s *Server) handleRemoveFriend(c *client, msg protocol.Control) {
 	s.friendsChanged(addresseeID)
 	c.send(protocol.Control{Type: "ACK", TargetUserID: addresseeID})
 }
-
 
 // handleFetchFriendRequest answers FETCH_FRIENDSHIP_REQUEST with the pending
 // requests of the session's user.

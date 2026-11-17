@@ -21,46 +21,45 @@ func NewStore(db *sql.DB) *ServerStore {
 }
 
 var (
-	ErrNotFound       = errors.New("DM channel not found")
-	ErrSelfRequest    = errors.New("cannot send DM to yourself")
-	ErrAlreadyExists  = errors.New("DM already exists")
+	ErrNotFound      = errors.New("DM channel not found")
+	ErrSelfRequest   = errors.New("cannot send DM to yourself")
+	ErrAlreadyExists = errors.New("DM already exists")
 )
 
-type DirectChannel struct{
-	id int
-	DMKey string
+type DirectChannel struct {
+	ID        int
+	DMKey     string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
 
 type DirectMessage struct {
-	id int
+	ID        int
 	ChannelID int
-	Author int
-	Content string
-	ReplyTo int
+	Author    int
+	Content   string
+	ReplyTo   int
 	CreatedAt time.Time
-	UpdatedAt time.Time
-	EditedAt time.Time
-	DeleatedAt time.Time
+	EditedAt  *time.Time
+	DeletedAt *time.Time
 }
 
 type DirectChannelMembers struct {
-	ChannelID int
-	UserID int
+	ChannelID         int
+	UserID            int
 	LastReadMessageID int
-	JoinedAt time.Time
+	JoinedAt          time.Time
 }
 
 type Direct struct {
-	DirectCh DirectChannel
-	DirectMsg DirectMessage
+	DirectCh             DirectChannel
+	DirectMsg            DirectMessage
 	DirectChannelMembers DirectChannelMembers
 }
 
 func makeDMKey(requesterID, addresseeID int64) string {
-    a, b := min(requesterID, addresseeID), max(requesterID, addresseeID)
-    return fmt.Sprintf("%d:%d", a, b)
+	a, b := min(requesterID, addresseeID), max(requesterID, addresseeID)
+	return fmt.Sprintf("%d:%d", a, b)
 }
 
 func (s *ServerStore) SendDM(ctx context.Context, requesterID, addresseeID int, msg string) (*Direct, error) {
@@ -91,25 +90,24 @@ func (s *ServerStore) SendDM(ctx context.Context, requesterID, addresseeID int, 
 	`
 	var directCh DirectChannel
 	err = tx.QueryRowContext(ctx, channelQuery, dmKey, now, now).
-		Scan(&directCh.id, &directCh.DMKey, &directCh.CreatedAt, &directCh.UpdatedAt)
+		Scan(&directCh.ID, &directCh.DMKey, &directCh.CreatedAt, &directCh.UpdatedAt)
 	if err != nil {
 		return nil, mapPgError(err)
 	}
 
 	const msgQuery = `
-		INSERT INTO direct_messages (channel_id, author_id, content, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, channel_id, author_id, content, created_at, updated_at
+		INSERT INTO direct_messages (channel_id, author_id, content, created_at)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, channel_id, author_id, content, created_at
 	`
 	var directMsg DirectMessage
-	err = tx.QueryRowContext(ctx, msgQuery, directCh.id, requesterID, msg, now, now).
+	err = tx.QueryRowContext(ctx, msgQuery, directCh.ID, requesterID, msg, now).
 		Scan(
-			&directMsg.id,
+			&directMsg.ID,
 			&directMsg.ChannelID,
 			&directMsg.Author,
 			&directMsg.Content,
 			&directMsg.CreatedAt,
-			&directMsg.UpdatedAt,
 		)
 	if err != nil {
 		return nil, mapPgError(err)
@@ -126,7 +124,7 @@ func (s *ServerStore) SendDM(ctx context.Context, requesterID, addresseeID int, 
 		RETURNING channel_id, user_id, last_read_message_id, joined_at
 	`
 	var senderMember DirectChannelMembers
-	err = tx.QueryRowContext(ctx, senderMemberQuery, directCh.id, requesterID, directMsg.id, now).
+	err = tx.QueryRowContext(ctx, senderMemberQuery, directCh.ID, requesterID, directMsg.ID, now).
 		Scan(
 			&senderMember.ChannelID,
 			&senderMember.UserID,
@@ -142,7 +140,7 @@ func (s *ServerStore) SendDM(ctx context.Context, requesterID, addresseeID int, 
 		VALUES ($1, $2, NULL, $3)
 		ON CONFLICT (channel_id, user_id) DO NOTHING
 	`
-	if _, err = tx.ExecContext(ctx, addresseeMemberQuery, directCh.id, addresseeID, now); err != nil {
+	if _, err = tx.ExecContext(ctx, addresseeMemberQuery, directCh.ID, addresseeID, now); err != nil {
 		return nil, mapPgError(err)
 	}
 
@@ -151,10 +149,61 @@ func (s *ServerStore) SendDM(ctx context.Context, requesterID, addresseeID int, 
 	}
 
 	return &Direct{
-		DirectCh: directCh,
-		DirectMsg: directMsg,
-		DirectChannelMembers:  senderMember,
+		DirectCh:             directCh,
+		DirectMsg:            directMsg,
+		DirectChannelMembers: senderMember,
 	}, nil
+}
+
+const (
+	defaultDMPage = 50
+	maxDMPage     = 100
+)
+
+// ListDM returns the conversation between viewerID and peerID, newest first.
+// The membership join keeps a caller from reading a channel it is not part of,
+// and beforeID enables keyset pagination (0 asks for the newest page).
+func (s *ServerStore) ListDM(ctx context.Context, viewerID, peerID, limit, beforeID int) ([]DirectMessage, error) {
+	if viewerID == peerID {
+		return nil, ErrSelfRequest
+	}
+	if limit <= 0 || limit > maxDMPage {
+		limit = defaultDMPage
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT m.id, m.channel_id, m.author_id, m.content, COALESCE(m.reply_to, 0),
+		       m.created_at, m.edited_at, m.deleted_at
+		FROM direct_channels c
+		JOIN direct_channel_members member ON member.channel_id = c.id AND member.user_id = $1
+		JOIN direct_messages m ON m.channel_id = c.id
+		WHERE c.dm_key = $2 AND ($3 = 0 OR m.id < $3)
+		ORDER BY m.id DESC
+		LIMIT $4`, viewerID, makeDMKey(int64(viewerID), int64(peerID)), beforeID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []DirectMessage
+	for rows.Next() {
+		var m DirectMessage
+		var editedAt, deletedAt sql.NullTime
+		if err := rows.Scan(&m.ID, &m.ChannelID, &m.Author, &m.Content, &m.ReplyTo,
+			&m.CreatedAt, &editedAt, &deletedAt); err != nil {
+			return nil, err
+		}
+		if editedAt.Valid {
+			m.EditedAt = &editedAt.Time
+		}
+		if deletedAt.Valid {
+			m.DeletedAt = &deletedAt.Time
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func mapPgError(err error) error {

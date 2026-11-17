@@ -1,42 +1,56 @@
 package protocol
 
-import "github.com/seagullhq/feather-chat/server/internal/messages"
+import "time"
 
 // Control is a TCP control message (§7): HELLO, JOIN, LEAVE, ACK, ROSTER.
 type Control struct {
-	Type            string                `json:"type"`
-	Name            string                `json:"name,omitempty"`
-	SSRC            uint32                `json:"ssrc,omitempty"`
-	Room            string                `json:"room,omitempty"`
-	ChannelID       int                   `json:"channelId,omitempty"`
-	Members         []Member              `json:"members,omitempty"`
-	Member          *Member               `json:"member,omitempty"`
-	Muted           *bool                 `json:"muted,omitempty"`
-	Deafened        *bool                 `json:"deafened,omitempty"`
-	Username        string                `json:"username,omitempty"`
-	ServerName      string                `json:"serverName,omitempty"`
-	ServerID        int                   `json:"serverId,omitempty"`
-	InviteCode      string                `json:"inviteCode,omitempty"`
-	Servers         []ServerSummary       `json:"servers,omitempty"`
-	Email           string                `json:"email,omitempty"`
-	Identifier      string                `json:"identifier,omitempty"`
-	Password        string                `json:"password,omitempty"`
-	OldPassword     string                `json:"oldPassword,omitempty"`
-	Error           string                `json:"error,omitempty"`
-	ChannelName     string                `json:"channelName,omitempty"`
-	ChannelType     string                `json:"channelType,omitempty"`
-	ChannelTypeList []ChannelTypeSummary  `json:"channelTypes,omitempty"`
-	Channels        []ChannelSummary      `json:"channels,omitempty"`
-	ServerMembers   []ServerMemberSummary `json:"serverMembers,omitempty"`
-	UserID          int                   `json:"userId,omitempty"`
-	TargetUserID    int                   `json:"targetUserId,omitempty"`
-	User            int                   `json:"user,omitempty"`
-	Query           string                `json:"query,omitempty"`
-	Friends         []PersonSummary       `json:"friends,omitempty"`
-	Users           []PersonSummary       `json:"users,omitempty"`
-	DirectRecipientID	string			  `json:"directRecipientID,omitempty"`
-	DirectContent	string				  `json:"directContent,omitempty"`
-	DirectInfo		*messages.Direct		  `json:"directInfo,omitempty"`
+	Type              string                 `json:"type"`
+	Name              string                 `json:"name,omitempty"`
+	SSRC              uint32                 `json:"ssrc,omitempty"`
+	Room              string                 `json:"room,omitempty"`
+	ChannelID         int                    `json:"channelId,omitempty"`
+	Members           []Member               `json:"members,omitempty"`
+	Member            *Member                `json:"member,omitempty"`
+	Muted             *bool                  `json:"muted,omitempty"`
+	Deafened          *bool                  `json:"deafened,omitempty"`
+	Username          string                 `json:"username,omitempty"`
+	ServerName        string                 `json:"serverName,omitempty"`
+	ServerID          int                    `json:"serverId,omitempty"`
+	InviteCode        string                 `json:"inviteCode,omitempty"`
+	Servers           []ServerSummary        `json:"servers,omitempty"`
+	Email             string                 `json:"email,omitempty"`
+	Identifier        string                 `json:"identifier,omitempty"`
+	Password          string                 `json:"password,omitempty"`
+	OldPassword       string                 `json:"oldPassword,omitempty"`
+	Error             string                 `json:"error,omitempty"`
+	ChannelName       string                 `json:"channelName,omitempty"`
+	ChannelType       string                 `json:"channelType,omitempty"`
+	ChannelTypeList   []ChannelTypeSummary   `json:"channelTypes,omitempty"`
+	Channels          []ChannelSummary       `json:"channels,omitempty"`
+	ServerMembers     []ServerMemberSummary  `json:"serverMembers,omitempty"`
+	UserID            int                    `json:"userId,omitempty"`
+	TargetUserID      int                    `json:"targetUserId,omitempty"`
+	User              int                    `json:"user,omitempty"`
+	Query             string                 `json:"query,omitempty"`
+	Friends           []PersonSummary        `json:"friends,omitempty"`
+	Users             []PersonSummary        `json:"users,omitempty"`
+	DirectRecipientID string                 `json:"directRecipientID,omitempty"`
+	DirectContent     string                 `json:"directContent,omitempty"`
+	DirectInfo        *DirectMessageSummary  `json:"directInfo,omitempty"`
+	DirectMessages    []DirectMessageSummary `json:"directMessages,omitempty"`
+}
+
+// DirectMessageSummary is one DM as clients see it. Keep store types out of
+// the wire format so IDs are exported and JSON keys stay camelCase.
+type DirectMessageSummary struct {
+	ID        int        `json:"id"`
+	ChannelID int        `json:"channelId"`
+	AuthorID  int        `json:"authorId"`
+	Content   string     `json:"content"`
+	ReplyTo   int        `json:"replyTo,omitempty"`
+	CreatedAt time.Time  `json:"createdAt"`
+	EditedAt  *time.Time `json:"editedAt,omitempty"`
+	DeletedAt *time.Time `json:"deletedAt,omitempty"`
 }
 
 // PersonSummary is another user with the asking user's relation to them:

@@ -18,16 +18,16 @@ import (
 // Server is the control plane: the room state, the persistence stores, and
 // one accept loop feeding per-connection goroutines.
 type Server struct {
-	rooms   *room.Manager
-	users   *accounts.Store
-	servers *servers.ServerStore
-	friends *friends.ServerStore
+	rooms    *room.Manager
+	users    *accounts.Store
+	servers  *servers.ServerStore
+	friends  *friends.ServerStore
 	messages *messages.ServerStore
 }
 
 // New wires a control server around the stores and the room state.
-func New(users *accounts.Store, serverStore *servers.ServerStore, friendStore *friends.ServerStore, rooms *room.Manager) *Server {
-	return &Server{rooms: rooms, users: users, servers: serverStore, friends: friendStore}
+func New(users *accounts.Store, serverStore *servers.ServerStore, friendStore *friends.ServerStore, msgStore *messages.ServerStore, rooms *room.Manager) *Server {
+	return &Server{rooms: rooms, users: users, servers: serverStore, friends: friendStore, messages: msgStore}
 }
 
 // Serve accepts and dispatches control connections until the listener stops.
@@ -72,14 +72,15 @@ var handlers = map[string]func(*Server, *client, protocol.Control){
 	"FETCH_FRIENDSHIP_REQUEST":   (*Server).handleFetchFriendRequest,
 	"ACCEPT_FRIENDSHIP_REQUEST":  (*Server).handleAcceptFriendRequest,
 	"DECLINE_FRIENDSHIP_REQUEST": (*Server).handleDeclineFriendRequest,
-	"REMOVE_FRIENDSHIP": 		  (*Server).handleRemoveFriend,
-	"BLOCK_FRIENDSHIP": 		  (*Server).handleBlockFriend,
+	"REMOVE_FRIENDSHIP":          (*Server).handleRemoveFriend,
+	"BLOCK_FRIENDSHIP":           (*Server).handleBlockFriend,
 	"UNBLOCK_FRIENDSHIP":         (*Server).handleUnblockFriend,
 	"CANCEL_FRIENDSHIP_REQUEST":  (*Server).handleCancelFriendRequest,
 	"SEARCH_USERS":               (*Server).handleSearchUsers,
-	"SEND_DIRECT_MESSAGE":		  (*Server).handleSendDM,
-	"RECIEVE_DIRECT_MESSAGE":	  (*Server).handleRecieveDM,
-	"UPDATE_DIRECT_MESSAGE":	  (*Server).handleUpdateDM,
+	"SEND_DIRECT_MESSAGE":        (*Server).handleSendDM,
+	"RECIEVE_DIRECT_MESSAGE":     (*Server).handleReceiveDM, // legacy spelling kept for existing clients
+	"RECEIVE_DIRECT_MESSAGE":     (*Server).handleReceiveDM,
+	"UPDATE_DIRECT_MESSAGE":      (*Server).handleUpdateDM,
 }
 
 // dispatch routes one decoded message, ignoring unknown types (§7 interop
