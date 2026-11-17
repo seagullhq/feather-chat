@@ -8,6 +8,7 @@ import (
 	"flag"
 	"log"
 	"net"
+	"os"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -26,6 +27,9 @@ import (
 )
 
 func main() {
+	// Keep logs on stdout so launchers capturing only stdout still show them.
+	log.SetOutput(os.Stdout)
+	log.Println("feather-chat server: starting")
 	if err := godotenv.Load(); err != nil {
 		if err2 := godotenv.Load("../.env"); err2 != nil {
 			log.Printf(".env not loaded (%v); using environment only", err)
@@ -84,8 +88,8 @@ func main() {
 	}
 	defer listenerUDP.Close()
 
-	// Server starting
-	log.Printf("feather-chat server: control=%s media=%s", *tcpAddr, *udpAddr)
+	// Server ready: both listeners are open, so clients can connect now.
+	log.Printf("feather-chat server ready: control=%s media=%s", *tcpAddr, *udpAddr)
 	rooms := room.NewManager()
 	go rooms.ServeUDP(listenerUDP.(*net.UDPConn))
 	control.New(users, serverStore, friendStore, msgStore, rooms).Serve(listenerTCP)

@@ -4,6 +4,7 @@
 package control
 
 import (
+	"errors"
 	"log"
 	"net"
 
@@ -35,7 +36,9 @@ func (s *Server) Serve(l net.Listener) {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			log.Println(err)
+			if !errors.Is(err, net.ErrClosed) {
+				log.Printf("[CONTROL] accept failed: %v", err)
+			}
 			return
 		}
 		go s.handleConn(conn)
@@ -88,7 +91,10 @@ var handlers = map[string]func(*Server, *client, protocol.Control){
 // dispatch routes one decoded message, ignoring unknown types (§7 interop
 // rule).
 func (s *Server) dispatch(c *client, msg protocol.Control) {
-	if h, ok := handlers[msg.Type]; ok {
-		h(s, c, msg)
+	h, ok := handlers[msg.Type]
+	if !ok {
+		log.Printf("[CONTROL] ignoring unknown type %q from user %d", msg.Type, c.sess.UserID)
+		return
 	}
+	h(s, c, msg)
 }

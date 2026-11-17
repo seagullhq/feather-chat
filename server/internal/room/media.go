@@ -1,6 +1,7 @@
 package room
 
 import (
+	"errors"
 	"log"
 	"net"
 
@@ -11,11 +12,14 @@ import (
 // AUDIO packets to room peers (§5). This is the one UDP goroutine; control
 // goroutines touch the shared session state only under Manager.mu.
 func (m *Manager) ServeUDP(pc *net.UDPConn) {
+	log.Printf("[MEDIA] listening on %s", pc.LocalAddr())
 	buf := make([]byte, 2048)
 	for {
 		n, udpAddr, err := pc.ReadFromUDP(buf)
 		if err != nil {
-			log.Println(err)
+			if !errors.Is(err, net.ErrClosed) {
+				log.Printf("[MEDIA] read failed: %v", err)
+			}
 			return
 		}
 
