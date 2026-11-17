@@ -69,26 +69,40 @@ impl FriendsView {
                     .flex_1()
                     .min_w_0()
                     .min_h_0()
+                    .overflow_hidden()
                     .flex()
                     .flex_col()
                     .on_mouse_move(cx.listener(Self::chat_drag_move))
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::chat_drag_end))
                     .on_mouse_up_out(MouseButton::Left, cx.listener(Self::chat_drag_end))
-                    .child({
-                        // Measures the stage: the card may not outgrow it.
-                        let size = self.stage_size.clone();
-                        canvas(
-                            move |b, _, _| {
-                                size.set((f32::from(b.size.width), f32::from(b.size.height)))
-                            },
-                            |_, _, _, _| {},
-                        )
-                        .absolute()
-                        .size_full()
-                    })
                     .child(header)
-                    .child(stage)
-                    .child(overlay)
+                    // The card lives in this box, under the header: it is
+                    // clipped and capped by layout, so it cannot cover the
+                    // header even for a frame while the window resizes.
+                    .child(
+                        div()
+                            .relative()
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .overflow_hidden()
+                            .flex()
+                            .flex_col()
+                            .child({
+                                // Measures it: the card may not outgrow it.
+                                let size = self.stage_size.clone();
+                                canvas(
+                                    move |b, _, _| {
+                                        size.set((f32::from(b.size.width), f32::from(b.size.height)))
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .absolute()
+                                .size_full()
+                            })
+                            .child(stage)
+                            .child(overlay),
+                    )
                     .into_any_element()
             }
             None => stage.into_any_element(),
@@ -147,16 +161,22 @@ impl FriendsView {
         }
         let close = cx.listener(|this, _, _, cx| this.toggle_chat(cx));
         let target = self.chat_size_for(window.viewport_size());
-        let (w, h) = self.ease_chat_size(target, window);
+        // The eased size trails the target: never let it outgrow the stage now.
+        let eased = self.ease_chat_size(target, window);
+        let (w, h) = clamp_chat(eased, self.stage_area(window.viewport_size()));
         let maxed = target == clamp_chat((f32::MAX, f32::MAX), self.stage_area(window.viewport_size()));
         let (max_icon, max_label) = if maxed { ("corners-in", "Restore size") } else { ("corners-out", "Maximize") };
-        div()
+        let card = div()
             .id(("dm-chat-card", friend.id as u64))
-            .absolute()
-            .right_4()
-            .bottom_4()
+            .relative()
             .w(px(w))
             .h(px(h))
+            // Layout shrinks the card to the padded box below, so the 16px
+            // gap to the header and edges holds even before the size catches up.
+            .flex_shrink_1()
+            .min_w_0()
+            .min_h_0()
+            .max_w(relative(1.))
             .occlude()
             .on_mouse_move(cx.listener(Self::chat_drag_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::chat_drag_end))
@@ -229,7 +249,17 @@ impl FriendsView {
                     .child(icon("resize-grip", 14., t.muted))
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::chat_grip_down))
                     .on_key_down(cx.listener(Self::chat_grip_key)),
-            )
+            );
+        // Padded box over the stage: the card sits bottom-right inside it.
+        div()
+            .absolute()
+            .size_full()
+            .p_4()
+            .flex()
+            .flex_col()
+            .justify_end()
+            .items_end()
+            .child(card)
             .into_any_element()
     }
 
@@ -264,11 +294,17 @@ impl FriendsView {
         shown
     }
 
-    /// Stage size as painted; the window until the first paint.
+    /// Room the card may use. The painted stage size lags one frame behind a
+    /// window resize, so it is capped by what the current window leaves.
     fn stage_area(&self, vp: Size<Pixels>) -> (f32, f32) {
+        // The area starts under the titlebar (`area_top`, constant while resizing).
+        let fresh = (
+            (f32::from(vp.width) - super::SIDEBAR_WIDTH).max(0.),
+            (f32::from(vp.height) - f32::from(self.area_top.get()) - DM_HEADER).max(0.),
+        );
         match self.stage_size.get() {
-            (w, h) if w > 0. && h > 0. => (w, h),
-            _ => (f32::from(vp.width), f32::from(vp.height)),
+            (w, h) if w > 0. && h > 0. => (w.min(fresh.0), h.min(fresh.1)),
+            _ => fresh,
         }
     }
 
@@ -349,9 +385,12 @@ const DM_HEADER: f32 = 56.;
 
 /// Keeps the card inside the stage, under the header, with a 16px margin.
 fn clamp_chat((w, h): (f32, f32), (sw, sh): (f32, f32)) -> (f32, f32) {
-    let max_w = (sw - 32.).max(MIN_CHAT_W);
-    let max_h = (sh - 32. - DM_HEADER).max(MIN_CHAT_H);
-    (w.clamp(MIN_CHAT_W, max_w), h.clamp(MIN_CHAT_H, max_h))
+    // The stage is the hard limit: in a window too small for the minimum size
+    // the card gets smaller than the minimum rather than cover the header or
+    // the sidebar.
+    let max_w = (sw - 32.).max(0.);
+    let max_h = (sh - 32.).max(0.);
+    (w.clamp(MIN_CHAT_W.min(max_w), max_w), h.clamp(MIN_CHAT_H.min(max_h), max_h))
 }
 
 /// The open friend, centred in the stage. DM calls are not on the server yet,
