@@ -1,7 +1,8 @@
 use gpui::{App, KeyBinding};
 
 use super::{
-    Backspace, Copy, Cut, Delete, End, Home, Left, Paste, Right, SelectAll, SelectLeft, SelectRight,
+    Backspace, Copy, Cut, Delete, Down, End, Home, Left, Newline, Paste, Right, SelectAll,
+    SelectLeft, SelectRight, Up,
 };
 
 pub fn bind_keys(cx: &mut App) {
@@ -14,6 +15,9 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-right", SelectRight, Some("TextInput")),
         KeyBinding::new("home", Home, Some("TextInput")),
         KeyBinding::new("end", End, Some("TextInput")),
+        KeyBinding::new("up", Up, Some("TextInput")),
+        KeyBinding::new("down", Down, Some("TextInput")),
+        KeyBinding::new("shift-enter", Newline, Some("TextInput")),
     ]);
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]

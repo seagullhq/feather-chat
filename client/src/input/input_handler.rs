@@ -174,7 +174,7 @@ impl EntityInputHandler for TextInput {
         if !self.masked && last_layout.text != self.content {
             return None;
         }
-        let utf8_index = self.from_display(last_layout.closest_index_for_x(line_point.x));
+        let utf8_index = self.from_display(last_layout.closest_index_for_x(line_point.x + self.scroll_x));
         Some(self.offset_to_utf16(utf8_index))
     }
 }

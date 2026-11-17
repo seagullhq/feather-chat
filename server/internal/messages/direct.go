@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -29,8 +28,8 @@ type queryer interface {
 func otherMember(ctx context.Context, q queryer, channelID, userID int) (int, error) {
 	var peerID int
 	err := q.QueryRowContext(ctx, `
-		SELECT user_id FROM direct_channel_members
-		WHERE channel_id = $1 AND user_id <> $2
+		SELECT user_id FROM conversation_members
+		WHERE conversation_id = $1 AND user_id <> $2
 		ORDER BY user_id LIMIT 1`, channelID, userID).Scan(&peerID)
 	return peerID, err
 }
@@ -42,13 +41,6 @@ var (
 	ErrMessageNotFound = errors.New("direct message not found")
 )
 
-type DirectChannel struct {
-	ID        int
-	DMKey     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
 type DirectMessage struct {
 	ID        int
 	ChannelID int
@@ -58,19 +50,6 @@ type DirectMessage struct {
 	CreatedAt time.Time
 	EditedAt  *time.Time
 	DeletedAt *time.Time
-}
-
-type DirectChannelMembers struct {
-	ChannelID         int
-	UserID            int
-	LastReadMessageID int
-	JoinedAt          time.Time
-}
-
-type Direct struct {
-	DirectCh             DirectChannel
-	DirectMsg            DirectMessage
-	DirectChannelMembers DirectChannelMembers
 }
 
 // DMConversation is one entry of a user's DM sidebar.
@@ -91,122 +70,70 @@ type ReadState struct {
 	Changed           bool
 }
 
-func makeDMKey(requesterID, addresseeID int64) string {
-	a, b := min(requesterID, addresseeID), max(requesterID, addresseeID)
-	return fmt.Sprintf("%d:%d", a, b)
+// pair orders two users the way conversations store them (user_low < user_high),
+// so (a, b) and (b, a) are the same conversation.
+func pair(a, b int) (low, high int) {
+	return min(a, b), max(a, b)
 }
 
-func (s *ServerStore) SendDM(ctx context.Context, requesterID, addresseeID, replyToID int, msg string) (*Direct, error) {
-	if requesterID == addresseeID {
+// SendDM stores a message from senderID to recipientID, creating the
+// conversation on first use. The sender has read their own message; the
+// recipient's read pointer is untouched.
+func (s *ServerStore) SendDM(ctx context.Context, senderID, recipientID, replyToID int, content string) (*DirectMessage, error) {
+	if senderID == recipientID {
 		return nil, ErrSelfRequest
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
-	now := time.Now().UTC()
-	dmKey := makeDMKey(int64(requesterID), int64(addresseeID))
-
-	const channelQuery = `
-		WITH ins AS (
-			INSERT INTO direct_channels (dm_key, created_at, updated_at)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (dm_key) DO NOTHING
-			RETURNING id, dm_key, created_at, updated_at
-		)
-		SELECT id, dm_key, created_at, updated_at FROM ins
-		UNION ALL
-		SELECT id, dm_key, created_at, updated_at FROM direct_channels WHERE dm_key = $1
-		LIMIT 1
-	`
-	var directCh DirectChannel
-	err = tx.QueryRowContext(ctx, channelQuery, dmKey, now, now).
-		Scan(&directCh.ID, &directCh.DMKey, &directCh.CreatedAt, &directCh.UpdatedAt)
-	if err != nil {
-		return nil, mapPgError(err)
-	}
-
+	low, high := pair(senderID, recipientID)
 	if replyToID != 0 {
 		var exists int
-		err = tx.QueryRowContext(ctx, `
-			SELECT 1 FROM direct_messages
-			WHERE id = $1 AND channel_id = $2 AND deleted_at IS NULL`, replyToID, directCh.ID).
+		err := s.db.QueryRowContext(ctx, `
+			SELECT 1 FROM conversation_messages m
+			JOIN conversations c ON c.id = m.conversation_id
+			WHERE m.id = $1 AND c.user_low = $2 AND c.user_high = $3 AND m.deleted_at IS NULL`,
+			replyToID, low, high).
 			Scan(&exists)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrMessageNotFound
+		}
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil, ErrMessageNotFound
-			}
 			return nil, err
 		}
 	}
 
-	const msgQuery = `
-		INSERT INTO direct_messages (channel_id, author_id, content, reply_to, created_at)
-		VALUES ($1, $2, $3, NULLIF($4, 0), $5)
-		RETURNING id, channel_id, author_id, content, COALESCE(reply_to, 0), created_at
-	`
-	var directMsg DirectMessage
-	err = tx.QueryRowContext(ctx, msgQuery, directCh.ID, requesterID, msg, replyToID, now).
-		Scan(
-			&directMsg.ID,
-			&directMsg.ChannelID,
-			&directMsg.Author,
-			&directMsg.Content,
-			&directMsg.ReplyTo,
-			&directMsg.CreatedAt,
+	// One statement, so it is atomic. The channel upsert uses DO UPDATE (not
+	// DO NOTHING) so it always returns the row, even if a concurrent first
+	// message created it, and it bumps the sidebar order. GREATEST ignores NULL:
+	// the recipient's read pointer stays as it was.
+	var m DirectMessage
+	err := s.db.QueryRowContext(ctx, `
+		WITH ch AS (
+			INSERT INTO conversations (kind, user_low, user_high) VALUES ('direct', $1, $6)
+			ON CONFLICT (user_low, user_high) DO UPDATE SET updated_at = now()
+			RETURNING id
+		), msg AS (
+			INSERT INTO conversation_messages (conversation_id, author_id, content, reply_to)
+			SELECT id, $2, $3, NULLIF($5, 0) FROM ch
+			RETURNING id, conversation_id, author_id, content, COALESCE(reply_to, 0), created_at
+		), sender AS (
+			-- Sender: member of the conversation, and has read their own message.
+			INSERT INTO conversation_members (conversation_id, user_id, last_read_message_id)
+			SELECT conversation_id, $2, id FROM msg
+			ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_message_id =
+				GREATEST(conversation_members.last_read_message_id, EXCLUDED.last_read_message_id)
+		), recipient AS (
+			-- Recipient: becomes a member so the chat shows in their sidebar.
+			-- Nothing read yet; an existing read pointer is left alone.
+			INSERT INTO conversation_members (conversation_id, user_id)
+			SELECT conversation_id, $4 FROM msg
+			ON CONFLICT (conversation_id, user_id) DO NOTHING
 		)
+		SELECT * FROM msg`, low, senderID, content, recipientID, replyToID, high).
+		Scan(&m.ID, &m.ChannelID, &m.Author, &m.Content, &m.ReplyTo, &m.CreatedAt)
 	if err != nil {
 		return nil, mapPgError(err)
 	}
-
-	const senderMemberQuery = `
-		INSERT INTO direct_channel_members (channel_id, user_id, last_read_message_id, joined_at)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (channel_id, user_id) DO UPDATE
-			SET last_read_message_id = GREATEST(
-				direct_channel_members.last_read_message_id,
-				EXCLUDED.last_read_message_id
-			)
-		RETURNING channel_id, user_id, last_read_message_id, joined_at
-	`
-	var senderMember DirectChannelMembers
-	err = tx.QueryRowContext(ctx, senderMemberQuery, directCh.ID, requesterID, directMsg.ID, now).
-		Scan(
-			&senderMember.ChannelID,
-			&senderMember.UserID,
-			&senderMember.LastReadMessageID,
-			&senderMember.JoinedAt,
-		)
-	if err != nil {
-		return nil, mapPgError(err)
-	}
-
-	const addresseeMemberQuery = `
-		INSERT INTO direct_channel_members (channel_id, user_id, last_read_message_id, joined_at)
-		VALUES ($1, $2, NULL, $3)
-		ON CONFLICT (channel_id, user_id) DO NOTHING
-	`
-	if _, err = tx.ExecContext(ctx, addresseeMemberQuery, directCh.ID, addresseeID, now); err != nil {
-		return nil, mapPgError(err)
-	}
-
-	// Sidebar ordering sorts by channel activity, not channel creation.
-	if _, err = tx.ExecContext(ctx, `UPDATE direct_channels SET updated_at = $1 WHERE id = $2`, now, directCh.ID); err != nil {
-		return nil, err
-	}
-
-	if err = tx.Commit(); err != nil {
-		return nil, err
-	}
-
-	return &Direct{
-		DirectCh:             directCh,
-		DirectMsg:            directMsg,
-		DirectChannelMembers: senderMember,
-	}, nil
+	return &m, nil
 }
 
 const (
@@ -224,15 +151,16 @@ func (s *ServerStore) ListDM(ctx context.Context, viewerID, peerID, limit, befor
 	if limit <= 0 || limit > maxDMPage {
 		limit = defaultDMPage
 	}
+	low, high := pair(viewerID, peerID)
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT m.id, m.channel_id, m.author_id, m.content, COALESCE(m.reply_to, 0),
+		SELECT m.id, m.conversation_id, m.author_id, m.content, COALESCE(m.reply_to, 0),
 		       m.created_at, m.edited_at, m.deleted_at
-		FROM direct_channels c
-		JOIN direct_channel_members member ON member.channel_id = c.id AND member.user_id = $1
-		JOIN direct_messages m ON m.channel_id = c.id
-		WHERE c.dm_key = $2 AND m.deleted_at IS NULL AND ($3 = 0 OR m.id < $3)
+		FROM conversations c
+		JOIN conversation_members member ON member.conversation_id = c.id AND member.user_id = $1
+		JOIN conversation_messages m ON m.conversation_id = c.id
+		WHERE c.user_low = $2 AND c.user_high = $3 AND m.deleted_at IS NULL AND ($4 = 0 OR m.id < $4)
 		ORDER BY m.id DESC
-		LIMIT $4`, viewerID, makeDMKey(int64(viewerID), int64(peerID)), beforeID, limit)
+		LIMIT $5`, viewerID, low, high, beforeID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -272,9 +200,9 @@ func (s *ServerStore) EditDM(ctx context.Context, userID, messageID int, content
 	var m DirectMessage
 	var editedAt sql.NullTime
 	err = tx.QueryRowContext(ctx, `
-		UPDATE direct_messages SET content = $3, edited_at = now()
+		UPDATE conversation_messages SET content = $3, edited_at = now()
 		WHERE id = $1 AND author_id = $2 AND deleted_at IS NULL
-		RETURNING id, channel_id, author_id, content, COALESCE(reply_to, 0),
+		RETURNING id, conversation_id, author_id, content, COALESCE(reply_to, 0),
 		          created_at, edited_at, deleted_at`, messageID, userID, content).
 		Scan(&m.ID, &m.ChannelID, &m.Author, &m.Content, &m.ReplyTo,
 			&m.CreatedAt, &editedAt, &m.DeletedAt)
@@ -290,7 +218,7 @@ func (s *ServerStore) EditDM(ctx context.Context, userID, messageID int, content
 	if err != nil {
 		return nil, 0, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE direct_channels SET updated_at = now() WHERE id = $1`, m.ChannelID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE conversations SET updated_at = now() WHERE id = $1`, m.ChannelID); err != nil {
 		return nil, 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -310,9 +238,9 @@ func (s *ServerStore) DeleteDM(ctx context.Context, userID, messageID int) (int,
 
 	var id, channelID int
 	err = tx.QueryRowContext(ctx, `
-		UPDATE direct_messages SET deleted_at = now()
+		UPDATE conversation_messages SET deleted_at = now()
 		WHERE id = $1 AND author_id = $2 AND deleted_at IS NULL
-		RETURNING id, channel_id`, messageID, userID).Scan(&id, &channelID)
+		RETURNING id, conversation_id`, messageID, userID).Scan(&id, &channelID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, 0, ErrMessageNotFound
 	}
@@ -324,7 +252,7 @@ func (s *ServerStore) DeleteDM(ctx context.Context, userID, messageID int) (int,
 	if err != nil {
 		return 0, 0, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE direct_channels SET updated_at = now() WHERE id = $1`, channelID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE conversations SET updated_at = now() WHERE id = $1`, channelID); err != nil {
 		return 0, 0, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -337,12 +265,13 @@ func (s *ServerStore) DeleteDM(ctx context.Context, userID, messageID int) (int,
 // and reports how many messages from the peer are still unread.
 func (s *ServerStore) MarkDMRead(ctx context.Context, viewerID, peerID, upToID int) (ReadState, error) {
 	var state ReadState
+	low, high := pair(viewerID, peerID)
 	var channelID, lastRead sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `
 		SELECT c.id, m.last_read_message_id
-		FROM direct_channels c
-		JOIN direct_channel_members m ON m.channel_id = c.id AND m.user_id = $1
-		WHERE c.dm_key = $2`, viewerID, makeDMKey(int64(viewerID), int64(peerID))).
+		FROM conversations c
+		JOIN conversation_members m ON m.conversation_id = c.id AND m.user_id = $1
+		WHERE c.user_low = $2 AND c.user_high = $3`, viewerID, low, high).
 		Scan(&channelID, &lastRead)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -353,18 +282,18 @@ func (s *ServerStore) MarkDMRead(ctx context.Context, viewerID, peerID, upToID i
 	state.LastReadMessageID = int(lastRead.Int64)
 	if upToID > state.LastReadMessageID {
 		if _, err := s.db.ExecContext(ctx, `
-			UPDATE direct_channel_members
+			UPDATE conversation_members
 			SET last_read_message_id = GREATEST(COALESCE(last_read_message_id, 0), $3)
-			WHERE channel_id = $1 AND user_id = $2`, channelID.Int64, viewerID, upToID); err != nil {
+			WHERE conversation_id = $1 AND user_id = $2`, channelID.Int64, viewerID, upToID); err != nil {
 			return state, err
 		}
 		state.LastReadMessageID = upToID
 		state.Changed = true
 	}
 	err = s.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM direct_messages
-		WHERE channel_id = $1 AND author_id = $2 AND deleted_at IS NULL
-		  AND id > $3`, channelID.Int64, peerID, state.LastReadMessageID).
+		SELECT COUNT(*) FROM conversation_messages
+		WHERE conversation_id = $1 AND author_id <> $2 AND deleted_at IS NULL
+		  AND id > $3`, channelID.Int64, viewerID, state.LastReadMessageID).
 		Scan(&state.UnreadCount)
 	return state, err
 }
@@ -376,19 +305,19 @@ func (s *ServerStore) ListDMConversations(ctx context.Context, viewerID int) ([]
 		SELECT c.id, peer.user_id,
 		       COALESCE(last.id, 0), COALESCE(last.content, ''),
 		       COALESCE(last.author_id, 0), COALESCE(last.created_at, c.created_at),
-		       (SELECT COUNT(*) FROM direct_messages unread
-		        WHERE unread.channel_id = c.id AND unread.author_id = peer.user_id
+		       (SELECT COUNT(*) FROM conversation_messages unread
+		        WHERE unread.conversation_id = c.id AND unread.author_id <> $1
 		          AND unread.deleted_at IS NULL
 		          AND unread.id > COALESCE(member.last_read_message_id, 0))
-		FROM direct_channels c
-		JOIN direct_channel_members member ON member.channel_id = c.id AND member.user_id = $1
-		JOIN direct_channel_members peer ON peer.channel_id = c.id AND peer.user_id <> $1
-		LEFT JOIN direct_messages last ON last.id = (
-			SELECT id FROM direct_messages
-			WHERE channel_id = c.id AND deleted_at IS NULL
+		FROM conversations c
+		JOIN conversation_members member ON member.conversation_id = c.id AND member.user_id = $1
+		JOIN conversation_members peer ON peer.conversation_id = c.id AND peer.user_id <> $1
+		LEFT JOIN conversation_messages last ON last.id = (
+			SELECT id FROM conversation_messages
+			WHERE conversation_id = c.id AND deleted_at IS NULL
 			ORDER BY id DESC LIMIT 1
 		)
-		WHERE NOT EXISTS (
+		WHERE c.kind = 'direct' AND NOT EXISTS (
 			SELECT 1 FROM friendships f
 			WHERE f.status = 'BLOCKED'
 			  AND ((f.requester_id = $1 AND f.addressee_id = peer.user_id)

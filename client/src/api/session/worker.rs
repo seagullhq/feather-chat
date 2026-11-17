@@ -213,6 +213,22 @@ fn commands(
                     let _ = events.send_blocking(Event::MembersChanged { server_id });
                 }
             }
+            Command::SendDm { peer, text } => match friends::send_dm(&mut session, peer, &text) {
+                Ok(msg) => {
+                    let _ = events.send_blocking(Event::DmSent { peer, msg });
+                }
+                Err(e) => {
+                    let _ = events.send_blocking(Event::FriendFailed(e));
+                }
+            },
+            Command::LoadDm { peer } => match friends::dm_history(&mut session, peer) {
+                Ok(msgs) => {
+                    let _ = events.send_blocking(Event::DmHistory { peer, msgs });
+                }
+                Err(e) => {
+                    let _ = events.send_blocking(Event::FriendFailed(e));
+                }
+            },
             Command::ListFriends => send_friends(&mut session, &events),
             Command::SearchUsers { query } => {
                 if let Ok(users) = friends::search_users(&mut session, &query) {

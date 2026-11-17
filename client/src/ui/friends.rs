@@ -2,16 +2,18 @@
 //! blocked users in the friends sheet; the stage is the open DM or the mic check.
 
 mod call_bar;
+mod chat;
 mod sheet;
 mod sidebar;
 mod stage;
 
 use super::ServersView;
-use crate::api::{Control, Friend};
+use crate::api::{Control, DirectMessage, Friend};
 use crate::input::TextInput;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 /// Same width as the servers sidebar, so the layout does not jump on switch.
@@ -44,6 +46,20 @@ pub struct FriendsView {
     selected_friend: Option<i64>,
     /// Text chat panel beside the call. Collapsed by default: voice is the focus.
     chat_open: bool,
+    /// Composer of the chat card, shared by every friend.
+    chat_input: Entity<TextInput>,
+    /// Messages per friend id. In memory only for now.
+    chat_log: HashMap<i64, Vec<chat::ChatMessage>>,
+    chat_scroll: ScrollHandle,
+    /// Chat card size (width, height) the user set with the corner grip.
+    /// None = sized from the window. Kept for this session only.
+    chat_size: Option<(f32, f32)>,
+    /// Grip drag in progress: mouse position and card size when it started.
+    chat_drag: Option<((f32, f32), (f32, f32))>,
+    /// Size drawn last frame and when: the card eases toward its target size.
+    chat_shown: Cell<Option<((f32, f32), std::time::Instant)>>,
+    /// Measured while painting: size of the stage the chat card floats in.
+    stage_size: Rc<Cell<(f32, f32)>>,
     /// Friends sheet (pending requests, blocked users), over the whole screen.
     sheet_open: bool,
     sheet_tab: FriendsTab,
@@ -79,6 +95,13 @@ impl FriendsView {
             friend_menu: None,
             selected_friend: None,
             chat_open: false,
+            chat_input: cx.new(|cx| TextInput::multiline("Message (Shift+Enter for a new line)", cx).with_right_inset(30.)),
+            chat_log: HashMap::new(),
+            chat_scroll: ScrollHandle::new(),
+            chat_size: None,
+            chat_drag: None,
+            chat_shown: Cell::new(None),
+            stage_size: Rc::default(),
             sheet_open: false,
             sheet_tab: FriendsTab::Friends,
             sheet_focus: cx.focus_handle(),
@@ -114,6 +137,32 @@ impl FriendsView {
         cx.notify();
     }
 
+    /// A message of the conversation with `peer` arrived (or was sent).
+    pub fn on_dm(&mut self, peer: i64, m: DirectMessage, mine: bool, cx: &mut Context<Self>) {
+        let log = self.chat_log.entry(peer).or_default();
+        if !log.iter().any(|x| x.id == m.id) {
+            log.push(chat::ChatMessage { id: m.id, mine, text: m.content });
+            self.chat_scroll.scroll_to_bottom();
+        }
+        cx.notify();
+    }
+
+    pub fn set_dm_history(&mut self, peer: i64, msgs: Vec<DirectMessage>, cx: &mut Context<Self>) {
+        let log = msgs
+            .into_iter()
+            .map(|m| chat::ChatMessage { id: m.id, mine: m.author != peer, text: m.content })
+            .collect();
+        self.chat_log.insert(peer, log);
+        self.chat_scroll.scroll_to_bottom();
+        cx.notify();
+    }
+
+    fn load_dm(&self, peer: i64) {
+        if let Some(c) = &self.control {
+            c.load_dm(peer);
+        }
+    }
+
     pub fn set_friends(&mut self, friends: Vec<Friend>, cx: &mut Context<Self>) {
         self.friends = friends;
         cx.notify();
@@ -145,6 +194,7 @@ impl FriendsView {
     pub fn on_disconnected(&mut self, cx: &mut Context<Self>) {
         self.control = None;
         self.friends.clear();
+        self.chat_log.clear();
         self.found.clear();
         self.error = None;
         self.selected_friend = None;
@@ -176,6 +226,7 @@ impl FriendsView {
         self.chat_open = true;
         self.friend_menu = None;
         self.sheet_open = false;
+        self.load_dm(id);
         window.focus(&self.sheet_focus, cx);
         cx.notify();
     }
@@ -183,6 +234,7 @@ impl FriendsView {
     pub(super) fn select_friend(&mut self, id: i64, cx: &mut Context<Self>) {
         self.selected_friend = Some(id);
         self.friend_menu = None;
+        self.load_dm(id);
         // The DM view hides the mic check: close it rather than keep the mic open.
         let check = self.servers.read(cx).voice_check();
         check.update(cx, |v, cx| v.stop(cx));
@@ -286,7 +338,7 @@ impl Render for FriendsView {
                 .size_full()
             })
             .child(self.sidebar(cx))
-            .child(self.stage(cx))
+            .child(self.stage(window, cx))
             .children(self.sheet(window, cx))
     }
 }

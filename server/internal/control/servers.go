@@ -49,7 +49,7 @@ func directRecipientID(msg protocol.Control) (int, error) {
 	return id, nil
 }
 
-// directContent applies the same bounds as the direct_messages check constraint.
+// directContent applies the same bounds as the conversation_messages check constraint.
 func directContent(msg protocol.Control) (string, error) {
 	content := msg.DirectContent
 	if strings.TrimSpace(content) == "" {
@@ -104,8 +104,8 @@ func (s *Server) handleSendDM(c *client, msg protocol.Control) {
 		return
 	}
 
-	log.Printf("[DM] message %d sent from %d to %d", dm.DirectMsg.ID, c.sess.UserID, recipientID)
-	summary := directMessageSummary(dm.DirectMsg)
+	log.Printf("[DM] message %d sent from %d to %d", dm.ID, c.sess.UserID, recipientID)
+	summary := directMessageSummary(*dm)
 	notify(s.rooms.SessionsOf(map[int]bool{recipientID: true}),
 		protocol.Control{Type: "DIRECT_MESSAGE", DirectInfo: &summary})
 	c.send(protocol.Control{Type: "ACK", DirectInfo: &summary})

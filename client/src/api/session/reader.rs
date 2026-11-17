@@ -18,6 +18,9 @@ fn push(frame: &Value) -> Option<Event> {
                 name: frame["name"].as_str()?.to_string(),
             });
         }
+        "DIRECT_MESSAGE" => {
+            return super::super::friends::dm_from(&frame["directInfo"]).map(Event::DmReceived);
+        }
         "FRIENDS_CHANGED" => return Some(Event::FriendsChanged),
         "SERVER_DELETED" => return Some(Event::ServerDeleted { id: server_id }),
         "SERVER_MEMBERS_CHANGED" => return Some(Event::MembersChanged { server_id }),

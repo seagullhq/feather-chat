@@ -88,6 +88,13 @@ pub(super) enum Command {
     AddFriend {
         username: String,
     },
+    SendDm {
+        peer: i64,
+        text: String,
+    },
+    LoadDm {
+        peer: i64,
+    },
 }
 
 /// Handle to the authenticated control session. Cloning it shares the same
@@ -236,6 +243,14 @@ impl Control {
 
     pub fn cancel_friend(&self, user_id: i64) -> bool {
         self.tx.try_send(Command::CancelFriend { user_id }).is_ok()
+    }
+
+    pub fn send_dm(&self, peer: i64, text: String) -> bool {
+        self.tx.try_send(Command::SendDm { peer, text }).is_ok()
+    }
+
+    pub fn load_dm(&self, peer: i64) -> bool {
+        self.tx.try_send(Command::LoadDm { peer }).is_ok()
     }
 
     pub fn add_friend(&self, username: String) -> bool {

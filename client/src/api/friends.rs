@@ -105,3 +105,48 @@ pub(super) fn add_friend(session: &mut Session, username: &str) -> Result<(), St
         .call(json!({"type":"SEND_FRIENDSHIP_REQUEST","username":username}))
         .map(drop)
 }
+
+/// One direct message as the server sends it.
+#[derive(Clone)]
+pub struct DirectMessage {
+    pub id: i64,
+    pub author: i64,
+    pub content: String,
+}
+
+pub(super) fn dm_from(m: &serde_json::Value) -> Option<DirectMessage> {
+    // Soft-deleted messages are not shown.
+    if !m["deletedAt"].is_null() {
+        return None;
+    }
+    Some(DirectMessage {
+        id: m["id"].as_i64()?,
+        author: m["authorId"].as_i64()?,
+        content: m["content"].as_str()?.to_string(),
+    })
+}
+
+pub(super) fn send_dm(session: &mut Session, peer: i64, text: &str) -> Result<DirectMessage, String> {
+    let ack = session.call(json!({
+        "type":"SEND_DIRECT_MESSAGE",
+        "directRecipientID":peer.to_string(),
+        "directContent":text,
+    }))?;
+    dm_from(&ack["directInfo"]).ok_or_else(|| "bad reply".to_string())
+}
+
+/// Newest page of the conversation, oldest first. The server marks it read.
+pub(super) fn dm_history(session: &mut Session, peer: i64) -> Result<Vec<DirectMessage>, String> {
+    let ack = session.call(json!({
+        "type":"RECIEVE_DIRECT_MESSAGE",
+        "directRecipientID":peer.to_string(),
+    }))?;
+    let mut list: Vec<_> = ack["directMessages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(dm_from)
+        .collect();
+    list.reverse();
+    Ok(list)
+}

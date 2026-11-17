@@ -1,11 +1,12 @@
 use gpui::{
     ClipboardItem, Context, EntityInputHandler, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, Window,
+    Pixels, Point, Window, point,
 };
 
+use super::element::{lines_offset, lines_point};
 use super::{
-    Backspace, Copy, Cut, Delete, End, Home, Left, Paste, Right, SelectAll, SelectLeft,
-    SelectRight, ShowCharacterPalette, TextInput,
+    Backspace, Copy, Cut, Delete, Down, End, Home, Left, Newline, Paste, Right, SelectAll,
+    SelectLeft, SelectRight, ShowCharacterPalette, TextInput, Up,
 };
 
 impl TextInput {
@@ -54,11 +55,48 @@ impl TextInput {
     }
 
     pub(super) fn home(&mut self, _: &Home, window: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(0, window, cx);
+        self.move_to(self.line_start(self.cursor_offset()), window, cx);
     }
 
     pub(super) fn end(&mut self, _: &End, window: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(self.content.len(), window, cx);
+        self.move_to(self.line_end(self.cursor_offset()), window, cx);
+    }
+
+    pub(super) fn up(&mut self, _: &Up, window: &mut Window, cx: &mut Context<Self>) {
+        self.vertical(-1., window, cx);
+    }
+
+    pub(super) fn down(&mut self, _: &Down, window: &mut Window, cx: &mut Context<Self>) {
+        self.vertical(1., window, cx);
+    }
+
+    /// Moves the cursor one visual row up or down, keeping its x. Single-line
+    /// inputs leave the key to whoever is above them.
+    fn vertical(&mut self, dir: f32, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.multiline {
+            cx.propagate();
+            return;
+        }
+        let lh = self.line_height;
+        let Some(p) = lines_point(&self.last_lines, lh, self.cursor_offset()) else {
+            return;
+        };
+        // Aim at the middle of the target row.
+        let y = p.y + lh * dir + lh * 0.5;
+        let to = if y < gpui::px(0.) {
+            0
+        } else {
+            lines_offset(&self.last_lines, lh, point(p.x, y))
+        };
+        self.move_to(to, window, cx);
+    }
+
+    pub(super) fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
+        if self.multiline {
+            self.replace_text_in_range(None, "\n", window, cx);
+        } else {
+            cx.propagate();
+        }
     }
 
     pub(super) fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
@@ -132,7 +170,12 @@ impl TextInput {
 
     pub(super) fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.replace_text_in_range(None, &text.replace("\n", " "), window, cx);
+            let text = if self.multiline {
+                text.replace("\r\n", "\n")
+            } else {
+                text.replace('\n', " ")
+            };
+            self.replace_text_in_range(None, &text, window, cx);
         }
     }
 
@@ -154,6 +197,16 @@ impl TextInput {
     }
 
     fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
+        if self.multiline {
+            let Some(bounds) = self.last_bounds else {
+                return 0;
+            };
+            let p = point(
+                position.x - bounds.left(),
+                position.y - bounds.top() + self.scroll_y,
+            );
+            return lines_offset(&self.last_lines, self.line_height, p).min(self.content.len());
+        }
         if self.content.is_empty() {
             return 0;
         }
@@ -168,6 +221,6 @@ impl TextInput {
         if position.y > bounds.bottom() {
             return self.content.len();
         }
-        self.from_display(line.closest_index_for_x(position.x - bounds.left()))
+        self.from_display(line.closest_index_for_x(position.x - bounds.left() + self.scroll_x))
     }
 }

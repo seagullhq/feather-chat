@@ -112,5 +112,17 @@ pub enum Event {
     /// Your friend request was accepted by the server.
     FriendRequested,
     FriendFailed(String),
+    /// A friend wrote to you (push).
+    DmReceived(crate::api::DirectMessage),
+    /// Your message went through.
+    DmSent {
+        peer: i64,
+        msg: crate::api::DirectMessage,
+    },
+    /// Conversation with `peer`, oldest first.
+    DmHistory {
+        peer: i64,
+        msgs: Vec<crate::api::DirectMessage>,
+    },
     Disconnected,
 }
