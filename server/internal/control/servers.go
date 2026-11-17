@@ -49,6 +49,18 @@ func directRecipientID(msg protocol.Control) (int, error) {
 	return id, nil
 }
 
+// directContent applies the same bounds as the direct_messages check constraint.
+func directContent(msg protocol.Control) (string, error) {
+	content := msg.DirectContent
+	if strings.TrimSpace(content) == "" {
+		return "", errors.New("direct message content required")
+	}
+	if n := utf8.RuneCountInString(content); n > 4000 {
+		return "", errors.New("direct message must be at most 4000 characters")
+	}
+	return content, nil
+}
+
 func (s *Server) handleSendDM(c *client, msg protocol.Control) {
 	if !c.requireAuth() {
 		return
@@ -58,24 +70,32 @@ func (s *Server) handleSendDM(c *client, msg protocol.Control) {
 		c.sendError(err.Error())
 		return
 	}
-	content := msg.DirectContent
-	if strings.TrimSpace(content) == "" {
-		c.sendError("direct message content required")
-		return
-	}
-	if n := utf8.RuneCountInString(content); n > 4000 {
-		c.sendError("direct message must be at most 4000 characters")
+	content, err := directContent(msg)
+	if err != nil {
+		c.sendError(err.Error())
 		return
 	}
 
 	ctx, cancel := storeCtx()
 	defer cancel()
-	dm, err := s.messages.SendDM(ctx, c.sess.UserID, recipientID, content)
+	blocked, err := s.friends.BlockedEitherWay(ctx, c.sess.UserID, recipientID)
+	if err != nil {
+		log.Printf("[DM] block check %d -> %d failed: %v", c.sess.UserID, recipientID, err)
+		c.sendError("direct message send failed")
+		return
+	}
+	if blocked {
+		c.sendError(friends.ErrBlocked.Error())
+		return
+	}
+
+	dm, err := s.messages.SendDM(ctx, c.sess.UserID, recipientID, msg.DirectReplyTo, content)
 	if err != nil {
 		switch {
 		case errors.Is(err, messages.ErrSelfRequest),
 			errors.Is(err, messages.ErrAlreadyExists),
-			errors.Is(err, messages.ErrNotFound):
+			errors.Is(err, messages.ErrNotFound),
+			errors.Is(err, messages.ErrMessageNotFound):
 			c.sendError(err.Error())
 		default:
 			log.Printf("[DM] send from %d to %d failed: %v", c.sess.UserID, recipientID, err)
@@ -84,6 +104,7 @@ func (s *Server) handleSendDM(c *client, msg protocol.Control) {
 		return
 	}
 
+	log.Printf("[DM] message %d sent from %d to %d", dm.DirectMsg.ID, c.sess.UserID, recipientID)
 	summary := directMessageSummary(dm.DirectMsg)
 	notify(s.rooms.SessionsOf(map[int]bool{recipientID: true}),
 		protocol.Control{Type: "DIRECT_MESSAGE", DirectInfo: &summary})
@@ -103,7 +124,18 @@ func (s *Server) handleReceiveDM(c *client, msg protocol.Control) {
 	}
 	ctx, cancel := storeCtx()
 	defer cancel()
-	list, err := s.messages.ListDM(ctx, c.sess.UserID, peerID, 50, 0)
+	blocked, err := s.friends.BlockedEitherWay(ctx, c.sess.UserID, peerID)
+	if err != nil {
+		log.Printf("[DM] block check %d -> %d failed: %v", c.sess.UserID, peerID, err)
+		c.sendError("direct message history failed")
+		return
+	}
+	if blocked {
+		c.sendError(friends.ErrBlocked.Error())
+		return
+	}
+
+	list, err := s.messages.ListDM(ctx, c.sess.UserID, peerID, msg.DMLimit, msg.DMBeforeID)
 	if err != nil {
 		switch {
 		case errors.Is(err, messages.ErrSelfRequest):
@@ -114,14 +146,131 @@ func (s *Server) handleReceiveDM(c *client, msg protocol.Control) {
 		}
 		return
 	}
-	c.send(protocol.Control{Type: "ACK", DirectMessages: directMessageSummaries(list)})
+
+	// Fetching a page means the viewer has seen it; advance the read pointer.
+	var newestID int
+	if len(list) > 0 {
+		newestID = list[0].ID
+	}
+	state, err := s.messages.MarkDMRead(ctx, c.sess.UserID, peerID, newestID)
+	if err != nil {
+		log.Printf("[DM] mark read for %d with %d failed: %v", c.sess.UserID, peerID, err)
+		c.sendError("direct message history failed")
+		return
+	}
+	if state.Changed {
+		notify(s.rooms.SessionsOf(map[int]bool{peerID: true}),
+			protocol.Control{Type: "DIRECT_MESSAGE_READ", DirectMessageID: state.LastReadMessageID})
+	}
+	c.send(protocol.Control{
+		Type: "ACK", DirectMessages: directMessageSummaries(list), UnreadCount: state.UnreadCount,
+	})
 }
 
 func (s *Server) handleUpdateDM(c *client, msg protocol.Control) {
 	if !c.requireAuth() {
 		return
 	}
-	c.send(protocol.Control{Type: "ACK"})
+	if msg.DirectMessageID <= 0 {
+		c.sendError("direct message id required")
+		return
+	}
+	content, err := directContent(msg)
+	if err != nil {
+		c.sendError(err.Error())
+		return
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	edited, peerID, err := s.messages.EditDM(ctx, c.sess.UserID, msg.DirectMessageID, content)
+	if err != nil {
+		sendDMMutationError(c, "edit", c.sess.UserID, msg.DirectMessageID, err)
+		return
+	}
+	log.Printf("[DM] message %d edited by %d", edited.ID, c.sess.UserID)
+	summary := directMessageSummary(*edited)
+	notify(s.rooms.SessionsOf(map[int]bool{peerID: true}),
+		protocol.Control{Type: "DIRECT_MESSAGE_EDITED", DirectInfo: &summary})
+	c.send(protocol.Control{Type: "ACK", DirectInfo: &summary})
+}
+
+func (s *Server) handleDeleteDM(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	if msg.DirectMessageID <= 0 {
+		c.sendError("direct message id required")
+		return
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	id, peerID, err := s.messages.DeleteDM(ctx, c.sess.UserID, msg.DirectMessageID)
+	if err != nil {
+		sendDMMutationError(c, "delete", c.sess.UserID, msg.DirectMessageID, err)
+		return
+	}
+	log.Printf("[DM] message %d deleted by %d", id, c.sess.UserID)
+	notify(s.rooms.SessionsOf(map[int]bool{peerID: true}),
+		protocol.Control{Type: "DIRECT_MESSAGE_DELETED", DirectMessageID: id})
+	c.send(protocol.Control{Type: "ACK", DirectMessageID: id})
+}
+
+func (s *Server) handleMarkDMRead(c *client, msg protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	peerID, err := directRecipientID(msg)
+	if err != nil {
+		c.sendError(err.Error())
+		return
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	state, err := s.messages.MarkDMRead(ctx, c.sess.UserID, peerID, msg.DirectMessageID)
+	if err != nil {
+		log.Printf("[DM] mark read for %d by %d failed: %v", peerID, c.sess.UserID, err)
+		c.sendError("mark direct message read failed")
+		return
+	}
+	if state.Changed {
+		notify(s.rooms.SessionsOf(map[int]bool{peerID: true}),
+			protocol.Control{Type: "DIRECT_MESSAGE_READ", DirectMessageID: state.LastReadMessageID})
+	}
+	c.send(protocol.Control{
+		Type: "ACK", DirectMessageID: state.LastReadMessageID, UnreadCount: state.UnreadCount,
+	})
+}
+
+func (s *Server) handleListDMConversations(c *client, _ protocol.Control) {
+	if !c.requireAuth() {
+		return
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	conversations, err := s.messages.ListDMConversations(ctx, c.sess.UserID)
+	if err != nil {
+		log.Printf("[DM] conversation list for %d failed: %v", c.sess.UserID, err)
+		c.sendError("direct conversation list failed")
+		return
+	}
+	out := make([]protocol.DirectConversationSummary, len(conversations))
+	for i, conv := range conversations {
+		out[i] = protocol.DirectConversationSummary{
+			ChannelID: conv.ChannelID, PeerID: conv.PeerID,
+			LastMessageID: conv.LastMessageID, Content: conv.Content,
+			AuthorID: conv.AuthorID, CreatedAt: conv.CreatedAt, UnreadCount: conv.UnreadCount,
+		}
+	}
+	c.send(protocol.Control{Type: "ACK", DirectConversations: out})
+}
+
+func sendDMMutationError(c *client, op string, userID, messageID int, err error) {
+	if errors.Is(err, messages.ErrMessageNotFound) {
+		c.sendError(err.Error())
+		return
+	}
+	log.Printf("[DM] %s %d by %d failed: %v", op, messageID, userID, err)
+	c.sendError("direct message " + op + " failed")
 }
 
 func directMessageSummary(m messages.DirectMessage) protocol.DirectMessageSummary {

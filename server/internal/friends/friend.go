@@ -18,7 +18,22 @@ var (
 	ErrSelfRequest    = errors.New("cannot send a friend request to yourself")
 	ErrRemoveFriend   = errors.New("could not remove the friendship")
 	ErrAlreadyExists  = errors.New("friend request already exists")
+	ErrBlocked        = errors.New("direct messages are blocked")
 )
+
+// BlockedEitherWay reports whether either user blocked the other, so DM paths
+// can refuse conversations that friendship state has closed.
+func (s *ServerStore) BlockedEitherWay(ctx context.Context, userID, otherID int) (bool, error) {
+	var blocked bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM friendships
+			WHERE status = 'BLOCKED'
+			  AND ((requester_id = $1 AND addressee_id = $2)
+			    OR (requester_id = $2 AND addressee_id = $1))
+		)`, userID, otherID).Scan(&blocked)
+	return blocked, err
+}
 
 type User struct {
 	ID           int       `json:"id"`
@@ -105,7 +120,6 @@ func (s *ServerStore) AcceptFriendship(ctx context.Context, userID, requesterID 
 	return nil
 }
 
-
 // RemoveFriendship ends the friendship between userID and friendID, whoever
 // asked first. Only ACCEPTED rows: a blocked user must not lift a block this
 // way. ErrRemoveFriend when they are not friends.
@@ -126,7 +140,6 @@ func (s *ServerStore) RemoveFriendship(ctx context.Context, userID, friendID int
 	}
 	return nil
 }
-
 
 // DeclineFriendship drops the pending request from requesterID to userID.
 // ponytail: deletes the row (no REJECTED), so they can ask again later.
