@@ -49,16 +49,9 @@ func directRecipientID(msg protocol.Control) (int, error) {
 	return id, nil
 }
 
-// directContent applies the same bounds as the conversation_messages check constraint.
+// directContent applies the message bounds to a DM request.
 func directContent(msg protocol.Control) (string, error) {
-	content := msg.DirectContent
-	if strings.TrimSpace(content) == "" {
-		return "", errors.New("direct message content required")
-	}
-	if n := utf8.RuneCountInString(content); n > 4000 {
-		return "", errors.New("direct message must be at most 4000 characters")
-	}
-	return content, nil
+	return messageContent(msg.DirectContent, "direct")
 }
 
 func (s *Server) handleSendDM(c *client, msg protocol.Control) {
@@ -105,7 +98,7 @@ func (s *Server) handleSendDM(c *client, msg protocol.Control) {
 	}
 
 	log.Printf("[DM] message %d sent from %d to %d", dm.ID, c.sess.UserID, recipientID)
-	summary := directMessageSummary(*dm)
+	summary := messageSummary(dm.Wire())
 	notify(s.rooms.SessionsOf(map[int]bool{recipientID: true}),
 		protocol.Control{Type: "DIRECT_MESSAGE", DirectInfo: &summary})
 	c.send(protocol.Control{Type: "ACK", DirectInfo: &summary})
@@ -163,7 +156,7 @@ func (s *Server) handleReceiveDM(c *client, msg protocol.Control) {
 			protocol.Control{Type: "DIRECT_MESSAGE_READ", DirectMessageID: state.LastReadMessageID})
 	}
 	c.send(protocol.Control{
-		Type: "ACK", DirectMessages: directMessageSummaries(list), UnreadCount: state.UnreadCount,
+		Type: "ACK", DirectMessages: messageSummaries(list), UnreadCount: state.UnreadCount,
 	})
 }
 
@@ -188,7 +181,7 @@ func (s *Server) handleUpdateDM(c *client, msg protocol.Control) {
 		return
 	}
 	log.Printf("[DM] message %d edited by %d", edited.ID, c.sess.UserID)
-	summary := directMessageSummary(*edited)
+	summary := messageSummary(edited.Wire())
 	notify(s.rooms.SessionsOf(map[int]bool{peerID: true}),
 		protocol.Control{Type: "DIRECT_MESSAGE_EDITED", DirectInfo: &summary})
 	c.send(protocol.Control{Type: "ACK", DirectInfo: &summary})
@@ -271,22 +264,6 @@ func sendDMMutationError(c *client, op string, userID, messageID int, err error)
 	}
 	log.Printf("[DM] %s %d by %d failed: %v", op, messageID, userID, err)
 	c.sendError("direct message " + op + " failed")
-}
-
-func directMessageSummary(m messages.DirectMessage) protocol.DirectMessageSummary {
-	return protocol.DirectMessageSummary{
-		ID: m.ID, ChannelID: m.ChannelID, AuthorID: m.Author,
-		Content: m.Content, ReplyTo: m.ReplyTo,
-		CreatedAt: m.CreatedAt, EditedAt: m.EditedAt, DeletedAt: m.DeletedAt,
-	}
-}
-
-func directMessageSummaries(list []messages.DirectMessage) []protocol.DirectMessageSummary {
-	out := make([]protocol.DirectMessageSummary, len(list))
-	for i, m := range list {
-		out[i] = directMessageSummary(m)
-	}
-	return out
 }
 
 // handleCreateServer answers CREATE_SERVER by creating a server owned by

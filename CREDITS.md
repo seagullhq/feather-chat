@@ -35,6 +35,18 @@ They are licensed under the MIT License. The full license text is in
 available at
 <https://github.com/phosphor-icons/core/blob/main/LICENSE>.
 
+## Datasets
+
+### profanity-filter
+
+The AI profanity filter uses the [profanity-filter] dataset by shawarmas
+(about 15k short text entries), hosted on Hugging Face.
+
+The dataset repository currently ships no dataset card and declares no
+license; check the source before redistributing its content.
+
+[profanity-filter]: https://huggingface.co/datasets/shawarmas/profanity-filter
+
 ## Libraries
 
 Direct dependencies of the client and server. Transitive dependencies are

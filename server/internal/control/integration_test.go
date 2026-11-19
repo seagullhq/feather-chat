@@ -236,7 +236,11 @@ func TestIntegrationTwoClients(t *testing.T) {
 	// B leaves the room; A's next audio must not reach it. Before the fix LEAVE
 	// was deferred until the connection closed, so B kept receiving media.
 	sendTest(t, b, protocol.Control{Type: "LEAVE"})
-	time.Sleep(100 * time.Millisecond)
+	// LEAVE has no ACK: wait for the MEMBER_LEFT push instead of sleeping, so
+	// the assertion cannot race the room manager on a loaded machine.
+	awaitControl(t, a, "MEMBER_LEFT", func(m protocol.Control) bool {
+		return m.Type == "MEMBER_LEFT" && m.SSRC == 0x2222
+	})
 	audp.Write(append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindAudio, SSRC: 0x1111}), []byte("afterleave")...))
 	budp.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
 	if n, err := budp.Read(buf); err == nil {
@@ -508,10 +512,19 @@ func TestIntegrationKickAndBan(t *testing.T) {
 	roster := awaitControl(t, ownerConn, "LIST_MEMBERS ACK", func(m protocol.Control) bool {
 		return m.Type == "ACK" && m.ServerMembers != nil
 	})
+	// Owners and admins still see banned members so they can unban them; the
+	// Banned flag, not absence from the roster, is the expected signal.
+	var sawBanned bool
 	for _, m := range roster.ServerMembers {
 		if m.ID == memberUser.ID {
-			t.Fatalf("banned user %d still in roster", memberUser.ID)
+			if !m.Banned {
+				t.Fatalf("banned user %d is in the roster without the Banned flag", memberUser.ID)
+			}
+			sawBanned = true
 		}
+	}
+	if !sawBanned {
+		t.Fatalf("banned user %d missing from the owner's roster", memberUser.ID)
 	}
 
 	sendTest(t, memberConn, protocol.Control{Type: "JOIN_SERVER", InviteCode: srv.InviteCode})
@@ -826,7 +839,9 @@ func TestIntegrationAdminModeration(t *testing.T) {
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// -race makes the remote Postgres round trips much slower; 10 s was enough
+	// without instrumentation but expired mid-test under the race detector.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	ids := make([]int, len(names))
 	for i, n := range names {

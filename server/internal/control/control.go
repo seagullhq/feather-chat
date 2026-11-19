@@ -86,6 +86,11 @@ var handlers = map[string]func(*Server, *client, protocol.Control){
 	"DELETE_DIRECT_MESSAGE":      (*Server).handleDeleteDM,
 	"MARK_DIRECT_MESSAGE_READ":   (*Server).handleMarkDMRead,
 	"LIST_DIRECT_CONVERSATIONS":  (*Server).handleListDMConversations,
+	"SEND_SERVER_MESSAGE":        (*Server).handleSendServerMessage,
+	"LIST_SERVER_MESSAGES":       (*Server).handleListServerMessages,
+	"UPDATE_SERVER_MESSAGE":      (*Server).handleUpdateServerMessage,
+	"DELETE_SERVER_MESSAGE":      (*Server).handleDeleteServerMessage,
+	"MARK_SERVER_MESSAGE_READ":   (*Server).handleMarkServerMessageRead,
 }
 
 // dispatch routes one decoded message, ignoring unknown types (§7 interop
