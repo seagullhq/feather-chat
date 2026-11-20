@@ -7,24 +7,109 @@ use crate::model::{self, Member};
 use gpui::prelude::*;
 use std::sync::Arc;
 
+/// Our own screen share: the OS picker may be open before it is live.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum ShareState {
+    Off,
+    Picking,
+    Live,
+}
+
 impl MainView {
-    /// Copies mic and speaker levels from the voice engine into the model.
-    pub(super) fn poll_media(&mut self, cx: &mut Context<Self>) {
-        let (Some(m), Some((s, c))) = (&self.media, self.joined) else {
+    /// Copies levels and new screen frames from the media engine into the model.
+    pub(super) fn poll_media(&mut self, tick: u32, cx: &mut Context<Self>) {
+        let (Some(m), Some((s, c))) = (self.media.clone(), self.joined) else {
             return;
         };
-        self.me.level = if self.me.muted || self.me.deafened {
-            0.
-        } else {
-            m.mic_level()
-        };
-        let levels = m.peer_levels();
-        if let Some(channel) = self.servers.get_mut(s).and_then(|s| s.channels.get_mut(c)) {
-            for member in &mut channel.members {
-                member.level = levels.get(&member.ssrc).copied().unwrap_or(0.);
+        let mut dirty = false;
+        if tick % 3 == 0 {
+            self.me.level = if self.me.muted || self.me.deafened {
+                0.
+            } else {
+                m.mic_level()
+            };
+            let levels = m.peer_levels();
+            if let Some(channel) = self.servers.get_mut(s).and_then(|s| s.channels.get_mut(c)) {
+                for member in &mut channel.members {
+                    member.level = levels.get(&member.ssrc).copied().unwrap_or(0.);
+                }
             }
+            dirty = true;
+        }
+        for &ssrc in &self.watching {
+            let Some((ver, img)) = m.screen(ssrc) else { continue };
+            if self.screens.get(&ssrc).is_some_and(|(v, _)| *v == ver) {
+                continue;
+            }
+            if let Some((_, old)) = self.screens.insert(ssrc, (ver, img)) {
+                cx.drop_image(old, None); // frees its atlas entry
+            }
+            dirty = true;
+        }
+        if dirty {
+            cx.notify();
+        }
+    }
+
+    /// Starts or stops our screen share.
+    pub(super) fn toggle_share(&mut self, cx: &mut Context<Self>) {
+        let Some(control) = &self.control else { return };
+        if self.share == ShareState::Off {
+            if control.screen_start() {
+                self.share = ShareState::Picking;
+            }
+        } else {
+            control.screen_stop();
+            self.share = ShareState::Off;
         }
         cx.notify();
+    }
+
+    pub fn on_share_started(&mut self, cx: &mut Context<Self>) {
+        self.share = ShareState::Live;
+        cx.notify();
+    }
+
+    pub fn on_share_ended(&mut self, reason: Option<String>, cx: &mut Context<Self>) {
+        if let Some(r) = reason {
+            eprintln!("screen share ended: {r}");
+        }
+        self.share = ShareState::Off;
+        cx.notify();
+    }
+
+    /// The server wants a keyframe from our share.
+    pub fn on_key_req(&self) {
+        if let Some(m) = &self.media {
+            m.request_key();
+        }
+    }
+
+    /// Subscribes to (or leaves) a room-mate's screen.
+    pub(super) fn toggle_watch(&mut self, ssrc: u32, cx: &mut Context<Self>) {
+        let Some(control) = &self.control else { return };
+        if self.watching.remove(&ssrc) {
+            control.screen_unwatch(ssrc);
+            self.forget_screen(ssrc, cx);
+        } else if control.screen_watch(ssrc) {
+            self.watching.insert(ssrc);
+        }
+        cx.notify();
+    }
+
+    fn forget_screen(&mut self, ssrc: u32, cx: &mut Context<Self>) {
+        if let Some((_, old)) = self.screens.remove(&ssrc) {
+            cx.drop_image(old, None);
+        }
+    }
+
+    /// Drops every share state: we left the room or moved to another.
+    fn reset_shares(&mut self, cx: &mut Context<Self>) {
+        self.share = ShareState::Off;
+        self.watching.clear();
+        for (_, (_, old)) in std::mem::take(&mut self.screens) {
+            cx.drop_image(old, None);
+        }
     }
 
     /// Joins the channel being viewed. `joined` is set when the server says yes.
@@ -42,6 +127,7 @@ impl MainView {
         self.joined = None;
         self.media = None;
         self.me.level = 0.;
+        self.reset_shares(cx);
         cx.notify();
     }
 
@@ -62,6 +148,7 @@ impl MainView {
             })?
         });
         let Some((si, ci)) = found else { return };
+        self.reset_shares(cx);
         self.servers[si].channels[ci].members =
             members.into_iter().map(Member::from_roster).collect();
         self.joined = Some((si, ci));
@@ -93,6 +180,9 @@ impl MainView {
         if let Some(c) = self.channel_by_id(channel_id) {
             c.members.retain(|m| m.ssrc != ssrc);
         }
+        if self.watching.remove(&ssrc) {
+            self.forget_screen(ssrc, cx);
+        }
         cx.notify();
     }
 
@@ -108,6 +198,10 @@ impl MainView {
         {
             m.muted = member.muted;
             m.deafened = member.deafened;
+            m.sharing = member.sharing;
+        }
+        if !member.sharing && self.watching.remove(&member.ssrc) {
+            self.forget_screen(member.ssrc, cx);
         }
         cx.notify();
     }

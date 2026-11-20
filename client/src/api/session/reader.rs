@@ -19,6 +19,7 @@ fn push(frame: &Value) -> Option<Event> {
             });
         }
         "SERVER_DELETED" => return Some(Event::ServerDeleted { id: server_id }),
+        "SCREEN_KEYREQ" => return Some(Event::ScreenKeyReq),
         "SERVER_MEMBERS_CHANGED" => return Some(Event::MembersChanged { server_id }),
         // Sent directly to the user who was kicked or banned.
         "USER_KICKED" | "USER_BANNED" => {

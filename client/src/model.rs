@@ -7,6 +7,8 @@ pub struct Member {
     pub name: String,
     pub muted: bool,
     pub deafened: bool,
+    /// Sharing their screen.
+    pub sharing: bool,
     /// Smoothed audio level, 0..1. Above `SPEAKING` the member counts as speaking.
     pub level: f32,
 }
@@ -20,6 +22,7 @@ impl Member {
             name: name.into(),
             muted: false,
             deafened: false,
+            sharing: false,
             level: 0.,
         }
     }
@@ -29,6 +32,7 @@ impl Member {
             ssrc: r.ssrc,
             muted: r.muted,
             deafened: r.deafened,
+            sharing: r.sharing,
             ..Self::new(&r.name)
         }
     }

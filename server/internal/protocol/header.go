@@ -13,9 +13,20 @@ import (
 const HeaderLen = 5
 
 const (
-	KindAudio uint8 = 0
-	KindPing  uint8 = 1
+	KindAudio    uint8 = 0
+	KindPing     uint8 = 1
+	KindVideo    uint8 = 2 // screen-share H.264 fragment, forwarded to watchers only
+	KindSysAudio uint8 = 3 // screen-share system audio (Opus), forwarded to watchers only
 )
+
+// Datagram size caps: audio and PING stay at 1024, video fragments may use 1200.
+const (
+	MaxDatagram      = 1024
+	MaxVideoDatagram = 1200
+)
+
+// IsShareKind reports whether k carries screen-share media (watcher-only).
+func IsShareKind(k uint8) bool { return k == KindVideo || k == KindSysAudio }
 
 // Header is the decoded UDP media header.
 type Header struct {

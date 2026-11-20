@@ -33,6 +33,7 @@ pub struct RosterMember {
     pub name: String,
     pub muted: bool,
     pub deafened: bool,
+    pub sharing: bool,
 }
 
 impl RosterMember {
@@ -42,6 +43,7 @@ impl RosterMember {
             name: v["name"].as_str()?.to_string(),
             muted: v["muted"].as_bool().unwrap_or(false),
             deafened: v["deafened"].as_bool().unwrap_or(false),
+            sharing: v["sharing"].as_bool().unwrap_or(false),
         })
     }
 

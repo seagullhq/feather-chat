@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use super::peer::Peer;
 use super::prefs::PREFS;
 use super::shared::Shared;
-use super::wire::{KIND_AUDIO, KIND_PING, TERMINATOR, audio_packet, header, rms};
+use super::wire::{KIND_AUDIO, KIND_PING, KIND_VIDEO, TERMINATOR, audio_packet, header, rms};
 use super::{FRAME, OUT_RING, PEER_TIMEOUT, RATE};
 
 pub(super) fn worker(
@@ -19,6 +19,7 @@ pub(super) fn worker(
     ssrc: u32,
     mut cap: rtrb::Consumer<i16>,
     mut out: rtrb::Producer<f32>,
+    video: std::sync::mpsc::SyncSender<(u32, Vec<u8>)>,
 ) {
     let mut enc = match OpusEncoder::new(RATE as i32, 1, Application::Voip) {
         Ok(e) => e,
@@ -69,6 +70,10 @@ pub(super) fn worker(
                         rx[9..n].to_vec(),
                         rx[0] & TERMINATOR != 0,
                     );
+                }
+                // Screen-share video goes to its own thread: decoding takes tens of ms.
+                KIND_VIDEO if n > 5 + crate::capture::packet::HEADER && from != ssrc => {
+                    let _ = video.try_send((from, rx[5..n].to_vec()));
                 }
                 _ => {}
             }

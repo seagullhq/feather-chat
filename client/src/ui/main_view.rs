@@ -80,6 +80,12 @@ pub struct MainView {
     hostname: String,
     /// Levels and mute flags of the running voice session, while joined.
     media: Option<std::sync::Arc<media::Shared>>,
+    /// Our own screen share.
+    share: members::ShareState,
+    /// Sharers (by SSRC) whose screen we asked the server for.
+    watching: std::collections::HashSet<u32>,
+    /// Latest frame per watched sharer, with its version.
+    screens: std::collections::HashMap<u32, (u64, std::sync::Arc<RenderImage>)>,
 }
 
 impl MainView {
@@ -109,13 +115,16 @@ impl MainView {
         )
         .detach();
 
-        // Copies mic and speaker levels from the voice engine into the model.
+        // Copies mic and speaker levels (every 3rd tick) and new screen frames
+        // (every tick, ~30 fps) from the media engine into the model.
         cx.spawn(async move |this, cx| {
+            let mut tick = 0u32;
             loop {
                 cx.background_executor()
-                    .timer(Duration::from_millis(80))
+                    .timer(Duration::from_millis(33))
                     .await;
-                if this.update(cx, |t, cx| t.poll_media(cx)).is_err() {
+                tick = tick.wrapping_add(1);
+                if this.update(cx, |t, cx| t.poll_media(tick, cx)).is_err() {
                     break;
                 }
             }
@@ -149,6 +158,9 @@ impl MainView {
             sheet_focus: cx.focus_handle(),
             hostname: String::new(),
             media: None,
+            share: members::ShareState::Off,
+            watching: Default::default(),
+            screens: Default::default(),
         }
     }
 

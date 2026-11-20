@@ -51,7 +51,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libasound2-dev \
+            libclang-dev \
             libfontconfig-dev \
+            libpipewire-0.3-dev \
             libvulkan1 \
             libwayland-dev \
             libx11-xcb-dev \

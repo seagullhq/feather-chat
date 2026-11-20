@@ -251,6 +251,11 @@ impl Root {
                 main.on_joined(server_id, channel_id, members, media, cx)
             }),
             Event::JoinFailed(m) => eprintln!("could not join channel: {m}"),
+            Event::ShareStarted => self.main.update(cx, |main, cx| main.on_share_started(cx)),
+            Event::ShareEnded(reason) => self
+                .main
+                .update(cx, |main, cx| main.on_share_ended(reason, cx)),
+            Event::ScreenKeyReq => self.main.update(cx, |main, _| main.on_key_req()),
             Event::MemberJoined { channel_id, member } => self
                 .main
                 .update(cx, |main, cx| main.on_member_joined(channel_id, member, cx)),

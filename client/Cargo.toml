@@ -11,6 +11,15 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
+# Video hot paths stay fast under opt-level "z" (measured: size-optimized
+# openh264/resize were ~1.3-3x slower at 1080p).
+[profile.release.package.openh264-sys2]
+opt-level = 3
+[profile.release.package.yuv]
+opt-level = 3
+[profile.release.package.fast_image_resize]
+opt-level = 3
+
 # Dev builds: release speed, no fat LTO (link minutes -> seconds).
 [profile.fast]
 inherits = "release"
@@ -48,10 +57,18 @@ keyring = { version = "3", default-features = false, features = [
 ] }
 pulldown-cmark = { version = "0.13", default-features = false }
 directories = "6.0.0"
+image = { version = "0.25", default-features = false }
 rust-embed = { version = "8", default-features = false, features = ["include-exclude"] }
+yuv = { version = "0.8", features = ["fast_mode"] }
+openh264 = "0.9"
+fast_image_resize = "6.2.0"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
+# screen capture: XDG ScreenCast portal (pick source, get a PipeWire fd) + PipeWire stream
+ashpd = { version = "0.14", default-features = false, features = ["async-io", "screencast"] }
+pipewire = "0.10"
+async-io = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
@@ -65,3 +82,6 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
     "std",
     "NSData",
 ] }
+
+# ponytail: spike deps (fase 0 screenshare), remove/promote after the spike
+[dev-dependencies]

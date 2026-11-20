@@ -100,5 +100,11 @@ pub enum Event {
         channel_id: i64,
         member: RosterMember,
     },
+    /// Our screen share is live on the server.
+    ShareStarted,
+    /// Our screen share ended (None = we stopped it; Some = why it failed).
+    ShareEnded(Option<String>),
+    /// The server wants a keyframe from our share (a viewer joined or lost frames).
+    ScreenKeyReq,
     Disconnected,
 }

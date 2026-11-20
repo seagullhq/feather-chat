@@ -3,6 +3,51 @@ use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
 
 impl super::MainView {
+    /// One room-mate's shared screen: the live frame when watching, otherwise
+    /// a placeholder that starts watching on click.
+    fn screen_card(&self, ssrc: u32, name: &str, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme();
+        let frame = self.screens.get(&ssrc).map(|(_, i)| i.clone());
+        let card = div()
+            .id(("screen", ssrc as usize))
+            .w(px(480.))
+            .h(px(270.))
+            .rounded(t.radius)
+            .border_1()
+            .border_color(t.line)
+            .bg(black())
+            .overflow_hidden()
+            .relative()
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_watch(ssrc, cx)));
+        match frame {
+            Some(image) => card
+                .child(img(image).size_full().object_fit(ObjectFit::Contain))
+                .child(
+                    div()
+                        .absolute()
+                        .left_2()
+                        .bottom_2()
+                        .px_2()
+                        .rounded(t.radius)
+                        .bg(black().opacity(0.6))
+                        .text_color(white())
+                        .child(name.to_string()),
+                ),
+            None => card
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(t.muted)
+                .child(if self.watching.contains(&ssrc) {
+                    "Connessione…".to_string()
+                } else {
+                    format!("{name} condivide lo schermo: clicca per guardare")
+                }),
+        }
+        .into_any_element()
+    }
+
     pub(super) fn stage(&self, viewport: Size<Pixels>, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let joined_here = self.joined == Some((self.server, self.viewing()));
@@ -111,12 +156,56 @@ impl super::MainView {
                     "Non connesso"
                 }))
         });
+        // Screen shares of the room: click a card to start or stop watching it.
+        let mut cards: Vec<AnyElement> = vec![];
+        if joined_here {
+            if self.share != super::members::ShareState::Off {
+                cards.push(
+                    div()
+                        .w(px(240.))
+                        .h(px(135.))
+                        .rounded(t.radius)
+                        .border_1()
+                        .border_color(t.line)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(t.muted)
+                        .child("Stai condividendo lo schermo")
+                        .into_any_element(),
+                );
+            }
+            let sharers: Vec<(u32, String)> = self
+                .channel_view()
+                .map(|c| {
+                    c.members
+                        .iter()
+                        .filter(|m| m.sharing)
+                        .map(|m| (m.ssrc, m.name.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            for (ssrc, name) in sharers {
+                cards.push(self.screen_card(ssrc, &name, cx));
+            }
+        }
+        let cards_row = (!cards.is_empty()).then(|| {
+            div()
+                .flex_none()
+                .flex()
+                .flex_wrap()
+                .justify_center()
+                .gap_4()
+                .p_4()
+                .children(cards)
+        });
         div()
             .flex_1()
             .h_full()
             .flex()
             .flex_col()
             .children(header)
+            .children(cards_row)
             .child(body)
             .children(self.controls(cx))
     }
