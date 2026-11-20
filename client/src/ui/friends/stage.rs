@@ -2,7 +2,7 @@
 //! call, full size, and the text chat as a card over its corner (never
 //! resizing the call). In a call: your live mic.
 
-use super::FriendsView;
+use super::{DmPhase, FriendsView};
 use crate::api::Friend;
 use crate::theme::{Theme, ThemeExt};
 use crate::ui::components::{Avatar, Button, Dropdown, ghost, icon};
@@ -88,19 +88,44 @@ impl FriendsView {
     /// the chat; Block and Unfriend are in the header's "..." menu.
     fn dm_body(&self, friend: &Friend, cx: &mut Context<Self>) -> Div {
         let id = friend.id;
-        let call = Button::new(("dm-call", id as u64), "Call")
-            .icon("phone")
-            .primary()
-            .on_click(cx.listener(move |this, _, _, cx| this.call_friend(id, cx)));
-        div()
+        let body = div()
             .w_full()
-            .max_w(px(340.))
+            .max_w(px(400.))
             .flex()
             .flex_col()
             .items_center()
             .text_center()
-            .gap_3()
-            .child(Avatar::new(&friend.name, 96.))
+            .gap_3();
+        // Calling or in a call with this friend: both circles, yours with the
+        // speaking ring, theirs dimmed until they join (the call bar has the state).
+        if let Some(call) = self.dm_call.as_ref().filter(|c| c.peer == id) {
+            let joined = call.phase == DmPhase::Active;
+            let mine = self.servers.read(cx).my_name();
+            let theirs = Avatar::new(&friend.name, 96.).labeled();
+            let theirs = if joined {
+                theirs.state(call.peer_level, call.peer_muted, call.peer_deafened)
+            } else {
+                theirs.disabled(true)
+            };
+            return body.child(
+                div()
+                    .flex()
+                    .items_start()
+                    .justify_center()
+                    .gap_6()
+                    .child(
+                        Avatar::new(&mine, 96.)
+                            .state(call.level, call.muted, call.deafened)
+                            .labeled(),
+                    )
+                    .child(theirs),
+            );
+        }
+        let call = Button::new(("dm-call", id as u64), "Call")
+            .icon("phone")
+            .primary()
+            .on_click(cx.listener(move |this, _, _, cx| this.call_friend(id, cx)));
+        body.child(Avatar::new(&friend.name, 96.))
             .child(
                 div()
                     .font_weight(FontWeight::BOLD)

@@ -11,6 +11,6 @@ mod session;
 mod transport;
 
 pub use auth::Request;
-pub use friends::{DM_PAGE, DirectMessage, Friend, Relation};
+pub use friends::{CallLog, DM_PAGE, DirectMessage, Friend, Relation};
 pub use server::{ChannelSummary, ChannelTypeSummary, RosterMember, ServerMember, ServerSummary};
 pub use session::{Control, Event, spawn};

@@ -117,8 +117,9 @@ fn commands(
                 deafened,
             } => match friends::accept_call(&mut session, peer) {
                 Ok(()) => {
-                    let _ = start_voice(&host, ssrc, muted, deafened, &mut session, &mut engine);
-                    let _ = events.send_blocking(Event::DmCallActive { peer });
+                    let media =
+                        start_voice(&host, ssrc, muted, deafened, &mut session, &mut engine);
+                    let _ = events.send_blocking(Event::DmCallActive { peer, media });
                 }
                 Err(e) => {
                     let _ = events.send_blocking(Event::DmCallFailed(e));
@@ -130,8 +131,8 @@ fn commands(
                 deafened,
             } => {
                 // The server already joined both sessions on accept.
-                let _ = start_voice(&host, ssrc, muted, deafened, &mut session, &mut engine);
-                let _ = events.send_blocking(Event::DmCallActive { peer });
+                let media = start_voice(&host, ssrc, muted, deafened, &mut session, &mut engine);
+                let _ = events.send_blocking(Event::DmCallActive { peer, media });
             }
             Command::DmCallReject { peer } => {
                 if let Err(e) = friends::reject_call(&mut session, peer) {

@@ -12,6 +12,7 @@ pub struct Avatar {
     muted: bool,
     deafened: bool,
     label: bool,
+    disabled: bool,
 }
 
 impl Avatar {
@@ -23,6 +24,7 @@ impl Avatar {
             muted: false,
             deafened: false,
             label: false,
+            disabled: false,
         }
     }
 
@@ -30,6 +32,12 @@ impl Avatar {
         self.speaking = level > crate::media::PREFS.speaking() && !muted && !deafened;
         self.muted = muted;
         self.deafened = deafened;
+        self
+    }
+
+    /// Dimmed, for someone who is not here (yet).
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 
@@ -105,6 +113,7 @@ impl RenderOnce for Avatar {
             .flex_col()
             .items_center()
             .gap_2()
+            .when(self.disabled, |d| d.opacity(0.4))
             .child(circle)
             .when(self.label, |d| {
                 d.child(

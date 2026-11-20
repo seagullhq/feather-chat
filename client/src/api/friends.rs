@@ -138,6 +138,16 @@ pub struct DirectMessage {
     pub id: i64,
     pub author: i64,
     pub content: String,
+    /// A finished 1:1 call, logged by the server: outcome (ended, rejected,
+    /// cancelled, missed, offline) and talk time in seconds. None on text.
+    pub call: Option<CallLog>,
+}
+
+/// The call a chat line stands for. The author of the message is the caller.
+#[derive(Clone)]
+pub struct CallLog {
+    pub outcome: String,
+    pub seconds: u32,
 }
 
 pub(super) fn dm_from(m: &serde_json::Value) -> Option<DirectMessage> {
@@ -149,6 +159,10 @@ pub(super) fn dm_from(m: &serde_json::Value) -> Option<DirectMessage> {
         id: m["id"].as_i64()?,
         author: m["authorId"].as_i64()?,
         content: m["content"].as_str()?.to_string(),
+        call: m["callOutcome"].as_str().map(|outcome| CallLog {
+            outcome: outcome.to_string(),
+            seconds: m["callSeconds"].as_u64().unwrap_or(0) as u32,
+        }),
     })
 }
 

@@ -3,6 +3,7 @@ package messages
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -50,6 +51,10 @@ type DirectMessage struct {
 	CreatedAt time.Time
 	EditedAt  *time.Time
 	DeletedAt *time.Time
+	// CallOutcome and CallSeconds come from the `call` JSON column: set on a
+	// call event (ended, rejected, cancelled, missed, offline), empty on text.
+	CallOutcome string
+	CallSeconds int
 }
 
 // DMConversation is one entry of a user's DM sidebar.
@@ -80,6 +85,27 @@ func pair(a, b int) (low, high int) {
 // conversation on first use. The sender has read their own message; the
 // recipient's read pointer is untouched.
 func (s *ServerStore) SendDM(ctx context.Context, senderID, recipientID, replyToID int, content string) (*DirectMessage, error) {
+	return s.sendDM(ctx, senderID, recipientID, replyToID, content, "", false)
+}
+
+// RecordCall logs a finished 1:1 call in the pair's conversation, authored by
+// the caller. The caller has read it; the callee too when they took part
+// (ended, rejected), else it stays unread (missed, cancelled, offline).
+func (s *ServerStore) RecordCall(ctx context.Context, callerID, calleeID int, outcome string, seconds int) (*DirectMessage, error) {
+	readByCallee := outcome == "ended" || outcome == "rejected"
+	call, err := json.Marshal(struct {
+		Outcome string `json:"outcome"`
+		Seconds int    `json:"seconds,omitempty"`
+	}{outcome, seconds})
+	if err != nil {
+		return nil, err
+	}
+	return s.sendDM(ctx, callerID, calleeID, 0, "Call "+outcome, string(call), readByCallee)
+}
+
+// sendDM is the one insert behind SendDM and RecordCall. callJSON "" means a
+// text message; readByRecipient also moves the recipient's read pointer.
+func (s *ServerStore) sendDM(ctx context.Context, senderID, recipientID, replyToID int, content, callJSON string, readByRecipient bool) (*DirectMessage, error) {
 	if senderID == recipientID {
 		return nil, ErrSelfRequest
 	}
@@ -112,9 +138,10 @@ func (s *ServerStore) SendDM(ctx context.Context, senderID, recipientID, replyTo
 			ON CONFLICT (user_low, user_high) DO UPDATE SET updated_at = now()
 			RETURNING id
 		), msg AS (
-			INSERT INTO conversation_messages (conversation_id, author_id, content, reply_to)
-			SELECT id, $2, $3, NULLIF($5, 0) FROM ch
-			RETURNING id, conversation_id, author_id, content, COALESCE(reply_to, 0), created_at
+			INSERT INTO conversation_messages (conversation_id, author_id, content, reply_to, call)
+			SELECT id, $2, $3, NULLIF($5, 0), NULLIF($7::text, '')::jsonb FROM ch
+			RETURNING id, conversation_id, author_id, content, COALESCE(reply_to, 0), created_at,
+			          COALESCE(call->>'outcome', ''), COALESCE((call->>'seconds')::int, 0)
 		), sender AS (
 			-- Sender: member of the conversation, and has read their own message.
 			INSERT INTO conversation_members (conversation_id, user_id, last_read_message_id)
@@ -123,13 +150,17 @@ func (s *ServerStore) SendDM(ctx context.Context, senderID, recipientID, replyTo
 				GREATEST(conversation_members.last_read_message_id, EXCLUDED.last_read_message_id)
 		), recipient AS (
 			-- Recipient: becomes a member so the chat shows in their sidebar.
-			-- Nothing read yet; an existing read pointer is left alone.
-			INSERT INTO conversation_members (conversation_id, user_id)
-			SELECT conversation_id, $4 FROM msg
-			ON CONFLICT (conversation_id, user_id) DO NOTHING
+			-- Nothing read yet (unless $9); GREATEST ignores NULL, so an
+			-- existing read pointer is left alone.
+			INSERT INTO conversation_members (conversation_id, user_id, last_read_message_id)
+			SELECT conversation_id, $4, CASE WHEN $8::bool THEN id END FROM msg
+			ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_message_id =
+				GREATEST(conversation_members.last_read_message_id, EXCLUDED.last_read_message_id)
 		)
-		SELECT * FROM msg`, low, senderID, content, recipientID, replyToID, high).
-		Scan(&m.ID, &m.ChannelID, &m.Author, &m.Content, &m.ReplyTo, &m.CreatedAt)
+		SELECT * FROM msg`, low, senderID, content, recipientID, replyToID, high,
+		callJSON, readByRecipient).
+		Scan(&m.ID, &m.ChannelID, &m.Author, &m.Content, &m.ReplyTo, &m.CreatedAt,
+			&m.CallOutcome, &m.CallSeconds)
 	if err != nil {
 		return nil, mapPgError(err)
 	}
@@ -154,7 +185,8 @@ func (s *ServerStore) ListDM(ctx context.Context, viewerID, peerID, limit, befor
 	low, high := pair(viewerID, peerID)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT m.id, m.conversation_id, m.author_id, m.content, COALESCE(m.reply_to, 0),
-		       m.created_at, m.edited_at, m.deleted_at
+		       m.created_at, m.edited_at, m.deleted_at,
+		       COALESCE(m.call->>'outcome', ''), COALESCE((m.call->>'seconds')::int, 0)
 		FROM conversations c
 		JOIN conversation_members member ON member.conversation_id = c.id AND member.user_id = $1
 		JOIN conversation_messages m ON m.conversation_id = c.id
@@ -171,7 +203,7 @@ func (s *ServerStore) ListDM(ctx context.Context, viewerID, peerID, limit, befor
 		var m DirectMessage
 		var editedAt, deletedAt sql.NullTime
 		if err := rows.Scan(&m.ID, &m.ChannelID, &m.Author, &m.Content, &m.ReplyTo,
-			&m.CreatedAt, &editedAt, &deletedAt); err != nil {
+			&m.CreatedAt, &editedAt, &deletedAt, &m.CallOutcome, &m.CallSeconds); err != nil {
 			return nil, err
 		}
 		if editedAt.Valid {
@@ -201,7 +233,7 @@ func (s *ServerStore) EditDM(ctx context.Context, userID, messageID int, content
 	var editedAt sql.NullTime
 	err = tx.QueryRowContext(ctx, `
 		UPDATE conversation_messages SET content = $3, edited_at = now()
-		WHERE id = $1 AND author_id = $2 AND deleted_at IS NULL
+		WHERE id = $1 AND author_id = $2 AND deleted_at IS NULL AND call IS NULL
 		RETURNING id, conversation_id, author_id, content, COALESCE(reply_to, 0),
 		          created_at, edited_at, deleted_at`, messageID, userID, content).
 		Scan(&m.ID, &m.ChannelID, &m.Author, &m.Content, &m.ReplyTo,
@@ -239,7 +271,7 @@ func (s *ServerStore) DeleteDM(ctx context.Context, userID, messageID int) (int,
 	var id, channelID int
 	err = tx.QueryRowContext(ctx, `
 		UPDATE conversation_messages SET deleted_at = now()
-		WHERE id = $1 AND author_id = $2 AND deleted_at IS NULL
+		WHERE id = $1 AND author_id = $2 AND deleted_at IS NULL AND call IS NULL
 		RETURNING id, conversation_id`, messageID, userID).Scan(&id, &channelID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, 0, ErrMessageNotFound

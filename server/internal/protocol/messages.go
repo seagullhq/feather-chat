@@ -87,6 +87,10 @@ type MessageSummary struct {
 	CreatedAt time.Time  `json:"createdAt"`
 	EditedAt  *time.Time `json:"editedAt,omitempty"`
 	DeletedAt *time.Time `json:"deletedAt,omitempty"`
+	// A finished 1:1 call: the outcome (ended, rejected, cancelled, missed,
+	// offline) and, for ended, the talk time in seconds. Absent on text.
+	CallOutcome string `json:"callOutcome,omitempty"`
+	CallSeconds int    `json:"callSeconds,omitempty"`
 }
 
 // Aliases keep each handler speaking its own domain without duplicating the

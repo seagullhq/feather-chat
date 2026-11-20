@@ -117,6 +117,8 @@ pub enum Event {
     /// Both sides are in the room; the engine is running.
     DmCallActive {
         peer: i64,
+        /// None if the voice engine could not start.
+        media: Option<Arc<media::Shared>>,
     },
     /// Peer mute/deafen changed during the call (push).
     DmCallPeerState {
@@ -145,6 +147,11 @@ pub enum Event {
     DmReceived(crate::api::DirectMessage),
     /// Your message went through.
     DmSent {
+        peer: i64,
+        msg: crate::api::DirectMessage,
+    },
+    /// A finished call logged in the chat with `peer`.
+    DmCallLog {
         peer: i64,
         msg: crate::api::DirectMessage,
     },

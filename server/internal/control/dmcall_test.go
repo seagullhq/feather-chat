@@ -165,3 +165,58 @@ func TestIntegrationDmCallRequiresFriendship(t *testing.T) {
 		t.Fatalf("non-friend call error = %q, want friendship required", err.Error)
 	}
 }
+
+// A finished call is logged in the pair's chat: both sides get it as a push
+// with the other party's id, it carries the outcome and the talk time, it is
+// there after a reload, and its author cannot edit it.
+func TestIntegrationDmCallLogsOutcomeAndDuration(t *testing.T) {
+	f := newDmCallFixture(t)
+	f.ring(t)
+
+	sendTest(t, f.b, protocol.Control{Type: "DM_ACCEPT_CALL", DirectRecipientID: strconv.Itoa(f.aID)})
+	awaitControl(t, f.b, "DM_ACCEPT_CALL ACK", func(m protocol.Control) bool { return m.Type == "ACK" })
+	time.Sleep(1100 * time.Millisecond) // talk time is whole seconds
+	sendTest(t, f.b, protocol.Control{Type: "LEAVE"})
+
+	isLog := func(m protocol.Control) bool {
+		return m.Type == "DIRECT_MESSAGE" && m.DirectInfo != nil && m.DirectInfo.CallOutcome != ""
+	}
+	toCaller := awaitControl(t, f.a, "call log to caller", isLog)
+	toCallee := awaitControl(t, f.b, "call log to callee", isLog)
+	if toCaller.UserID != f.bID || toCallee.UserID != f.aID {
+		t.Fatalf("peers = %d / %d, want %d / %d", toCaller.UserID, toCallee.UserID, f.bID, f.aID)
+	}
+	got := toCaller.DirectInfo
+	if got.CallOutcome != "ended" || got.CallSeconds < 1 || got.AuthorID != f.aID {
+		t.Fatalf("log = %+v, want ended, >=1s, authored by the caller %d", got, f.aID)
+	}
+	if toCallee.DirectInfo.ID != got.ID {
+		t.Fatalf("callee got message %d, caller %d: not the same row", toCallee.DirectInfo.ID, got.ID)
+	}
+
+	// Still there after a reload.
+	sendTest(t, f.b, protocol.Control{Type: "RECIEVE_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(f.aID)})
+	history := awaitControl(t, f.b, "history", func(m protocol.Control) bool {
+		return m.Type == "ACK" && len(m.DirectMessages) > 0
+	})
+	if h := history.DirectMessages[0]; h.ID != got.ID || h.CallOutcome != "ended" || h.CallSeconds != got.CallSeconds {
+		t.Fatalf("history[0] = %+v, want the logged call %+v", h, got)
+	}
+
+	// An event is not text: the caller cannot rewrite it.
+	sendTest(t, f.a, protocol.Control{Type: "UPDATE_DIRECT_MESSAGE", DirectMessageID: got.ID, DirectContent: "edited"})
+	awaitControl(t, f.a, "edit refused", func(m protocol.Control) bool { return m.Type == "ERROR" })
+}
+
+func TestIntegrationDmCallRejectIsLogged(t *testing.T) {
+	f := newDmCallFixture(t)
+	f.ring(t)
+
+	sendTest(t, f.b, protocol.Control{Type: "DM_REJECT_CALL", DirectRecipientID: strconv.Itoa(f.aID)})
+	logged := awaitControl(t, f.a, "call log", func(m protocol.Control) bool {
+		return m.Type == "DIRECT_MESSAGE" && m.DirectInfo != nil && m.DirectInfo.CallOutcome != ""
+	})
+	if logged.DirectInfo.CallOutcome != "rejected" || logged.DirectInfo.CallSeconds != 0 {
+		t.Fatalf("log = %+v, want rejected without duration", logged.DirectInfo)
+	}
+}

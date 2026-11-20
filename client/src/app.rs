@@ -34,6 +34,7 @@ impl Root {
         let auth = cx.new(AuthView::new);
         let servers = cx.new(|cx| ServersView::new(window, cx));
         let friends = cx.new(|cx| FriendsView::new(servers.clone(), cx));
+        servers.update(cx, |view, cx| view.set_friends(friends.clone(), cx));
         let status_bar = cx.new(StatusBar::new);
         // Reopen on the screen used last time.
         let mode = match ui::userfiles::read_user_file("last_view") {
@@ -315,9 +316,9 @@ impl Root {
             Event::DmCallAccepted { peer } => self
                 .friends
                 .update(cx, |view, cx| view.on_dm_call_accepted(peer, cx)),
-            Event::DmCallActive { peer } => self
+            Event::DmCallActive { peer, media } => self
                 .friends
-                .update(cx, |view, cx| view.on_dm_call_active(peer, cx)),
+                .update(cx, |view, cx| view.on_dm_call_active(peer, media, cx)),
             Event::DmCallPeerState {
                 peer,
                 muted,
@@ -366,6 +367,9 @@ impl Root {
             Event::DmReceived(m) => self
                 .friends
                 .update(cx, |view, cx| view.on_dm(m.author, m, false, cx)),
+            Event::DmCallLog { peer, msg } => self
+                .friends
+                .update(cx, |view, cx| view.on_dm(peer, msg.clone(), msg.author != peer, cx)),
             Event::DmSent { peer, msg } => self
                 .friends
                 .update(cx, |view, cx| view.on_dm(peer, msg, true, cx)),

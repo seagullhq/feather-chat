@@ -13,6 +13,9 @@ type WireSummary struct {
 	CreatedAt time.Time
 	EditedAt  *time.Time
 	DeletedAt *time.Time
+	// Call event fields; empty on text.
+	CallOutcome string
+	CallSeconds int
 }
 
 // WireMessage is implemented by every stored message type sent to a client.
@@ -25,6 +28,7 @@ func (m DirectMessage) Wire() WireSummary {
 		ID: m.ID, ChannelID: m.ChannelID, AuthorID: m.Author,
 		Content: m.Content, ReplyTo: m.ReplyTo,
 		CreatedAt: m.CreatedAt, EditedAt: m.EditedAt, DeletedAt: m.DeletedAt,
+		CallOutcome: m.CallOutcome, CallSeconds: m.CallSeconds,
 	}
 }
 

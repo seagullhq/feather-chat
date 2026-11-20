@@ -19,7 +19,16 @@ fn push(frame: &Value) -> Option<Event> {
             });
         }
         "DIRECT_MESSAGE" => {
-            return super::super::friends::dm_from(&frame["directInfo"]).map(Event::DmReceived);
+            let msg = super::super::friends::dm_from(&frame["directInfo"])?;
+            // A call log goes to both sides, with the other party's id: the
+            // author is the caller, so it cannot say which chat it belongs to.
+            return Some(match msg.call {
+                Some(_) => Event::DmCallLog {
+                    peer: frame["userId"].as_i64()?,
+                    msg,
+                },
+                None => Event::DmReceived(msg),
+            });
         }
         "SERVER_MESSAGE" => {
             return Some(Event::ThreadReceived {

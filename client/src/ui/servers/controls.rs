@@ -7,6 +7,12 @@ impl super::ServersView {
     /// viewed voice channel plus the controls of the call you are in. Empty
     /// on a text channel or home page when you are not in a call.
     pub(super) fn controls(&self, cx: &mut Context<Self>) -> CallBar {
+        // A 1:1 friend call takes the bar: a server call and a DM never run together.
+        if let Some(friends) = &self.friends
+            && let Some(bar) = friends.read(cx).dm_bar(friends.clone())
+        {
+            return bar;
+        }
         let t = cx.theme();
         let target = self.viewing().map(|v| (self.server, v));
         let joined = self.joined.is_some();

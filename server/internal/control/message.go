@@ -12,6 +12,7 @@ func messageSummary(w messages.WireSummary) protocol.MessageSummary {
 		ID: w.ID, ChannelID: protocol.ChannelID(w.ChannelID), AuthorID: w.AuthorID,
 		Content: w.Content, ReplyTo: w.ReplyTo,
 		CreatedAt: w.CreatedAt, EditedAt: w.EditedAt, DeletedAt: w.DeletedAt,
+		CallOutcome: w.CallOutcome, CallSeconds: w.CallSeconds,
 	}
 }
 

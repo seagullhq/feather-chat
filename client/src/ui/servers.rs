@@ -103,6 +103,10 @@ pub struct ServersView {
     /// Frames left after opening in which the card follows its target without
     /// easing: the area it is sized from is measured a frame late.
     thread_snap: Cell<u8>,
+    /// Friends view, for the 1:1 call bar: it is drawn here too while a call runs.
+    friends: Option<Entity<super::FriendsView>>,
+    /// Last 1:1 call bar state seen, to repaint only on a change.
+    dm_key: Option<(i64, u8, bool, bool, u8)>,
     /// Measured while painting: the area the chat card floats in.
     thread_area: Rc<Cell<(f32, f32)>>,
     /// Composer of the open text channel.
@@ -189,6 +193,8 @@ impl ServersView {
             thread_drag: None,
             thread_shown: std::cell::Cell::new(None),
             thread_snap: Cell::new(0),
+            friends: None,
+            dm_key: None,
             thread_area: Rc::default(),
             thread_input: cx.new(|cx| {
                 TextInput::multiline("Scrivi un messaggio (Shift+Invio per andare a capo)", cx)
@@ -213,6 +219,25 @@ impl ServersView {
     pub fn viewing(&self) -> Option<usize> {
         let server = self.servers.get(self.server)?;
         server.viewing.filter(|&i| i < server.channels.len())
+    }
+
+    /// Your display name, for your avatar in a friend call.
+    pub fn my_name(&self) -> String {
+        self.me.name.clone()
+    }
+
+    /// Hands over the friends view, so its 1:1 call bar shows here as well.
+    pub fn set_friends(&mut self, friends: Entity<super::FriendsView>, cx: &mut Context<Self>) {
+        // Friends observes this view too: notifying unconditionally would ping-pong.
+        cx.observe(&friends, |this, friends, cx| {
+            let key = friends.read(cx).dm_key();
+            if this.dm_key != key {
+                this.dm_key = key;
+                cx.notify();
+            }
+        })
+        .detach();
+        self.friends = Some(friends);
     }
 
     /// Shows a channel, or the home page with `None`; saved per server, so

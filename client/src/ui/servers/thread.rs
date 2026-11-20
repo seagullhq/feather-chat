@@ -321,6 +321,7 @@ impl super::ServersView {
                     id: m.id,
                     mine,
                     text: m.content.clone(),
+                    system: false,
                 };
                 message(&chat, &name, first, &t)
             }))

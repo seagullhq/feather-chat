@@ -23,6 +23,8 @@ type dmCall struct {
 	caller int
 	callee int
 	active bool
+	// startedAt is when it was answered; zero while ringing.
+	startedAt time.Time
 }
 
 // callManager holds at most one call per user pair. Calls are short-lived, so
@@ -64,7 +66,15 @@ func (m *callManager) accept(roomName string, user int) (*dmCall, bool) {
 		return nil, false
 	}
 	call.active = true
+	call.startedAt = time.Now()
 	return call, true
+}
+
+// state reads a call's phase under the lock that accept writes it with.
+func (m *callManager) state(call *dmCall) (active bool, startedAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return call.active, call.startedAt
 }
 
 // reject drops a ringing call. Either participant may decline it: the callee
@@ -154,6 +164,31 @@ func (s *Server) dmNotifyBoth(call *dmCall, except *room.Session, reason string)
 	})
 	s.dmNotify(call.callee, except, protocol.Control{
 		Type: "DM_CALL_ENDED", Room: call.room, UserID: call.caller, CallReason: reason,
+	})
+}
+
+// recordDMCall logs a finished call in the pair's conversation and pushes it
+// to both users (every device), with the other party's id in UserID so each
+// client files it under the right chat. The message is stored, so the log
+// survives a reload and shows the same on both sides.
+func (s *Server) recordDMCall(call *dmCall, outcome string, startedAt time.Time) {
+	seconds := 0
+	if outcome == "ended" && !startedAt.IsZero() {
+		seconds = int(time.Since(startedAt).Round(time.Second) / time.Second)
+	}
+	ctx, cancel := storeCtx()
+	defer cancel()
+	stored, err := s.messages.RecordCall(ctx, call.caller, call.callee, outcome, seconds)
+	if err != nil {
+		log.Printf("[DM CALL] log %s call %d -> %d failed: %v", outcome, call.caller, call.callee, err)
+		return
+	}
+	summary := messageSummary(stored.Wire())
+	s.dmNotify(call.caller, nil, protocol.Control{
+		Type: "DIRECT_MESSAGE", UserID: call.callee, DirectInfo: &summary,
+	})
+	s.dmNotify(call.callee, nil, protocol.Control{
+		Type: "DIRECT_MESSAGE", UserID: call.caller, DirectInfo: &summary,
 	})
 }
 
@@ -281,6 +316,7 @@ func (s *Server) handleDmCallReject(c *client, msg protocol.Control) {
 		return
 	}
 	s.dmNotifyBoth(call, c.sess, "rejected")
+	s.recordDMCall(call, "rejected", time.Time{})
 	c.send(protocol.Control{Type: "ACK", Room: roomName})
 }
 
@@ -301,6 +337,7 @@ func (s *Server) handleDmCallCancel(c *client, msg protocol.Control) {
 		return
 	}
 	s.dmNotifyBoth(call, c.sess, "cancelled")
+	s.recordDMCall(call, "cancelled", time.Time{})
 	c.send(protocol.Control{Type: "ACK", Room: roomName})
 }
 
@@ -311,6 +348,7 @@ func (s *Server) dmCallTimeout(roomName string, call *dmCall) {
 		return
 	}
 	s.dmNotifyBoth(call, nil, "timeout")
+	s.recordDMCall(call, "missed", time.Time{})
 }
 
 // onDmCallLeave ends an active call when a session drops its media room
@@ -320,8 +358,14 @@ func (s *Server) onDmCallLeave(c *client, roomName string) {
 	if call == nil {
 		return
 	}
+	active, startedAt := s.calls.state(call)
 	s.calls.drop(roomName, call)
 	s.dmNotifyBoth(call, c.sess, "left")
+	if active {
+		s.recordDMCall(call, "ended", startedAt)
+	} else {
+		s.recordDMCall(call, "cancelled", time.Time{})
+	}
 }
 
 // dmCancelPendingFor clears rings on disconnect. Active calls are already
@@ -335,5 +379,6 @@ func (s *Server) dmCancelPendingFor(userID int) {
 			continue
 		}
 		s.dmNotifyBoth(call, nil, "offline")
+		s.recordDMCall(call, "offline", time.Time{})
 	}
 }

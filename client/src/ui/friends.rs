@@ -42,6 +42,7 @@ pub(super) struct DmCall {
     pub muted: bool,
     pub deafened: bool,
     pub level: f32,
+    pub peer_level: f32,
     pub peer_muted: bool,
     pub peer_deafened: bool,
     pub media: Option<Arc<media::Shared>>,
@@ -186,6 +187,25 @@ impl FriendsView {
 
     /// Mic level of the live DM call, at most one repaint per visible step.
     fn poll_dm_media(&mut self, cx: &mut Context<Self>) {
+        // Ringing: no call engine yet, so the level comes from the mic check
+        // (reopened if it idled out), to show your voice while you wait.
+        if let Some(call) = self.dm_call.as_ref()
+            && call.phase == DmPhase::Outgoing
+        {
+            let silent = call.muted || call.deafened;
+            let check = self.servers.read(cx).voice_check();
+            if check.read(cx).step().is_none() {
+                check.update(cx, |v, cx| v.start(cx));
+            }
+            let level = if silent { 0. } else { check.read(cx).level() };
+            if let Some(call) = self.dm_call.as_mut()
+                && ((call.level - level).abs() > 0.01 || (level == 0.) != (call.level == 0.))
+            {
+                call.level = level;
+                cx.notify();
+            }
+            return;
+        }
         let Some(call) = self.dm_call.as_mut() else {
             return;
         };
@@ -197,10 +217,35 @@ impl FriendsView {
         } else {
             media.mic_level()
         };
-        if (call.level - level).abs() > 0.01 || (level == 0.) != (call.level == 0.) {
+        // One other person in the room: the loudest peer is the friend.
+        let peer_level = if call.peer_deafened || call.peer_muted {
+            0.
+        } else {
+            media.peer_levels().values().copied().fold(0., f32::max)
+        };
+        let moved = |old: f32, new: f32| (old - new).abs() > 0.01 || (new == 0.) != (old == 0.);
+        if moved(call.level, level) || moved(call.peer_level, peer_level) {
             call.level = level;
+            call.peer_level = peer_level;
             cx.notify();
         }
+    }
+
+    /// A line in the open chat with `peer` about the call. Local only: the server
+    /// does not store it and a reload of the chat drops it. Not logged for a chat
+    /// that is not open (a stub log would stop its history from loading).
+    fn log_call(&mut self, peer: i64, text: impl Into<String>) {
+        if self.selected_friend != Some(peer) {
+            return;
+        }
+        let log = self.chat_log.entry(peer).or_default();
+        let id = -1 - log.iter().filter(|m| m.system).count() as i64;
+        log.push(chat::ChatMessage {
+            id,
+            mine: false,
+            text: text.into(),
+            system: true,
+        });
     }
 
     fn dm_name(&self, peer: i64) -> SharedString {
@@ -220,7 +265,8 @@ impl FriendsView {
         check.update(cx, |v, cx| v.stop(cx));
     }
 
-    /// "Call" on a friend: ring them, without opening the microphone.
+    /// "Call" on a friend: ring them. While it rings the mic check runs, so your
+    /// circle shows your voice (see `poll_dm_media`); the call engine takes over on answer.
     pub(super) fn call_friend(&mut self, peer: i64, cx: &mut Context<Self>) {
         self.error = None;
         if self.in_a_call(cx) {
@@ -238,11 +284,11 @@ impl FriendsView {
                 muted: false,
                 deafened: false,
                 level: 0.,
+                peer_level: 0.,
                 peer_muted: false,
                 peer_deafened: false,
                 media: None,
             });
-            self.stop_mic_check(cx);
         }
         cx.notify();
     }
@@ -276,6 +322,7 @@ impl FriendsView {
             muted: false,
             deafened: false,
             level: 0.,
+            peer_level: 0.,
             peer_muted: false,
             peer_deafened: false,
             media: None,
@@ -300,7 +347,12 @@ impl FriendsView {
         cx.notify();
     }
 
-    pub fn on_dm_call_active(&mut self, peer: i64, cx: &mut Context<Self>) {
+    pub fn on_dm_call_active(
+        &mut self,
+        peer: i64,
+        media: Option<Arc<media::Shared>>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(call) = self.dm_call.as_mut() else {
             return;
         };
@@ -308,6 +360,10 @@ impl FriendsView {
             return;
         }
         call.phase = DmPhase::Active;
+        // The engine's levels feed the speaking rings (see `poll_dm_media`).
+        call.media = media;
+        // The call engine has the mic now: the ring preview lets go of it.
+        self.stop_mic_check(cx);
         cx.notify();
     }
 
@@ -327,7 +383,7 @@ impl FriendsView {
         }
     }
 
-    pub fn on_dm_call_ended(&mut self, peer: i64, reason: String, cx: &mut Context<Self>) {
+    pub fn on_dm_call_ended(&mut self, peer: i64, _reason: String, cx: &mut Context<Self>) {
         let Some(call) = self.dm_call.as_ref() else {
             return;
         };
@@ -342,25 +398,21 @@ impl FriendsView {
             }
         }
         self.dm_call = None;
-        self.error = Some(match reason.as_str() {
-            "rejected" => "Call rejected.".into(),
-            "cancelled" | "left" => "Call ended.".into(),
-            "timeout" => "Call timed out.".into(),
-            "offline" => "Friend is offline.".into(),
-            _ => "Call failed.".into(),
-        });
+        // The ring may have ended unanswered: close the mic that showed your voice.
+        self.stop_mic_check(cx);
         cx.notify();
     }
 
     pub fn on_dm_call_failed(&mut self, message: String, cx: &mut Context<Self>) {
-        if self
+        if let Some(peer) = self
             .dm_call
             .as_ref()
-            .is_some_and(|call| call.phase != DmPhase::Active)
+            .filter(|call| call.phase != DmPhase::Active)
+            .map(|call| call.peer)
         {
             self.dm_call = None;
+            self.log_call(peer, format!("Chiamata non riuscita: {message}"));
         }
-        self.error = Some(message);
         cx.notify();
     }
 
@@ -416,6 +468,8 @@ impl FriendsView {
             control.dm_call_cancel(peer);
         }
         self.dm_call = None;
+        // Ring over: close the mic that showed your voice.
+        self.stop_mic_check(cx);
         cx.notify();
     }
 
@@ -477,11 +531,7 @@ impl FriendsView {
         }
         let log = self.chat_log.entry(peer).or_default();
         if !log.iter().any(|x| x.id == m.id) {
-            log.push(chat::ChatMessage {
-                id: m.id,
-                mine,
-                text: m.content,
-            });
+            log.push(chat::ChatMessage::from_dm(m, mine));
             // A long session in one chat must not grow without end.
             let extra = log.len().saturating_sub(DM_MAX);
             if extra > 0 {
@@ -513,10 +563,9 @@ impl FriendsView {
         let full = msgs.len() >= DM_PAGE;
         let page: Vec<_> = msgs
             .into_iter()
-            .map(|m| chat::ChatMessage {
-                id: m.id,
-                mine: m.author != peer,
-                text: m.content,
+            .map(|m| {
+                let mine = m.author != peer;
+                chat::ChatMessage::from_dm(m, mine)
             })
             .collect();
         match before {
