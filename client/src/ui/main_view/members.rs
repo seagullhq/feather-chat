@@ -4,7 +4,7 @@ use super::MainView;
 use crate::api::RosterMember;
 use crate::media;
 use crate::model::{self, Member};
-use gpui::{prelude::*, *};
+use gpui::prelude::*;
 use std::sync::Arc;
 
 /// Our own screen share: the OS picker may be open before it is live.
@@ -60,38 +60,15 @@ impl MainView {
     }
 
     /// Starts or stops our screen share.
-    pub(super) fn toggle_share(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn toggle_share(&mut self, cx: &mut Context<Self>) {
         self.clear_error(cx);
         let Some(control) = self.control.clone() else {
             return;
         };
         if self.share == ShareState::Off {
-            #[cfg(target_os = "windows")]
-            {
-                self.open_picker(window, cx);
-                return;
+            if control.screen_start() {
+                self.share = ShareState::Picking;
             }
-            #[cfg(not(target_os = "windows"))]
-            {
-                if control.screen_start(crate::capture::Source::Native) {
-                    self.share = ShareState::Picking;
-                }
-            }
-        } else if self.share == ShareState::Picking {
-            #[cfg(target_os = "windows")]
-            {
-                if self.picker_open {
-                    self.close_picker(window, cx);
-                    return;
-                }
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                let _ = window;
-            }
-            control.screen_stop();
-            self.share = ShareState::Off;
-            self.forget_screen(media::LOCAL_SCREEN, cx);
         } else {
             control.screen_stop();
             self.share = ShareState::Off;
@@ -107,7 +84,6 @@ impl MainView {
     }
 
     pub fn on_share_ended(&mut self, reason: Option<String>, cx: &mut Context<Self>) {
-        self.picker_open = false;
         if let Some(r) = reason {
             self.on_error(r, cx);
         }
@@ -145,7 +121,6 @@ impl MainView {
     /// Drops every share state: we left the room or moved to another.
     fn reset_shares(&mut self, cx: &mut Context<Self>) {
         self.share = ShareState::Off;
-        self.picker_open = false;
         self.watching.clear();
         self.clear_error(cx);
         for (_, (_, old)) in std::mem::take(&mut self.screens) {

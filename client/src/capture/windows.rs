@@ -1,32 +1,29 @@
-//! Windows capture: Windows.Graphics.Capture with our own gpui source picker.
+//! Windows capture: Windows.Graphics.Capture with the system picker.
 //! `windows-capture` owns the capture thread (COM/MTA, DispatcherQueue and the
-//! message loop); this module enumerates sources and forwards BGRA frames.
+//! message loop); this module opens the native picker and forwards BGRA frames.
 
-use super::{Event, Frame, Source};
-use std::ffi::c_void;
+use super::{Event, Frame};
+use std::convert::Infallible;
+use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use windows::Graphics::Capture::GraphicsCaptureItem;
-use windows::Win32::Foundation::S_FALSE;
-use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize};
-use windows::core::Error as WindowsError;
-
+use windows_capture::GraphicsCaptureItem;
 use windows_capture::capture::{Context, GraphicsCaptureApiHandler};
 use windows_capture::graphics_capture_api::InternalCaptureControl;
+use windows_capture::graphics_capture_picker::GraphicsCapturePicker;
 use windows_capture::monitor::Monitor;
 use windows_capture::settings::{
-    CaptureItemTypes, ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
-    MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings, TryIntoCaptureItemWithType,
+    ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
+    GraphicsCaptureItemType, MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
 };
-use windows_capture::window::Window;
 
 type Sink = Arc<Mutex<dyn FnMut(Event) + Send>>;
 
 /// A running capture. Dropping it signals the thread to stop; the thread may
-/// still be inside capture setup, so we do not join here.
+/// still be inside the native picker, so we do not join here.
 pub struct Capture {
     stop: mpsc::Sender<()>,
     ended: Arc<AtomicBool>,
@@ -41,53 +38,14 @@ impl Drop for Capture {
     }
 }
 
-/// Lists displays first, then visible top-level windows with a title.
-pub fn sources() -> Result<Vec<Source>, String> {
-    let mut out = Vec::new();
-
-    for monitor in Monitor::enumerate().map_err(|e| e.to_string())? {
-        let name = monitor.name().unwrap_or_else(|_| {
-            monitor
-                .index()
-                .map(|i| format!("Display {i}"))
-                .unwrap_or_else(|_| "Display".into())
-        });
-        out.push(Source::Display {
-            handle: monitor.as_raw_hmonitor() as usize,
-            name,
-        });
-    }
-
-    let me = std::process::id();
-    for window in Window::enumerate().map_err(|e| e.to_string())? {
-        if window.process_id().is_ok_and(|pid| pid == me) {
-            continue; // sharing our own picker window would only show a loop
-        }
-        let Ok(title) = window.title() else { continue };
-        let title = title.trim();
-        if title.is_empty() {
-            continue;
-        }
-        let name = match window.process_name() {
-            Ok(process) if !process.is_empty() => format!("{title} — {process}"),
-            _ => title.to_string(),
-        };
-        out.push(Source::Window {
-            handle: window.as_raw_hwnd() as usize,
-            name,
-        });
-    }
-    Ok(out)
-}
-
-/// Starts a capture on its own thread using a source picked in the gpui dialog.
-pub fn start_with(source: Source, on_event: impl FnMut(Event) + Send + 'static) -> Capture {
+/// Starts a capture on its own thread. The OS picker appears right away.
+pub fn start(on_event: impl FnMut(Event) + Send + 'static) -> Capture {
     let (stop, stop_rx) = mpsc::channel::<()>();
     let ended = Arc::new(AtomicBool::new(false));
     let sink: Sink = Arc::new(Mutex::new(on_event));
     let thread_ended = ended.clone();
     let thread = thread::spawn(move || {
-        let err = run(source, stop_rx, thread_ended, sink.clone()).err();
+        let err = run(stop_rx, thread_ended, sink.clone()).err();
         (sink.lock().unwrap())(Event::Ended(err));
     });
     Capture {
@@ -97,21 +55,46 @@ pub fn start_with(source: Source, on_event: impl FnMut(Event) + Send + 'static) 
     }
 }
 
-fn run(
-    source: Source,
-    stop_rx: mpsc::Receiver<()>,
-    ended: Arc<AtomicBool>,
-    sink: Sink,
-) -> Result<(), String> {
-    init_winrt()?;
-    let source = selected_item(source)?;
+fn run(stop_rx: mpsc::Receiver<()>, ended: Arc<AtomicBool>, sink: Sink) -> Result<(), String> {
+    let (item_tx, item_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let picker = thread::spawn(move || {
+        let picked = match GraphicsCapturePicker::pick_item() {
+            Ok(Some(picked)) => picked,
+            Ok(None) => {
+                let _ = item_tx.send(Err("cancelled".into()));
+                return;
+            }
+            Err(e) => {
+                let _ = item_tx.send(Err(e.to_string()));
+                return;
+            }
+        };
+        // The item can cross threads; its guard (and the hidden HWND) cannot.
+        // Keep the guard in this closure until capture has stopped.
+        let item = picked.item;
+        if item_tx.send(Ok(item)).is_err() {
+            return;
+        }
+        let _ = release_rx.recv();
+    });
+    let _picker = PickerThread {
+        release: release_tx,
+        thread: Some(picker),
+    };
+
+    let item = match item_rx.recv() {
+        Ok(Ok(item)) => item,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => return Err("picker closed".into()),
+    };
     let flags = FrameFlags {
         sink,
         interval: Duration::from_nanos(1_000_000_000 / 30),
         start: Instant::now(),
     };
     let settings = Settings::new(
-        source,
+        PickedItem(item),
         CursorCaptureSettings::Default,
         DrawBorderSettings::Default,
         SecondaryWindowSettings::Default,
@@ -129,7 +112,7 @@ fn run(
             Ok(_) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
-        if ended.load(Relaxed) {
+        if ended.load(Relaxed) || control.is_finished() {
             break;
         }
     }
@@ -137,42 +120,33 @@ fn run(
     Ok(())
 }
 
-fn init_winrt() -> Result<(), String> {
-    match unsafe { RoInitialize(RO_INIT_MULTITHREADED) } {
-        Ok(()) => Ok(()),
-        Err(e) if e.code() == S_FALSE => Ok(()), // already initialized
-        Err(e) => Err(e.to_string()),
+/// Keeps the native picker's guard alive on the thread that created it.
+struct PickerThread {
+    release: mpsc::Sender<()>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Drop for PickerThread {
+    fn drop(&mut self) {
+        let _ = self.release.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
-/// 1.5.0 has no `Unknown` capture-item variant: `Monitor` only means "no
-/// title-bar crop", so a picked window works with it unchanged.
-struct SelectedSource {
-    item: GraphicsCaptureItem,
-    kind: CaptureItemTypes,
-}
+/// `windows-capture` needs a detail token even for a raw picked item. The
+/// pipeline ignores monitor details, so the real source is the item itself.
+struct PickedItem(GraphicsCaptureItem);
 
-impl TryIntoCaptureItemWithType for SelectedSource {
-    fn try_into_capture_item(
-        self,
-    ) -> Result<(GraphicsCaptureItem, CaptureItemTypes), WindowsError> {
-        Ok((self.item, self.kind))
-    }
-}
+impl TryInto<GraphicsCaptureItemType> for PickedItem {
+    type Error = Infallible;
 
-fn selected_item(source: Source) -> Result<SelectedSource, String> {
-    match source {
-        Source::Display { handle, .. } => {
-            let monitor = Monitor::from_raw_hmonitor(handle as *mut c_void);
-            let (item, kind) = monitor.try_into_capture_item().map_err(|e| e.to_string())?;
-            Ok(SelectedSource { item, kind })
-        }
-        Source::Window { handle, .. } => {
-            let window = Window::from_raw_hwnd(handle as *mut c_void);
-            let (item, kind) = window.try_into_capture_item().map_err(|e| e.to_string())?;
-            Ok(SelectedSource { item, kind })
-        }
-        Source::Native => Err("select a screen or window first".into()),
+    fn try_into(self) -> Result<GraphicsCaptureItemType, Self::Error> {
+        Ok(GraphicsCaptureItemType::Monitor((
+            self.0,
+            Monitor::from_raw_hmonitor(ptr::null_mut()),
+        )))
     }
 }
 
@@ -187,6 +161,7 @@ struct CaptureHandler {
     interval: Duration,
     start: Instant,
     last: Option<Instant>,
+    scratch: Vec<u8>,
 }
 
 impl GraphicsCaptureApiHandler for CaptureHandler {
@@ -199,6 +174,7 @@ impl GraphicsCaptureApiHandler for CaptureHandler {
             interval: ctx.flags.interval,
             start: ctx.flags.start,
             last: None,
+            scratch: Vec::new(),
         })
     }
 
@@ -216,11 +192,8 @@ impl GraphicsCaptureApiHandler for CaptureHandler {
         }
         self.last = Some(now);
         let (width, height) = (frame.width(), frame.height());
-        let mut buffer = frame.buffer().map_err(|e| e.to_string())?;
-        let data = buffer
-            .as_nopadding_buffer()
-            .map_err(|e| e.to_string())?
-            .to_vec();
+        let buffer = frame.buffer().map_err(|e| e.to_string())?;
+        let data = buffer.as_nopadding_buffer(&mut self.scratch).to_vec();
         (self.sink.lock().unwrap())(Event::Frame(Frame {
             width,
             height,

@@ -9,7 +9,6 @@ use super::share::{Sender, viewer_loop};
 use super::shared::Shared;
 use super::worker::worker;
 use super::{MEDIA_PORT, Notify, OUT_RING, RATE};
-use crate::capture::Source;
 
 /// A running voice session. Dropping it stops both threads and the streams.
 pub struct Engine {
@@ -68,12 +67,11 @@ impl Engine {
         })
     }
 
-    /// Starts capturing the chosen source. The sender stays silent until
+    /// Starts capture (the OS picks the source). The sender stays silent until
     /// `set_announced(true)`.
-    pub fn start_share(&mut self, source: Source) -> Result<(), String> {
+    pub fn start_share(&mut self) -> Result<(), String> {
         let sock = self.sock.try_clone().map_err(|e| e.to_string())?;
         self.sender = Some(Sender::start(
-            source,
             self.shared.clone(),
             sock,
             self.ssrc,

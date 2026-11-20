@@ -17,11 +17,7 @@ fn cpu_secs() -> f64 {
 
 fn main() {
     let (tx, rx) = mpsc::sync_channel(2);
-    let source = capture::sources()
-        .ok()
-        .and_then(|sources| sources.into_iter().next())
-        .unwrap_or(capture::Source::Native);
-    let _cap = capture::start_with(source, move |e| {
+    let _cap = capture::start(move |e| {
         let _ = tx.try_send(e); // drop when the encoder is behind: latest-wins is a later refinement
     });
     let (mut enc, mut dec, mut re) = (

@@ -88,7 +88,7 @@ impl super::MainView {
                     ToolButton::new("share", label, "monitor")
                         .reserve(5)
                         .color(color)
-                        .on_click(cx.listener(|this, _, window, cx| this.toggle_share(window, cx)))
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_share(cx)))
                 })
                 .child(
                     ToolButton::new("leave", "Quit", "phone-slash")

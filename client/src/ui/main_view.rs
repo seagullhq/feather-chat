@@ -25,13 +25,11 @@ mod modals;
 mod server_sheet;
 mod servers;
 mod sidebar;
-mod source_picker;
 mod stage;
 mod status_bar;
 
 use add_channel::AddChannelModal;
 use add_server::{AddServerModal, ModalEvent};
-use source_picker::SourcePicker;
 
 fn default_mic() -> String {
     use cpal::traits::HostTrait;
@@ -64,9 +62,6 @@ pub struct MainView {
     focused_once: bool,
     add: Entity<AddServerModal>,
     add_channel: Entity<AddChannelModal>,
-    source_picker: Entity<SourcePicker>,
-    /// The gpui picker is open (distinct from capture starting without it).
-    picker_open: bool,
     channel_types: Vec<ChannelTypeSummary>,
     control: Option<Control>,
     server_menu: bool,
@@ -123,19 +118,6 @@ impl MainView {
         )
         .detach();
 
-        let source_picker = cx.new(SourcePicker::new);
-        cx.subscribe_in(
-            &source_picker,
-            window,
-            |this, _, event: &source_picker::ModalEvent, window, cx| match event {
-                source_picker::ModalEvent::Close => this.close_picker(window, cx),
-                source_picker::ModalEvent::Pick { source } => {
-                    this.on_source_picked(source.clone(), window, cx)
-                }
-            },
-        )
-        .detach();
-
         // Copies mic and speaker levels (every 3rd tick) and new screen frames
         // (every tick, ~30 fps) from the media engine into the model.
         cx.spawn(async move |this, cx| {
@@ -165,8 +147,6 @@ impl MainView {
             focused_once: false,
             add,
             add_channel,
-            source_picker,
-            picker_open: false,
             channel_types: Vec::new(),
             control: None,
             server_menu: false,
@@ -220,7 +200,6 @@ impl Render for MainView {
         let t = cx.theme();
         let server_modal = self.adding.then(|| self.add.clone());
         let channel_modal = self.adding_channel.then(|| self.add_channel.clone());
-        let picker_modal = self.picker_open.then(|| self.source_picker.clone());
         tab_nav(div())
             .key_context("Stage")
             .track_focus(&self.focus)
@@ -254,6 +233,5 @@ impl Render for MainView {
             .child(self.status_bar(window, cx))
             .children(server_modal)
             .children(channel_modal)
-            .children(picker_modal)
     }
 }
