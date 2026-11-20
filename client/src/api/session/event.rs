@@ -106,5 +106,7 @@ pub enum Event {
     ShareEnded(Option<String>),
     /// The server wants a keyframe from our share (a viewer joined or lost frames).
     ScreenKeyReq,
+    /// A background operation failed: show the reason in the stage.
+    Error(String),
     Disconnected,
 }

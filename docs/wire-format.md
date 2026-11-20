@@ -195,6 +195,12 @@ most 4 simultaneous sharers.
 Sharing starts/stops are announced to the server's members as `MEMBER_STATE`
 whose `member` carries `sharing: true` (omitted when false).
 
+A server MUST throttle viewer-sent `SCREEN_KEYREQ` to at most one per 500 ms
+for each `(viewer, presenter SSRC)` pair. Requests outside that gap MAY be
+dropped without a reply; the automatic key request sent on `SCREEN_WATCH` does
+not consume that budget. Clients use the same 500 ms gap when asking, and
+pace VIDEO fragments instead of sending a keyframe as one burst.
+
 ## 8. Worked examples
 
 **AUDIO, seq = 7, single Opus frame on the wire:**
@@ -241,7 +247,7 @@ trusted networks.
 
 - **v1 + screen share** (2026-11-20): kinds 2 (VIDEO) and 3 (SYSAUDIO),
   VIDEO datagrams up to 1200 bytes, watcher-only forwarding, `SCREEN_*`
-  control messages (§7.2), `sharing` on members.
+  control messages (§7.2), `sharing` on members, 500 ms `SCREEN_KEYREQ` limit.
 - **v0 → v1** (2026-09-17): JOIN/LEAVE moved from UDP to TCP; terminator
   flag added; PING now carries an echoed timestamp; explicit max datagram
   1024 bytes; continuous transmission documented; compliance summary added.

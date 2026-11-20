@@ -1,17 +1,25 @@
 use super::super::components::{Avatar, Button};
+use crate::media;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
 
 impl super::MainView {
     /// One room-mate's shared screen: the live frame when watching, otherwise
     /// a placeholder that starts watching on click.
-    fn screen_card(&self, ssrc: u32, name: &str, cx: &mut Context<Self>) -> AnyElement {
+    fn screen_card(
+        &self,
+        ssrc: u32,
+        name: &str,
+        w: f32,
+        h: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let t = cx.theme();
         let frame = self.screens.get(&ssrc).map(|(_, i)| i.clone());
         let card = div()
             .id(("screen", ssrc as usize))
-            .w(px(480.))
-            .h(px(270.))
+            .w(px(w))
+            .h(px(h))
             .rounded(t.radius)
             .border_1()
             .border_color(t.line)
@@ -156,27 +164,10 @@ impl super::MainView {
                     "Non connesso"
                 }))
         });
-        // Screen shares of the room: click a card to start or stop watching it.
-        let mut cards: Vec<AnyElement> = vec![];
-        if joined_here {
-            if self.share != super::members::ShareState::Off {
-                cards.push(
-                    div()
-                        .w(px(240.))
-                        .h(px(135.))
-                        .rounded(t.radius)
-                        .border_1()
-                        .border_color(t.line)
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_color(t.muted)
-                        .child("Stai condividendo lo schermo")
-                        .into_any_element(),
-                );
-            }
-            let sharers: Vec<(u32, String)> = self
-                .channel_view()
+        // Screen shares of the room. A single share fills the stage (focus);
+        // several shares form a responsive grid. Click a peer's card to watch it.
+        let sharers: Vec<(u32, String)> = if joined_here {
+            self.channel_view()
                 .map(|c| {
                     c.members
                         .iter()
@@ -184,18 +175,80 @@ impl super::MainView {
                         .map(|m| (m.ssrc, m.name.clone()))
                         .collect()
                 })
-                .unwrap_or_default();
-            for (ssrc, name) in sharers {
-                cards.push(self.screen_card(ssrc, &name, cx));
-            }
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let own = joined_here && self.share != super::members::ShareState::Off;
+        let n = sharers.len() + if own { 1 } else { 0 };
+        const CARD_GAP: f32 = 16.;
+        let stage_w = (f32::from(viewport.width) - 240. - 48.).max(240.);
+        let cols = if n <= 1 {
+            1
+        } else {
+            ((stage_w + CARD_GAP) / (320. + CARD_GAP)).floor().max(1.) as usize
+        };
+        let card_w = if n == 1 {
+            stage_w.min(640.).max(240.)
+        } else {
+            ((stage_w - CARD_GAP * (cols as f32 - 1.)) / cols as f32).clamp(240., 480.)
+        };
+        let card_h = card_w * 9. / 16.;
+        let mut cards: Vec<AnyElement> = vec![];
+        if own {
+            let preview = self
+                .screens
+                .get(&media::LOCAL_SCREEN)
+                .map(|(_, i)| i.clone());
+            let card = div()
+                .id("own-screen")
+                .w(px(card_w))
+                .h(px(card_h))
+                .rounded(t.radius)
+                .border_1()
+                .border_color(t.line)
+                .bg(black())
+                .overflow_hidden()
+                .relative();
+            cards.push(match preview {
+                Some(image) => card
+                    .child(img(image).size_full().object_fit(ObjectFit::Contain))
+                    .child(
+                        div()
+                            .absolute()
+                            .left_2()
+                            .bottom_2()
+                            .px_2()
+                            .rounded(t.radius)
+                            .bg(black().opacity(0.6))
+                            .text_color(white())
+                            .child("Tu \u{2014} anteprima"),
+                    )
+                    .into_any_element(),
+                None => card
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(t.muted)
+                    .child(if self.share == super::members::ShareState::Picking {
+                        "Scegli una sorgente\u{2026}"
+                    } else {
+                        "Anteprima non disponibile"
+                    })
+                    .into_any_element(),
+            });
+        }
+        for (ssrc, name) in sharers {
+            cards.push(self.screen_card(ssrc, &name, card_w, card_h, cx));
         }
         let cards_row = (!cards.is_empty()).then(|| {
             div()
+                .id("screens")
                 .flex_none()
                 .flex()
                 .flex_wrap()
                 .justify_center()
-                .gap_4()
+                .gap(px(CARD_GAP))
                 .p_4()
                 .children(cards)
         });
@@ -205,6 +258,7 @@ impl super::MainView {
             .flex()
             .flex_col()
             .children(header)
+            .children(self.error_banner(cx))
             .children(cards_row)
             .child(body)
             .children(self.controls(cx))

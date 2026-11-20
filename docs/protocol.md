@@ -32,6 +32,8 @@ Client                                    Server
   |<-- UDP PING-echo ----------------------|
   |=== stream AUDIO over UDP ============>|   server broadcasts to room,
   |<== AUDIO from peers ====================|  sender excluded
+  |--- TCP SCREEN_START / SCREEN_WATCH --->|   share control (§7.2)
+  |=== stream VIDEO fragments over UDP ===>|  forwarded to watchers only
   |--- TCP LEAVE (on exit) --------------->|   roster updated on TCP
 ```
 
@@ -53,6 +55,11 @@ PLC, queueing) stays at endpoints — matching
 - **Version interop**: unknown kind values are dropped, unknown TCP message
   types tolerated — the wire format evolves without breaking mixed
   deployments.
+- **Screen share is watcher-only**: `VIDEO` datagrams reach only sessions that
+  sent `SCREEN_WATCH`, and the `sharing` roster flag drives the UI. The
+  control messages and fragment layout are in [wire-format.md](wire-format.md)
+  (sections 4b and 7.2); key requests are limited to one per 500 ms per viewer
+  and presenter.
 
 ## 4. Encryption roadmap
 

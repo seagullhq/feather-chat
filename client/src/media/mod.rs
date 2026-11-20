@@ -10,8 +10,8 @@ mod engine;
 mod peer;
 mod prefs;
 mod resample;
-mod shared;
 mod share;
+mod shared;
 mod wire;
 mod worker;
 
@@ -20,6 +20,7 @@ mod tests;
 
 pub use engine::Engine;
 pub use prefs::{PREFS, dev_name};
+pub use share::LOCAL_SCREEN;
 pub use shared::Shared;
 
 use std::sync::Arc;

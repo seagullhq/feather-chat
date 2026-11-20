@@ -1,8 +1,8 @@
 //! Quick member list: a panel that slides out next to the sidebar and
 //! collapses as soon as the mouse leaves it.
 
+use super::super::components::{Avatar, icon};
 use super::sidebar::WIDTH;
-use super::super::components::Avatar;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
 use std::time::Duration;
@@ -66,9 +66,26 @@ impl super::MainView {
     }
 
     pub(super) fn members_panel(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let server = self.servers.get(self.server).filter(|_| self.members_visible)?;
+        let server = self
+            .servers
+            .get(self.server)
+            .filter(|_| self.members_visible)?;
         let opening = self.members_panel;
         let t = cx.theme();
+        // Server members and voice members are different lists: match the
+        // sharing flag by name (the roster uses SSRCs only while in a room).
+        let voice_sharing: std::collections::HashSet<&str> = self
+            .joined
+            .and_then(|(s, c)| self.servers.get(s).and_then(|s| s.channels.get(c)))
+            .map(|c| {
+                c.members
+                    .iter()
+                    .filter(|m| m.sharing)
+                    .map(|m| m.name.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let me_sharing = self.share == super::members::ShareState::Live;
         let (owners, others): (Vec<_>, Vec<_>) = server
             .members
             .iter()
@@ -101,6 +118,10 @@ impl super::MainView {
                             .hover(|s| s.bg(t.fill))
                             .child(Avatar::new(&m.name, 20.))
                             .child(div().flex_1().min_w_0().truncate().child(m.name.clone()))
+                            .when(
+                                (m.me && me_sharing) || voice_sharing.contains(m.name.as_str()),
+                                |d| d.child(icon("monitor", 13., t.accent)),
+                            )
                     }))
             })
         };
@@ -119,7 +140,9 @@ impl super::MainView {
             .bg(t.opaque_panel())
             .border_r_1()
             .border_color(t.line)
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| this.members_hover(1, *hovered, cx)))
+            .on_hover(
+                cx.listener(|this, hovered: &bool, _, cx| this.members_hover(1, *hovered, cx)),
+            )
             .child(
                 div()
                     .id("members-panel-list")
@@ -134,7 +157,11 @@ impl super::MainView {
             )
             .with_animation(
                 // Another id when closing restarts the animation, played backwards.
-                if opening { "members-panel-in" } else { "members-panel-out" },
+                if opening {
+                    "members-panel-in"
+                } else {
+                    "members-panel-out"
+                },
                 Animation::new(SLIDE).with_easing(ease_out_quint()),
                 move |el, d| {
                     let d = if opening { d } else { 1. - d };

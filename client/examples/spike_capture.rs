@@ -10,7 +10,11 @@ use std::{
 
 fn main() {
     let (tx, rx) = mpsc::channel();
-    let cap = capture::start(move |e| {
+    let source = capture::sources()
+        .ok()
+        .and_then(|sources| sources.into_iter().next())
+        .unwrap_or(capture::Source::Native);
+    let cap = capture::start_with(source, move |e| {
         let _ = tx.send(e);
     });
     let (mut n, mut first, mut size) = (0u32, None::<Instant>, (0, 0));

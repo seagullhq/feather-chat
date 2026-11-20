@@ -17,7 +17,7 @@ use super::shared::Shared;
 use super::wire::{KIND_VIDEO, header};
 use super::{Notice, Notify};
 use crate::capture::{
-    self, Event,
+    self, Event, Source,
     codec::{Decoder, Encoder},
     packet::{self, Reassembler},
 };
@@ -30,6 +30,12 @@ const BITRATE: u32 = 4_000_000;
 const VIEWER_TIMEOUT: Duration = Duration::from_secs(3);
 /// Minimum gap between keyframe requests for one sharer.
 const KEY_REQ_GAP: Duration = Duration::from_millis(500);
+/// Reserved SSRC for our own preview. Real media SSRCs are never 0.
+pub const LOCAL_SCREEN: u32 = 0;
+/// Space fragments of one frame instead of spraying them in one burst: a full
+/// keyframe is ~80 datagrams, which overflows a socket buffer and forces the
+/// viewer to ask for yet another keyframe.
+const PACKET_GAP: Duration = Duration::from_micros(150);
 
 /// Running sender. Dropping it stops capture and encoding.
 pub(super) struct Sender {
@@ -38,11 +44,20 @@ pub(super) struct Sender {
 }
 
 impl Sender {
-    pub(super) fn start(shared: Arc<Shared>, sock: UdpSocket, ssrc: u32, notify: Notify) -> Self {
+    pub(super) fn start(
+        source: Source,
+        shared: Arc<Shared>,
+        sock: UdpSocket,
+        ssrc: u32,
+        notify: Notify,
+    ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let s = stop.clone();
-        let thread = std::thread::spawn(move || send_loop(shared, sock, ssrc, notify, s));
-        Self { stop, thread: Some(thread) }
+        let thread = std::thread::spawn(move || send_loop(source, shared, sock, ssrc, notify, s));
+        Self {
+            stop,
+            thread: Some(thread),
+        }
     }
 }
 
@@ -55,9 +70,16 @@ impl Drop for Sender {
     }
 }
 
-fn send_loop(shared: Arc<Shared>, sock: UdpSocket, ssrc: u32, notify: Notify, stop: Arc<AtomicBool>) {
+fn send_loop(
+    source: Source,
+    shared: Arc<Shared>,
+    sock: UdpSocket,
+    ssrc: u32,
+    notify: Notify,
+    stop: Arc<AtomicBool>,
+) {
     let (tx, rx) = mpsc::sync_channel(2);
-    let _cap = capture::start(move |e| {
+    let _cap = capture::start_with(source, move |e| {
         // Frames may be dropped when we are behind; the end of capture must not be.
         if matches!(e, Event::Ended(_)) {
             let _ = tx.send(e);
@@ -95,22 +117,30 @@ fn send_loop(shared: Arc<Shared>, sock: UdpSocket, ssrc: u32, notify: Notify, st
                         }
                     },
                 };
-                match e.encode(&f, force) {
-                    Ok(Some(unit)) => {
-                        need_key = false;
-                        frame_id = frame_id.wrapping_add(1);
-                        for payload in packet::fragment(frame_id, f.ts_ms, unit.key, &unit.data) {
-                            let mut p = header(KIND_VIDEO, ssrc);
-                            p.extend(payload);
-                            // ponytail: no pacing; a full keyframe goes out as one burst and a
-                            // full socket buffer drops datagrams (the viewer asks for a new keyframe).
-                            let _ = sock.send(&p);
-                        }
-                    }
-                    Ok(None) => {}
+                let ts_ms = f.ts_ms;
+                let encoded = match e.encode(&f, force) {
+                    Ok(u) => u,
                     Err(err) => {
                         notify(Notice::ShareEnded(Some(err)));
                         return;
+                    }
+                };
+                // The preview is the captured frame itself, not a second encode.
+                // Moving `f` here frees the BGRA buffer without copying it.
+                publish(&shared, LOCAL_SCREEN, f);
+                if let Some(unit) = encoded {
+                    need_key = false;
+                    frame_id = frame_id.wrapping_add(1);
+                    for (i, payload) in packet::fragment(frame_id, ts_ms, unit.key, &unit.data)
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let mut p = header(KIND_VIDEO, ssrc);
+                        p.extend(payload);
+                        let _ = sock.send(&p);
+                        if i > 0 {
+                            std::thread::sleep(PACKET_GAP);
+                        }
                     }
                 }
             }
@@ -184,7 +214,9 @@ pub(super) fn viewer_loop(shared: Arc<Shared>, rx: mpsc::Receiver<(u32, Vec<u8>)
 
 fn publish(shared: &Shared, ssrc: u32, f: capture::Frame) {
     // gpui wants BGRA bytes inside an image Frame; RgbaImage is only the container.
-    let Some(img) = RgbaImage::from_raw(f.width, f.height, f.data) else { return };
+    let Some(img) = RgbaImage::from_raw(f.width, f.height, f.data) else {
+        return;
+    };
     let image = Arc::new(RenderImage::new(vec![ImgFrame::new(img)]));
     let ver = shared.screen_ver.fetch_add(1, Relaxed) + 1;
     if let Ok(mut s) = shared.screens.lock() {

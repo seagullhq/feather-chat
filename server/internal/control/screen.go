@@ -1,6 +1,31 @@
 package control
 
-import "github.com/seagullhq/feather-chat/server/internal/protocol"
+import (
+	"time"
+
+	"github.com/seagullhq/feather-chat/server/internal/protocol"
+)
+
+// A viewer may ask one presenter for a keyframe at most twice a second.
+// Fixed for v1; matches the client's KEY_REQ_GAP.
+const keyReqGap = 500 * time.Millisecond
+
+// keyReqLimiter throttles SCREEN_KEYREQ per viewer and presenter. It is owned
+// by one control connection, so it needs no lock.
+type keyReqLimiter struct {
+	last map[uint32]time.Time
+}
+
+func (l *keyReqLimiter) allow(ssrc uint32, now time.Time) bool {
+	if l.last == nil {
+		l.last = make(map[uint32]time.Time)
+	}
+	if now.Sub(l.last[ssrc]) < keyReqGap {
+		return false
+	}
+	l.last[ssrc] = now
+	return true
+}
 
 // handleScreenStart answers SCREEN_START: the session begins sharing its screen.
 func (s *Server) handleScreenStart(c *client, _ protocol.Control) {
@@ -40,8 +65,12 @@ func (s *Server) handleScreenUnwatch(c *client, msg protocol.Control) {
 }
 
 // handleScreenKeyReq answers SCREEN_KEYREQ{ssrc}: a viewer lost frames and asks
-// the presenter for a keyframe. ponytail: no rate limit, add one if viewers spam it.
+// the presenter for a keyframe. Requests are throttled per viewer and presenter
+// so a broken decoder cannot flood the presenter with keyframes.
 func (s *Server) handleScreenKeyReq(c *client, msg protocol.Control) {
+	if !c.keyReq.allow(msg.SSRC, time.Now()) {
+		return
+	}
 	if t := s.rooms.Watch(c.sess, msg.SSRC); t != nil {
 		_ = t.Send(protocol.Control{Type: "SCREEN_KEYREQ"})
 	}

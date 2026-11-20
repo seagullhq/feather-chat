@@ -183,13 +183,15 @@ impl Root {
             Event::ServersListed(servers) => self
                 .main
                 .update(cx, |main, cx| main.set_servers(servers, cx)),
-            Event::ServersListFailed(m) => eprintln!("could not list servers: {m}"),
+            Event::ServersListFailed(m) => self.main.update(cx, |main, cx| {
+                main.on_error(format!("Impossibile elencare i server: {m}"), cx)
+            }),
             Event::ChannelTypesListed(types) => self
                 .main
                 .update(cx, |main, cx| main.set_channel_types(types, cx)),
-            Event::ChannelTypesListFailed(m) => {
-                eprintln!("could not list channel types: {m}")
-            }
+            Event::ChannelTypesListFailed(m) => self.main.update(cx, |main, cx| {
+                main.on_error(format!("Impossibile elencare i tipi di canale: {m}"), cx)
+            }),
             Event::ServerCreated {
                 id,
                 name,
@@ -250,12 +252,15 @@ impl Root {
             } => self.main.update(cx, |main, cx| {
                 main.on_joined(server_id, channel_id, members, media, cx)
             }),
-            Event::JoinFailed(m) => eprintln!("could not join channel: {m}"),
+            Event::JoinFailed(m) => self.main.update(cx, |main, cx| {
+                main.on_error(format!("Impossibile unirsi al canale: {m}"), cx)
+            }),
             Event::ShareStarted => self.main.update(cx, |main, cx| main.on_share_started(cx)),
             Event::ShareEnded(reason) => self
                 .main
                 .update(cx, |main, cx| main.on_share_ended(reason, cx)),
             Event::ScreenKeyReq => self.main.update(cx, |main, _| main.on_key_req()),
+            Event::Error(m) => self.main.update(cx, |main, cx| main.on_error(m, cx)),
             Event::MemberJoined { channel_id, member } => self
                 .main
                 .update(cx, |main, cx| main.on_member_joined(channel_id, member, cx)),
@@ -285,9 +290,12 @@ impl Root {
             } => self
                 .main
                 .update(cx, |main, cx| main.set_channels(server_id, channels, cx)),
-            Event::ChannelsListFailed { server_id, message } => {
-                eprintln!("could not list channels for server {server_id}: {message}")
-            }
+            Event::ChannelsListFailed { server_id, message } => self.main.update(cx, |main, cx| {
+                main.on_error(
+                    format!("Impossibile elencare i canali ({server_id}): {message}"),
+                    cx,
+                )
+            }),
             Event::MembersListed { server_id, members } => self
                 .main
                 .update(cx, |main, cx| main.set_members(server_id, members, cx)),

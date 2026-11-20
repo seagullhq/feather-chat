@@ -5,25 +5,94 @@
 pub mod codec;
 pub mod packet;
 
+/// A capture target chosen before the pipeline starts.
+///
+/// Windows picks from our own gpui dialog, so the selected native handle travels
+/// through the command queue to the capture thread. Other platforms keep their
+/// system picker and use `Native`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Source {
+    #[cfg_attr(target_os = "windows", allow(dead_code))] // unused once gpui picker is present
+    Native,
+    /// A display, identified by its `HMONITOR`.
+    #[cfg(target_os = "windows")]
+    Display { handle: usize, name: String },
+    /// An application window, identified by its `HWND`.
+    #[cfg(target_os = "windows")]
+    Window { handle: usize, name: String },
+}
+
+impl Source {
+    /// Text shown in the picker and on the share card.
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Native => "System picker",
+            #[cfg(target_os = "windows")]
+            Self::Display { name, .. } | Self::Window { name, .. } => name,
+        }
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod linux;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[allow(unused_imports)] // Capture is only named by callers
 pub use linux::{Capture, start};
 
-#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+pub use windows::{Capture, sources};
+
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+#[allow(unused_imports)] // Capture is only named by callers
+pub use macos::{Capture, start};
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "windows",
+    target_os = "macos"
+)))]
 mod unsupported {
     use super::Event;
     pub struct Capture;
-    /// ponytail: Windows (Graphics Capture) and macOS (ScreenCaptureKit) backends are not written yet.
     pub fn start(mut on_event: impl FnMut(Event) + Send + 'static) -> Capture {
-        on_event(Event::Ended(Some("screen capture is not available on this platform yet".into())));
+        on_event(Event::Ended(Some(
+            "screen capture is not available on this platform".into(),
+        )));
         Capture
     }
 }
-#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "windows",
+    target_os = "macos"
+)))]
 #[allow(unused_imports)]
 pub use unsupported::{Capture, start};
+
+/// Sources offered by the custom picker. Empty where the system picker is used.
+#[cfg(not(target_os = "windows"))]
+pub fn sources() -> Result<Vec<Source>, String> {
+    Ok(Vec::new())
+}
+
+/// Starts capture with a target already chosen by the UI.
+pub fn start_with(source: Source, on_event: impl FnMut(Event) + Send + 'static) -> Capture {
+    #[cfg(target_os = "windows")]
+    {
+        windows::start_with(source, on_event)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = source;
+        start(on_event)
+    }
+}
 
 /// One captured frame: BGRA, row-major, `stride == width * 4`.
 pub struct Frame {
@@ -37,7 +106,7 @@ pub struct Frame {
 /// What the capture thread reports.
 pub enum Event {
     Frame(Frame),
-    /// Capture ended: the user cancelled the picker, the source went away, or
-    /// setup failed (`Some(reason)`); `None` after a normal stop.
+    /// Capture ended: the source went away, setup failed (`Some(reason)`), or
+    /// the user stopped (`None`).
     Ended(Option<String>),
 }

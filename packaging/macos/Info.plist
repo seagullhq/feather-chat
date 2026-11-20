@@ -26,5 +26,7 @@
     <string>public.app-category.social-networking</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Feather Chat needs screen recording permission to share your screen in a voice channel.</string>
 </dict>
 </plist>

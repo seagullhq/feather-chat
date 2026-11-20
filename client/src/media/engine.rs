@@ -9,6 +9,7 @@ use super::share::{Sender, viewer_loop};
 use super::shared::Shared;
 use super::worker::worker;
 use super::{MEDIA_PORT, Notify, OUT_RING, RATE};
+use crate::capture::Source;
 
 /// A running voice session. Dropping it stops both threads and the streams.
 pub struct Engine {
@@ -67,11 +68,12 @@ impl Engine {
         })
     }
 
-    /// Starts capturing the screen (the OS shows its source picker). The sender
-    /// stays silent until `set_announced(true)`.
-    pub fn start_share(&mut self) -> Result<(), String> {
+    /// Starts capturing the chosen source. The sender stays silent until
+    /// `set_announced(true)`.
+    pub fn start_share(&mut self, source: Source) -> Result<(), String> {
         let sock = self.sock.try_clone().map_err(|e| e.to_string())?;
         self.sender = Some(Sender::start(
+            source,
             self.shared.clone(),
             sock,
             self.ssrc,
@@ -83,6 +85,11 @@ impl Engine {
     pub fn stop_share(&mut self) {
         self.sender = None;
         self.shared.sharing.store(false, Relaxed);
+        // The preview is published under a reserved SSRC and has no viewer
+        // entry, so nothing else will expire it.
+        if let Ok(mut screens) = self.shared.screens.lock() {
+            screens.remove(&super::share::LOCAL_SCREEN);
+        }
     }
 
     pub fn is_sharing(&self) -> bool {

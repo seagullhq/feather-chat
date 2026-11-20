@@ -49,14 +49,22 @@ fn commands(
                 drop(engine.take()); // moving channels: stop the old voice session first
                 match server::join_channel(&mut session, channel_id) {
                     Ok(j) => {
-                        let media = match media::Engine::start(&host, ssrc, muted, deafened, notify(&self_tx)) {
+                        let media = match media::Engine::start(
+                            &host,
+                            ssrc,
+                            muted,
+                            deafened,
+                            notify(&self_tx),
+                        ) {
                             Ok(e) => {
                                 let shared = e.shared();
                                 drop(engine.replace(e));
                                 Some(shared)
                             }
                             Err(e) => {
-                                eprintln!("voice engine: {e}");
+                                let _ = events.send_blocking(Event::Error(format!(
+                                    "Impossibile avviare l'audio: {e}"
+                                )));
                                 None
                             }
                         };
@@ -81,9 +89,9 @@ fn commands(
                 drop(engine.take());
                 let _ = session.conn.write(&json!({"type":"LEAVE"}));
             }
-            Command::ScreenStart => {
+            Command::ScreenStart { source } => {
                 let started = match engine.as_mut() {
-                    Some(e) if !e.is_sharing() => e.start_share(),
+                    Some(e) if !e.is_sharing() => e.start_share(source),
                     Some(_) => Ok(()), // already sharing
                     None => Err("join a voice channel first".to_string()),
                 };
@@ -119,7 +127,9 @@ fn commands(
             }
             Command::ScreenWatch { ssrc } => {
                 if let Err(e) = session.call(json!({"type":"SCREEN_WATCH","ssrc":ssrc})) {
-                    eprintln!("watch screen: {e}");
+                    let _ = events.send_blocking(Event::Error(format!(
+                        "Impossibile guardare lo schermo: {e}"
+                    )));
                 }
             }
             Command::ScreenUnwatch { ssrc } => {
