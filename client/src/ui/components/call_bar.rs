@@ -3,8 +3,8 @@ use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
 
 /// One plain row under a stage. Left: the channel you are connected to.
-/// Right: `lead` buttons (join / move), then mic / audio / leave as icon-only
-/// buttons (red = off) while `joined`.
+/// Right: `lead` buttons (join / move), then mic / audio as icon-only buttons
+/// (red = off), always; leave too while `joined`.
 #[derive(IntoElement)]
 pub struct CallBar {
     connected_to: Option<SharedString>,
@@ -102,28 +102,29 @@ impl RenderOnce for CallBar {
             leave = leave.on_click(f);
         }
 
-        let right = div().flex().items_center().gap_1().children(self.lead);
-        let right = if self.joined {
-            right
-                .child(
-                    // The level is an underline of the mic button, so mic and
-                    // audio stay side by side and the meter clearly belongs to the mic.
-                    div().relative().child(mic).child(
-                        div()
-                            .absolute()
-                            .bottom(px(1.))
-                            .left(px(6.))
-                            .right(px(6.))
-                            .h(px(2.))
-                            .bg(t.fill)
-                            .child(div().h_full().w(relative(self.level)).bg(t.success)),
-                    ),
-                )
-                .child(audio)
-                .child(leave)
-        } else {
-            right
-        };
+        // Mic and audio are always there, so the bar is never empty; leave only in a call.
+        // Mic and audio first, then the join/move button, then leave.
+        let right = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(
+                // The level is an underline of the mic button, so mic and
+                // audio stay side by side and the meter clearly belongs to the mic.
+                div().relative().child(mic).child(
+                    div()
+                        .absolute()
+                        .bottom(px(1.))
+                        .left(px(6.))
+                        .right(px(6.))
+                        .h(px(2.))
+                        .bg(t.fill)
+                        .child(div().h_full().w(relative(self.level)).bg(t.success)),
+                ),
+            )
+            .child(audio)
+            .children(self.lead);
+        let right = if self.joined { right.child(leave) } else { right };
 
         div()
             .flex_none()

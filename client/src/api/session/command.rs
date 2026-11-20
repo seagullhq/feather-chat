@@ -94,6 +94,19 @@ pub(super) enum Command {
     },
     LoadDm {
         peer: i64,
+        /// Page older than this message id; `None` = newest page.
+        before: Option<i64>,
+    },
+    SendThread {
+        server_id: i64,
+        channel_id: i64,
+        text: String,
+    },
+    ListThread {
+        server_id: i64,
+        channel_id: i64,
+        /// Page older than this message id; `None` = newest page.
+        before: Option<i64>,
     },
 }
 
@@ -250,7 +263,35 @@ impl Control {
     }
 
     pub fn load_dm(&self, peer: i64) -> bool {
-        self.tx.try_send(Command::LoadDm { peer }).is_ok()
+        self.tx.try_send(Command::LoadDm { peer, before: None }).is_ok()
+    }
+
+    /// The page just older than message `before`.
+    pub fn load_older_dm(&self, peer: i64, before: i64) -> bool {
+        self.tx
+            .try_send(Command::LoadDm { peer, before: Some(before) })
+            .is_ok()
+    }
+
+    pub fn send_thread(&self, server_id: i64, channel_id: i64, text: String) -> bool {
+        self.tx
+            .try_send(Command::SendThread {
+                server_id,
+                channel_id,
+                text,
+            })
+            .is_ok()
+    }
+
+    /// Newest page of a text channel, or the page older than `before`.
+    pub fn list_thread(&self, server_id: i64, channel_id: i64, before: Option<i64>) -> bool {
+        self.tx
+            .try_send(Command::ListThread {
+                server_id,
+                channel_id,
+                before,
+            })
+            .is_ok()
     }
 
     pub fn add_friend(&self, username: String) -> bool {

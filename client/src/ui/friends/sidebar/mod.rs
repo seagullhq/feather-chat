@@ -1,22 +1,15 @@
-//! Friends sidebar: search box, a requests button and the friends list.
+//! Friends sidebar: search box, then Overview and the friends list.
 
 mod results;
 
-use super::{FriendsTab, FriendsView, SIDEBAR_WIDTH};
-use crate::api::Relation;
-use crate::theme::ThemeExt;
+use super::{FriendsView, SIDEBAR_WIDTH};
+use crate::theme::{Theme, ThemeExt};
 use gpui::{prelude::*, *};
 
 impl FriendsView {
     pub(super) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let query = self.search.read(cx).text().trim().to_string();
-        let incoming = self
-            .friends
-            .iter()
-            .filter(|f| f.relation == Relation::Incoming)
-            .count();
-        let anchor = self.sheet_anchor.clone();
         div()
             .id("friends-sidebar")
             .w(px(SIDEBAR_WIDTH))
@@ -30,31 +23,6 @@ impl FriendsView {
             .border_r_1()
             .border_color(t.line)
             .child(self.search.clone())
-            .child(
-                div()
-                    .id("friend-requests")
-                    .relative()
-                    .child(
-                        canvas(
-                            move |bounds, _, _| anchor.set(bounds.bottom()),
-                            |_, _, _, _| {},
-                        )
-                        .absolute()
-                        .size_full(),
-                    )
-                    .h(px(32.))
-                    .px_2()
-                    .rounded(t.radius)
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .hover(|s| s.bg(t.fill))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_sheet(FriendsTab::Friends, window, cx)
-                    }))
-                    .child("Manage friends")
-                    .child(div().text_color(t.muted).child(incoming.to_string())),
-            )
             .children(
                 self.error
                     .clone()
@@ -70,4 +38,26 @@ impl FriendsView {
                     .child(self.results(&query, cx)),
             )
     }
+}
+
+/// Count pill: requests waiting for you (Overview row and overview).
+pub(super) fn badge(count: usize, t: &Theme) -> Div {
+    div()
+        .flex_none()
+        .min_w(px(16.))
+        .h(px(16.))
+        .px_1()
+        .rounded_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(t.accent)
+        .text_color(t.on_accent)
+        .text_size(px(10.))
+        .font_weight(FontWeight::BOLD)
+        .child(if count > 99 {
+            "99+".to_string()
+        } else {
+            count.to_string()
+        })
 }

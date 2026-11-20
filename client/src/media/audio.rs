@@ -21,7 +21,7 @@ pub(super) fn audio(
     // ponytail: the rings' ends sit behind a mutex so they outlive a stream
     // rebuild; uncontended, so the callbacks don't notice.
     let (cap, out) = (Arc::new(Mutex::new(cap)), Arc::new(Mutex::new(out)));
-    let host = cpal::default_host();
+    let host = super::prefs::host();
     let mut built = None;
     let mut built_in: Option<String> = None;
     let mut built_out: Option<String> = None;
@@ -36,13 +36,13 @@ pub(super) fn audio(
             next_check = now + Duration::from_secs(2);
             let want_in = if mic {
                 let name = PREFS.input.lock().unwrap().clone();
-                device(&host, name, true).and_then(|d| dev_name(&d))
+                device(host, name, true).and_then(|d| dev_name(&d))
             } else {
                 None
             };
             let want_out = {
                 let name = PREFS.output.lock().unwrap().clone();
-                device(&host, name, false).and_then(|d| dev_name(&d))
+                device(host, name, false).and_then(|d| dev_name(&d))
             };
             let dead = STREAM_DEAD.swap(false, Relaxed);
             built == Some(generation) && (dead || want_in != built_in || want_out != built_out)
@@ -55,7 +55,7 @@ pub(super) fn audio(
             (_mic, _speakers) = (None, None);
             let in_name = PREFS.input.lock().unwrap().clone();
             let in_dev = if mic {
-                device(&host, in_name, true)
+                device(host, in_name, true)
             } else {
                 None
             };
@@ -73,7 +73,7 @@ pub(super) fn audio(
                 None => None,
             };
             let out_name = PREFS.output.lock().unwrap().clone();
-            let out_dev = device(&host, out_name, false);
+            let out_dev = device(host, out_name, false);
             built_out = out_dev.as_ref().and_then(dev_name);
             _speakers = match out_dev.map(|d| speaker_stream(&d, out.clone())) {
                 Some(Ok(s)) => Some(s),

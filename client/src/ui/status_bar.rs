@@ -6,20 +6,12 @@ use crate::media;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
 
-fn default_mic() -> String {
-    use cpal::traits::HostTrait;
-    cpal::default_host()
-        .default_input_device()
-        .and_then(|d| media::dev_name(&d))
-        .unwrap_or_else(|| "No microphone".into())
-}
-
-fn default_audio_device() -> String {
-    use cpal::traits::HostTrait;
-    cpal::default_host()
-        .default_output_device()
-        .and_then(|d| media::dev_name(&d))
-        .unwrap_or_else(|| "No audio device".into())
+/// OS default device name, or a placeholder. Talks to the audio server: call
+/// it off the UI thread, never from render.
+fn default_name(input: bool) -> SharedString {
+    media::system_default_device_name(input)
+        .map(SharedString::from)
+        .unwrap_or_else(|| if input { "No microphone" } else { "No audio device" }.into())
 }
 
 pub struct StatusBar {
@@ -28,17 +20,31 @@ pub struct StatusBar {
     audio_name: SharedString,
     /// Running voice session, for the ping; set by the servers screen.
     media: Option<std::sync::Arc<media::Shared>>,
+    /// Ping on screen, so a tick with nothing new draws no frame.
+    ping: Option<u32>,
 }
 
 impl StatusBar {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        // The ping changes on its own: repaint once a second.
+        // The ping and the OS default devices change on their own: re-read
+        // them once a second (devices off the UI thread), but repaint only
+        // when one changed. An idle window then draws nothing, so macOS can
+        // pause its display link instead of cycling window-sized drawables.
         cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_secs(1))
+                let bg = cx.background_executor().clone();
+                bg.timer(std::time::Duration::from_secs(1)).await;
+                let (mic, out) = bg
+                    .spawn(async { (default_name(true), default_name(false)) })
                     .await;
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                let alive = this.update(cx, |this, cx| {
+                    let ping = this.media.as_ref().and_then(|m| m.ping_ms());
+                    if (&mic, &out, ping) != (&this.mic_name, &this.audio_name, this.ping) {
+                        (this.mic_name, this.audio_name, this.ping) = (mic, out, ping);
+                        cx.notify();
+                    }
+                });
+                if alive.is_err() {
                     break;
                 }
             }
@@ -46,9 +52,10 @@ impl StatusBar {
         .detach();
         Self {
             hostname: String::new(),
-            mic_name: default_mic().into(),
-            audio_name: default_audio_device().into(),
+            mic_name: default_name(true),
+            audio_name: default_name(false),
             media: None,
+            ping: None,
         }
     }
 
@@ -62,6 +69,7 @@ impl StatusBar {
         media: Option<std::sync::Arc<media::Shared>>,
         cx: &mut Context<Self>,
     ) {
+        self.ping = media.as_ref().and_then(|m| m.ping_ms());
         self.media = media;
         cx.notify();
     }
@@ -110,7 +118,7 @@ impl StatusBar {
                     .child(icon("gear-six", 16., t.text)),
             )
             .child(div().flex_1())
-            .children(self.media.as_ref().and_then(|m| m.ping_ms()).map(|ms| {
+            .children(self.ping.map(|ms| {
                 // Good below 80 ms, warning below 200, bad from 200 ms.
                 let color = if ms < 80 {
                     t.success
@@ -139,7 +147,6 @@ impl StatusBar {
                     .lock()
                     .unwrap()
                     .clone()
-                    .or_else(|| media::system_default_device_name(true))
                     .map(SharedString::from)
                     .unwrap_or_else(|| self.mic_name.clone()),
             ))
@@ -150,7 +157,6 @@ impl StatusBar {
                     .lock()
                     .unwrap()
                     .clone()
-                    .or_else(|| media::system_default_device_name(false))
                     .map(SharedString::from)
                     .unwrap_or_else(|| self.audio_name.clone()),
             ))

@@ -5,7 +5,7 @@
 
 mod view;
 
-pub use view::{compact, disc, full, meter};
+pub use view::{compact, disc, full, meter, side};
 
 use super::ServersView;
 use crate::media::{MicCheck, Step, current_device};

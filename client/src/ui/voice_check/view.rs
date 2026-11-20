@@ -10,6 +10,11 @@ use gpui::{prelude::*, *};
 
 /// Mic disc; the ring lights when friends would see you speaking.
 pub fn disc(level: f32, size: f32, t: &Theme) -> Div {
+    disc_with("microphone", level, size, t)
+}
+
+/// `disc` with another glyph (the compact card's button is already a mic).
+fn disc_with(glyph: &'static str, level: f32, size: f32, t: &Theme) -> Div {
     let ring = if size > 48. { 3. } else { 2. };
     div()
         .flex_none()
@@ -30,7 +35,7 @@ pub fn disc(level: f32, size: f32, t: &Theme) -> Div {
                 .items_center()
                 .justify_center()
                 .bg(t.accent.opacity(0.22))
-                .child(icon("microphone", size * 0.38, t.accent)),
+                .child(icon(glyph, size * 0.38, t.accent)),
         )
 }
 
@@ -232,86 +237,107 @@ fn stop_button(vc: &Entity<VoiceCheck>) -> Button {
     Button::new("check-stop", "Stop").on_click(on(vc, |v, cx| v.stop(cx)))
 }
 
-/// Friends stage: centered, roomy, every step explained.
-pub fn full(vc: &Entity<VoiceCheck>, cx: &App) -> Div {
-    let t = cx.theme();
+/// What the check shows at its current step, laid out by `full` or `side`.
+struct Face {
+    level: f32,
+    title: &'static str,
+    status: (SharedString, Hsla),
+    meter: bool,
+    devices: bool,
+    answer: bool,
+    actions: Div,
+    hint: Option<&'static str>,
+}
+
+fn face(vc: &Entity<VoiceCheck>, t: &Theme, cx: &App) -> Face {
     let v = vc.read(cx);
     let level = v.level();
-    let col = div()
-        .w_full()
-        .max_w(px(340.))
-        .flex()
-        .flex_col()
-        .items_center()
-        .text_center()
-        .gap_3p5();
-
+    let face = |title, status: SharedString, color, actions: Div| Face {
+        level,
+        title,
+        status: (status, color),
+        meter: false,
+        devices: true,
+        answer: true,
+        actions,
+        hint: None,
+    };
+    let one = |b: Button| div().flex().child(b);
     if v.mic().is_none() && v.step().is_none() {
-        return col
-            .child(disc(0., 96., &t))
-            .child(title("No microphone found", 20.))
-            .child(status("Plug in a microphone or headset.", t.danger))
-            .child(devices(vc, &t, cx))
-            .children(speaker_answer(vc, &t, cx))
-            .child(Button::new("check-retry", "Try again").on_click(on(vc, |v, cx| v.start(cx))));
+        return Face {
+            level: 0.,
+            ..face(
+                "No microphone found",
+                "Plug in a microphone or headset.".into(),
+                t.danger,
+                one(Button::new("check-retry", "Try again").on_click(on(vc, |v, cx| v.start(cx)))),
+            )
+        };
     }
     match v.step() {
-        None => col
-            .child(disc(0., 96., &t))
-            .child(title("Ready to talk", 20.))
-            .child(status("Your mic is off until you check it.", t.muted))
-            .child(devices(vc, &t, cx))
-            .children(speaker_answer(vc, &t, cx))
-            .child(
-                Button::new("check-start", "Check mic")
+        None => Face {
+            level: 0.,
+            hint: Some("Pick a friend on the left to call them."),
+            ..face(
+                "Ready to talk",
+                "Your mic is off until you check it.".into(),
+                t.muted,
+                one(Button::new("check-start", "Check mic")
                     .primary()
-                    .on_click(on(vc, |v, cx| v.start(cx))),
+                    .on_click(on(vc, |v, cx| v.start(cx)))),
             )
-            .child(hint("Pick a friend on the left to call them.", &t)),
-        Some(Step::Record) => col
-            .child(disc(level, 96., &t))
-            .child(title("Recording…", 20.))
-            .child(status("Talk normally for 5 seconds.", t.muted))
-            .child(meter(level, &t))
-            .child(stop_button(vc)),
-        Some(Step::Play) => col
-            .child(disc(level, 96., &t))
-            .child(title("Playing back…", 20.))
-            .child(status("This is how you sound to friends.", t.muted))
-            .child(meter(level, &t))
-            .child(stop_button(vc)),
-        Some(_) if v.silent() => col
-            .child(disc(level, 96., &t))
-            .child(title("We can't hear you", 20.))
-            .child(status(
+        },
+        Some(Step::Record) => Face {
+            meter: true,
+            devices: false,
+            answer: false,
+            ..face(
+                "Recording…",
+                "Talk normally for 5 seconds.".into(),
+                t.muted,
+                one(stop_button(vc)),
+            )
+        },
+        Some(Step::Play) => Face {
+            meter: true,
+            devices: false,
+            answer: false,
+            ..face(
+                "Playing back…",
+                "This is how you sound to friends.".into(),
+                t.muted,
+                one(stop_button(vc)),
+            )
+        },
+        Some(_) if v.silent() => Face {
+            meter: true,
+            answer: false,
+            hint: Some(
+                "Check that it isn't muted on the device itself, or pick another microphone. On Linux, also check the input in your sound settings.",
+            ),
+            ..face(
+                "We can't hear you",
                 format!(
                     "No sound from {} for 5 seconds.",
                     v.mic().unwrap_or("the microphone")
-                ),
+                )
+                .into(),
                 t.danger,
-            ))
-            .child(meter(level, &t))
-            .child(devices(vc, &t, cx))
-            .child(hint(
-                "Check that it isn't muted on the device itself, or pick another microphone. On Linux, also check the input in your sound settings.",
-                &t,
-            ))
-            .child(stop_button(vc)),
-        Some(_) => col
-            .child(disc(level, 96., &t))
-            .child(title("Say something", 20.))
-            .child(status(
-                format!("Listening · stops in {} s", v.seconds_left()),
+                one(stop_button(vc)),
+            )
+        },
+        Some(_) => Face {
+            meter: true,
+            hint: Some(
+                "Playback goes to your output, so you hear what friends hear. No live echo: it would howl on speakers.",
+            ),
+            ..face(
+                "Say something",
+                format!("Listening · stops in {} s", v.seconds_left()).into(),
                 t.muted,
-            ))
-            .child(meter(level, &t))
-            .child(devices(vc, &t, cx))
-            .children(speaker_answer(vc, &t, cx))
-            .child(
                 div()
                     .flex()
                     .flex_wrap()
-                    .justify_center()
                     .gap_2()
                     .child(
                         Button::new("check-record", "Record 5 s and play back")
@@ -319,11 +345,64 @@ pub fn full(vc: &Entity<VoiceCheck>, cx: &App) -> Div {
                     )
                     .child(stop_button(vc)),
             )
-            .child(hint(
-                "Playback goes to your output, so you hear what friends hear. No live echo: it would howl on speakers.",
-                &t,
-            )),
+        },
     }
+}
+
+/// Friends stage: centered, roomy, every step explained.
+pub fn full(vc: &Entity<VoiceCheck>, cx: &App) -> Div {
+    let t = cx.theme();
+    let f = face(vc, &t, cx);
+    div()
+        .w_full()
+        .max_w(px(340.))
+        .flex()
+        .flex_col()
+        .items_center()
+        .text_center()
+        .gap_3p5()
+        .child(disc(f.level, 96., &t))
+        .child(title(f.title, 20.))
+        .child(status(f.status.0, f.status.1))
+        .when(f.meter, |d| d.child(meter(f.level, &t)))
+        .when(f.devices, |d| d.child(devices(vc, &t, cx)))
+        .when(f.answer, |d| d.children(speaker_answer(vc, &t, cx)))
+        .child(f.actions.justify_center())
+        .children(f.hint.map(|h| hint(h, &t)))
+}
+
+/// Same steps as `full`, for a wide but short space: the disc beside the
+/// title and buttons, so it needs about half the height.
+pub fn side(vc: &Entity<VoiceCheck>, cx: &App) -> Div {
+    let t = cx.theme();
+    let f = face(vc, &t, cx);
+    let head = div()
+        .flex()
+        .items_center()
+        .gap_5()
+        .child(disc(f.level, 72., &t))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(title(f.title, 18.))
+                .child(status(f.status.0, f.status.1))
+                .child(f.actions.mt_2()),
+        );
+    div()
+        .w_full()
+        .max_w(px(460.))
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(head)
+        .when(f.meter, |d| d.child(meter(f.level, &t)))
+        .when(f.devices, |d| d.child(devices(vc, &t, cx)))
+        .when(f.answer, |d| d.children(speaker_answer(vc, &t, cx)))
+        .children(f.hint.map(|h| hint(h, &t)))
 }
 
 /// Server home page widget: one row. Idle: name of the mic, Check, test
@@ -388,7 +467,7 @@ pub fn compact(vc: &Entity<VoiceCheck>, cx: &App) -> Div {
             .flex()
             .gap_1()
             .child(
-                tonal("check-start", "Check mic", "waveform", t.accent, &t)
+                tonal("check-start", "Check mic", "microphone", t.accent, &t)
                     .on_click(on(vc, |v, cx| v.start(cx))),
             )
             .child(
@@ -438,7 +517,7 @@ pub fn compact(vc: &Entity<VoiceCheck>, cx: &App) -> Div {
                 .items_center()
                 .gap_2()
                 .h(px(28.))
-                .child(disc(level, 28., &t))
+                .child(disc_with("waveform", level, 28., &t))
                 .child(middle)
                 .child(actions),
         )

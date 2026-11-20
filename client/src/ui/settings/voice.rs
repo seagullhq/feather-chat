@@ -19,13 +19,13 @@ impl super::SettingsView {
             (
                 &self.mics,
                 self.mic,
-                crate::media::system_default_device_name(true),
+                self.default_mic.clone(),
             )
         } else {
             (
                 &self.outs,
                 self.out,
-                crate::media::system_default_device_name(false),
+                self.default_out.clone(),
             )
         };
         let current = match cur {

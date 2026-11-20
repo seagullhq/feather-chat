@@ -7,24 +7,40 @@ use crate::model::{self, Member};
 use gpui::prelude::*;
 use std::sync::Arc;
 
+/// Smallest level change worth a repaint (levels are 0..=1).
+const LEVEL_STEP: f32 = 0.01;
+
 impl ServersView {
     /// Copies mic and speaker levels from the voice engine into the model.
     pub(super) fn poll_media(&mut self, cx: &mut Context<Self>) {
         let (Some(m), Some((s, c))) = (&self.media, self.joined) else {
             return;
         };
-        self.me.level = if self.me.muted || self.me.deafened {
+        // Repaint only when a level moved visibly: in a silent call the window
+        // then draws nothing and macOS pauses its display link, instead of
+        // cycling 3-4 window-sized drawables at 12 fps for the whole call.
+        let mut changed = false;
+        let mut set = |old: &mut f32, new: f32| {
+            if (*old - new).abs() > LEVEL_STEP || (new == 0.) != (*old == 0.) {
+                *old = new;
+                changed = true;
+            }
+        };
+        let mine = if self.me.muted || self.me.deafened {
             0.
         } else {
             m.mic_level()
         };
+        set(&mut self.me.level, mine);
         let levels = m.peer_levels();
         if let Some(channel) = self.servers.get_mut(s).and_then(|s| s.channels.get_mut(c)) {
             for member in &mut channel.members {
-                member.level = levels.get(&member.ssrc).copied().unwrap_or(0.);
+                set(&mut member.level, levels.get(&member.ssrc).copied().unwrap_or(0.));
             }
         }
-        cx.notify();
+        if changed {
+            cx.notify();
+        }
     }
 
     /// The call you are in, for any screen that shows its controls.
@@ -51,6 +67,11 @@ impl ServersView {
             control.leave();
         }
         self.joined = None;
+        // An open text chat takes the focus back: the left voice channel is no
+        // longer the view, so only the chat stays highlighted.
+        if self.thread_view().is_some() {
+            self.set_viewing(None, cx);
+        }
         self.set_media(None, cx);
         self.me.level = 0.;
         cx.notify();

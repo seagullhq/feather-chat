@@ -6,11 +6,10 @@ mod members_tab;
 mod settings_tab;
 
 use super::super::Dismiss;
-use super::super::components::{Tab, ToolButton};
+use super::super::components::{Tab, ToolButton, sheet_rise};
 use crate::input::TextInput;
 use crate::theme::{Theme, ThemeExt};
 use gpui::{prelude::*, *};
-use std::time::Duration;
 
 /// What the sheet shows. One sheet, several views.
 #[derive(Clone, Copy, PartialEq)]
@@ -86,6 +85,9 @@ impl super::ServersView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if on && !self.server_sheet {
+            self.sheet_opened = std::time::Instant::now();
+        }
         self.server_sheet = on;
         let target = if on { &self.sheet_focus } else { &self.focus };
         window.focus(target, cx);
@@ -105,7 +107,6 @@ impl super::ServersView {
             .get(self.server)
             .filter(|_| self.server_sheet)?;
         let t = cx.theme();
-        let rise = f32::from(window.viewport_size().height);
         // Measured while painting the sidebar; the fallback covers the first frame.
         let top = (self.title_bottom.get() - self.row_top.get()).max(px(80.)) + px(2.);
         let invite = if server.invite_code.is_empty() {
@@ -179,15 +180,8 @@ impl super::ServersView {
                     .when(self.sheet_tab == SheetTab::Members, |d| {
                         d.child(self.members_tab(&t, server, owner, cx))
                     }),
-            )
-            .with_animation(
-                "server-sheet-rise",
-                Animation::new(Duration::from_millis(220)).with_easing(ease_out_quint()),
-                move |el, d| {
-                    let off = (1. - d) * rise;
-                    el.top(px(off)).bottom(px(-off))
-                },
             );
+        let sheet = sheet_rise(sheet, "server-sheet-rise", self.sheet_opened, window);
 
         Some(
             div()

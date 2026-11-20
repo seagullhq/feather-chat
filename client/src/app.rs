@@ -335,9 +335,33 @@ impl Root {
             Event::DmSent { peer, msg } => self
                 .friends
                 .update(cx, |view, cx| view.on_dm(peer, msg, true, cx)),
-            Event::DmHistory { peer, msgs } => self
+            Event::DmHistory { peer, msgs, before } => self
                 .friends
-                .update(cx, |view, cx| view.set_dm_history(peer, msgs, cx)),
+                .update(cx, |view, cx| view.set_dm_history(peer, msgs, before, cx)),
+            Event::ThreadHistory {
+                server_id,
+                channel_id,
+                msgs,
+                before,
+                has_more,
+            } => self.servers.update(cx, |view, cx| {
+                view.set_thread_history(server_id, channel_id, msgs, before, has_more, cx)
+            }),
+            Event::ThreadSent {
+                server_id,
+                channel_id,
+                msg,
+            }
+            | Event::ThreadReceived {
+                server_id,
+                channel_id,
+                msg,
+            } => self.servers.update(cx, |view, cx| {
+                view.on_thread_message(server_id, channel_id, msg, cx)
+            }),
+            Event::ThreadFailed(m) => self
+                .servers
+                .update(cx, |view, cx| view.on_thread_failed(m, cx)),
             Event::FriendsChanged => self.friends.update(cx, |view, _| view.refresh()),
             Event::FriendRequested => self.friends.update(cx, |view, cx| view.on_requested(cx)),
             Event::FriendFailed(m) => self.friends.update(cx, |view, cx| view.on_failed(m, cx)),

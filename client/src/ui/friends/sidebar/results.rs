@@ -1,10 +1,12 @@
-//! Sidebar body: friends matching the search, plus "send request" for the typed
-//! name. Pending and blocked live in the friends sheet.
+//! Sidebar body: Overview, then the one list of friends (filtered by the
+//! search), plus "send request" for the typed name. Requests and blocked users
+//! live in the overview; managing a friend, on their page.
 
 use super::super::FriendsView;
+use super::badge;
 use crate::api::{Friend, Relation};
 use crate::theme::{Theme, ThemeExt};
-use crate::ui::components::{Avatar, Dropdown, ghost, tonal};
+use crate::ui::components::{Avatar, Dropdown, ghost, icon, tonal};
 use gpui::{prelude::*, *};
 
 fn heading(text: &'static str, muted: Hsla) -> Div {
@@ -12,7 +14,13 @@ fn heading(text: &'static str, muted: Hsla) -> Div {
 }
 
 /// A person: avatar and name, the row lit on hover, optional action on the right.
-fn row(id: i64, name: &str, theme: &Theme, selected: bool, action: Option<AnyElement>) -> Stateful<Div> {
+fn row(
+    id: i64,
+    name: &str,
+    theme: &Theme,
+    selected: bool,
+    action: Option<AnyElement>,
+) -> Stateful<Div> {
     // Stateful (with id) like the channel rows: gpui tracks its hover reliably.
     div()
         .id(("friend-row", id as u64))
@@ -51,7 +59,17 @@ impl FriendsView {
             .flex()
             .flex_col()
             .gap_1()
-            .child(heading("Friends", t.muted))
+            .child(
+                heading("Friends", t.muted).flex().gap_2().child(
+                    div().text_color(t.muted.opacity(0.7)).child(
+                        self.friends
+                            .iter()
+                            .filter(|f| f.relation == Relation::Friend)
+                            .count()
+                            .to_string(),
+                    ),
+                ),
+            )
             .children(friends.iter().map(|f| {
                 let id = f.id;
                 let toggle = cx.listener(move |this, _, _, cx| {
@@ -78,12 +96,8 @@ impl FriendsView {
                     })
                 })
                 .entry("phone", "Call", |_, _, _| {})
-                .entry("chats-teardrop", "Message", move |_, _, cx| {
-                    on_message.update(cx, |this, cx| {
-                        this.selected_friend = Some(id);
-                        this.chat_open = true;
-                        cx.notify();
-                    })
+                .entry("chats-teardrop", "Message", move |_, window, cx| {
+                    on_message.update(cx, |this, cx| this.message_friend(id, window, cx))
                 })
                 .entry("eye-slash", "Block", move |_, _, cx| {
                     on_block.update(cx, |this, cx| this.block_friend(id, cx))
@@ -100,9 +114,14 @@ impl FriendsView {
                     )
                     .child(menu);
                 let selected = self.selected_friend == Some(f.id);
-                row(f.id, &f.name, &t, selected, Some(actions.into_any_element())).on_click(
-                    cx.listener(move |this, _, _, cx| this.select_friend(id, cx)),
+                row(
+                    f.id,
+                    &f.name,
+                    &t,
+                    selected,
+                    Some(actions.into_any_element()),
                 )
+                .on_click(cx.listener(move |this, _, _, cx| this.select_friend(id, cx)))
             }))
             .when(friends.is_empty(), |d| {
                 d.child(div().px_1().text_color(t.muted).child(empty))
@@ -134,10 +153,46 @@ impl FriendsView {
                 }))
         });
 
+        // The one overview, first like a home row: back to it from any DM.
+        // Badge: requests waiting for you, listed first in the overview.
+        let home = self.selected_friend.is_none();
+        let incoming = self
+            .friends
+            .iter()
+            .filter(|f| f.relation == Relation::Incoming)
+            .count();
+        let overview = div()
+            .id("friends-overview")
+            .role(Role::Button)
+            .aria_label("Overview")
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_1()
+            .h(px(36.))
+            .rounded(t.radius)
+            .cursor_pointer()
+            .text_color(if home { t.text } else { t.muted })
+            .when(home, |d| d.bg(t.fill))
+            .hover(|s| s.bg(t.fill))
+            .on_click(cx.listener(|this, _, _, cx| this.close_friend(cx)))
+            .child(
+                div()
+                    .size(px(24.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("home", 16., if home { t.text } else { t.muted })),
+            )
+            .child(div().flex_1().child("Overview"))
+            .when(incoming > 0, |d| d.child(badge(incoming, &t).mr_1()));
+
         div()
             .flex()
             .flex_col()
             .gap_3()
+            .child(overview)
             .child(friends)
             .children(add)
     }

@@ -20,7 +20,7 @@ mod tests;
 
 pub use check::{MicCheck, Step};
 pub use engine::Engine;
-pub use prefs::{PREFS, current_device, dev_name, system_default_device_name};
+pub use prefs::{PREFS, current_device, dev_name, host, system_default_device_name};
 pub use shared::Shared;
 
 use std::time::Duration;

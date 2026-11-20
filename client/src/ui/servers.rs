@@ -8,6 +8,7 @@
 use super::voice_check::VoiceCheck;
 use super::{ToggleDeafen, ToggleMute, tab_nav};
 use crate::api::{ChannelTypeSummary, Control};
+use crate::input::TextInput;
 use crate::media;
 use crate::model::{self, Member, Server};
 use crate::theme::ThemeExt;
@@ -27,6 +28,7 @@ mod server_sheet;
 mod sidebar;
 mod stage;
 mod state;
+mod thread;
 
 use add_channel::AddChannelModal;
 use add_server::{AddServerModal, ModalEvent};
@@ -71,6 +73,8 @@ pub struct ServersView {
     /// Mouse over [sidebar, members panel].
     members_hovered: [bool; 2],
     server_sheet: bool,
+    /// When the server sheet opened: it rises only then, not on every re-show.
+    sheet_opened: std::time::Instant,
     sheet_tab: server_sheet::SheetTab,
     sheet_ui: server_sheet::SheetUi,
     /// Window y of the server title bottom and of the content row top, measured
@@ -84,6 +88,28 @@ pub struct ServersView {
     voice_check: Entity<VoiceCheck>,
     /// Open server and last channels, saved for the next start.
     last: last_view::LastView,
+    /// Text channel open in the chat card: (server id, channel id).
+    thread_open: Option<(i64, i64)>,
+    /// Log shown (tray unfolded, card open); false: strip or pill only.
+    thread_expanded: bool,
+    /// Card height the user chose (None = full) and the drag in progress
+    /// (mouse y and height when it started). Width is always the full area.
+    thread_card_size: Option<f32>,
+    /// Height of the unfolded tray's log, when the user chose one (in a call).
+    thread_tray_size: Option<f32>,
+    thread_drag: Option<(f32, f32)>,
+    /// Size drawn last frame and when, so the card eases toward its target.
+    thread_shown: std::cell::Cell<Option<((f32, f32), std::time::Instant)>>,
+    /// Frames left after opening in which the card follows its target without
+    /// easing: the area it is sized from is measured a frame late.
+    thread_snap: Cell<u8>,
+    /// Measured while painting: the area the chat card floats in.
+    thread_area: Rc<Cell<(f32, f32)>>,
+    /// Composer of the open text channel.
+    thread_input: Entity<TextInput>,
+    thread_scroll: ScrollHandle,
+    /// Last send or history failure in the open text channel.
+    thread_error: Option<String>,
 }
 
 impl ServersView {
@@ -147,6 +173,7 @@ impl ServersView {
             members_visible: false,
             members_hovered: [false; 2],
             server_sheet: false,
+            sheet_opened: std::time::Instant::now(),
             sheet_tab: server_sheet::SheetTab::Settings,
             sheet_ui: server_sheet::SheetUi::new(cx),
             title_bottom: Rc::default(),
@@ -155,6 +182,20 @@ impl ServersView {
             media: None,
             voice_check,
             last: last_view::LastView::load(),
+            thread_open: None,
+            thread_expanded: false,
+            thread_card_size: None,
+            thread_tray_size: None,
+            thread_drag: None,
+            thread_shown: std::cell::Cell::new(None),
+            thread_snap: Cell::new(0),
+            thread_area: Rc::default(),
+            thread_input: cx.new(|cx| {
+                TextInput::multiline("Scrivi un messaggio (Shift+Invio per andare a capo)", cx)
+                    .with_right_inset(30.)
+            }),
+            thread_scroll: ScrollHandle::new(),
+            thread_error: None,
         }
     }
 
@@ -192,6 +233,8 @@ impl ServersView {
     /// Another server reopens its last view; the open one goes back to its
     /// home page. Remembered as the open server.
     pub(super) fn open_server(&mut self, i: usize, cx: &mut Context<Self>) {
+        // Picking a server leaves the text chat (and its tray bar) behind.
+        self.close_thread(cx);
         if self.server == i {
             self.set_viewing(None, cx);
         } else {
@@ -253,7 +296,7 @@ impl Render for ServersView {
                         .size_full()
                     })
                     .child(self.sidebar(cx))
-                    .child(self.stage(window.viewport_size(), cx))
+                    .child(self.stage(window, cx))
                     .children(self.members_panel(cx))
                     .children(self.server_sheet(window, cx)),
             )

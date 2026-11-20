@@ -117,9 +117,17 @@ pub fn dev_name(d: &cpal::Device) -> Option<String> {
     d.description().ok().map(|d| d.name().to_string())
 }
 
-/// The OS default device name, regardless of the saved choice.
+/// The one audio host. On Linux every `cpal::default_host()` opens a new
+/// PulseAudio connection with its own reactor thread, so never build another.
+pub fn host() -> &'static cpal::Host {
+    static HOST: std::sync::OnceLock<cpal::Host> = std::sync::OnceLock::new();
+    HOST.get_or_init(cpal::default_host)
+}
+
+/// The OS default device name, regardless of the saved choice. Talks to the
+/// audio server: keep it off the render path.
 pub fn system_default_device_name(input: bool) -> Option<String> {
-    let host = cpal::default_host();
+    let host = host();
     let d = if input {
         host.default_input_device()
     } else {
@@ -134,7 +142,7 @@ pub fn system_default_device_name(input: bool) -> Option<String> {
 pub fn current_device(input: bool) -> Option<String> {
     let picked = if input { &PREFS.input } else { &PREFS.output };
     let name = picked.lock().unwrap().clone();
-    device(&cpal::default_host(), name, input).and_then(|d| dev_name(&d))
+    device(host(), name, input).and_then(|d| dev_name(&d))
 }
 
 /// The named device, else the OS default.

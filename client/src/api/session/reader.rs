@@ -21,6 +21,13 @@ fn push(frame: &Value) -> Option<Event> {
         "DIRECT_MESSAGE" => {
             return super::super::friends::dm_from(&frame["directInfo"]).map(Event::DmReceived);
         }
+        "SERVER_MESSAGE" => {
+            return Some(Event::ThreadReceived {
+                server_id,
+                channel_id: frame["channelId"].as_i64()?,
+                msg: super::super::friends::dm_from(&frame["serverInfo"])?,
+            });
+        }
         "FRIENDS_CHANGED" => return Some(Event::FriendsChanged),
         "SERVER_DELETED" => return Some(Event::ServerDeleted { id: server_id }),
         "SERVER_MEMBERS_CHANGED" => return Some(Event::MembersChanged { server_id }),

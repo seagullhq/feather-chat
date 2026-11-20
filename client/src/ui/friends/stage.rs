@@ -1,54 +1,28 @@
-//! Friends stage with nobody selected: "ready to talk", the full mic check.
-//! In a call: your live mic. With a friend open: the call, full size, and the
-//! text chat as a card over its corner (never resizing the call).
+//! Friends stage with nobody selected: the overview. With a friend open: the
+//! call, full size, and the text chat as a card over its corner (never
+//! resizing the call). In a call: your live mic.
 
 use super::FriendsView;
 use crate::api::Friend;
 use crate::theme::{Theme, ThemeExt};
-use crate::ui::components::{Avatar, ghost, icon, tonal};
-use crate::ui::voice_check::{disc, full, meter};
+use crate::ui::components::{Avatar, Button, Dropdown, ghost, icon};
 use gpui::{prelude::*, *};
 
 impl FriendsView {
     pub(super) fn stage(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let servers = self.servers.read(cx);
-        let call = servers.call_state();
-        let check = servers.voice_check();
-        let friend = self
-            .selected_friend
-            .and_then(|id| self.friends.iter().find(|f| f.id == id));
-        let t = cx.theme();
-        let body = match &call {
-            // In a call the check is off; the disc and bar follow your live mic.
-            Some(c) => div()
-                .w_full()
-                .max_w(px(340.))
+        let Some(friend) = self.open_friend() else {
+            return div()
+                .flex_1()
+                .min_w_0()
                 .flex()
                 .flex_col()
-                .items_center()
-                .text_center()
-                .gap_3p5()
-                .child(disc(c.level, 96., &t))
-                .child(
-                    div()
-                        .font_weight(FontWeight::BOLD)
-                        .text_size(px(20.))
-                        .child("You're in a call"),
-                )
-                .child(div().text_color(t.muted).child(c.channel.clone()))
-                .child(meter(c.level, &t))
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(t.muted)
-                        .child("The mic check is off while you talk."),
-                ),
-            None => match friend {
-                // A friend is open: the stage is about them, not the mic check.
-                Some(f) => dm_body(f, &t),
-                None => full(&check, cx),
-            },
+                .child(self.overview(window, cx))
+                .children(self.call_bar(cx));
         };
+        let t = cx.theme();
+        // The call bar under the stage shows a call in progress: the page
+        // stays about this friend.
+        let body = self.dm_body(friend);
         let stage = div()
             .id("friends-stage")
             .flex_1()
@@ -60,10 +34,24 @@ impl FriendsView {
             .justify_center()
             .p_6()
             .child(body);
-        let main = match friend {
-            Some(f) => {
-                let header = self.dm_header(f, cx);
-                let overlay = self.chat_overlay(f, window, &t, cx);
+        let header = self.dm_header(friend, cx);
+        let overlay = self.chat_overlay(friend, window, &t, cx);
+        let main = div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .overflow_hidden()
+            .flex()
+            .flex_col()
+            .on_mouse_move(cx.listener(Self::chat_drag_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::chat_drag_end))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::chat_drag_end))
+            .child(header)
+            // The card lives in this box, under the header: it is
+            // clipped and capped by layout, so it cannot cover the
+            // header even for a frame while the window resizes.
+            .child(
                 div()
                     .relative()
                     .flex_1()
@@ -72,41 +60,21 @@ impl FriendsView {
                     .overflow_hidden()
                     .flex()
                     .flex_col()
-                    .on_mouse_move(cx.listener(Self::chat_drag_move))
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::chat_drag_end))
-                    .on_mouse_up_out(MouseButton::Left, cx.listener(Self::chat_drag_end))
-                    .child(header)
-                    // The card lives in this box, under the header: it is
-                    // clipped and capped by layout, so it cannot cover the
-                    // header even for a frame while the window resizes.
-                    .child(
-                        div()
-                            .relative()
-                            .flex_1()
-                            .min_w_0()
-                            .min_h_0()
-                            .overflow_hidden()
-                            .flex()
-                            .flex_col()
-                            .child({
-                                // Measures it: the card may not outgrow it.
-                                let size = self.stage_size.clone();
-                                canvas(
-                                    move |b, _, _| {
-                                        size.set((f32::from(b.size.width), f32::from(b.size.height)))
-                                    },
-                                    |_, _, _, _| {},
-                                )
-                                .absolute()
-                                .size_full()
-                            })
-                            .child(stage)
-                            .child(overlay),
-                    )
-                    .into_any_element()
-            }
-            None => stage.into_any_element(),
-        };
+                    .child({
+                        // Measures it: the card may not outgrow it.
+                        let size = self.stage_size.clone();
+                        canvas(
+                            move |b, _, _| {
+                                size.set((f32::from(b.size.width), f32::from(b.size.height)))
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full()
+                    })
+                    .child(stage)
+                    .child(overlay),
+            );
         div()
             .flex_1()
             .min_w_0()
@@ -116,10 +84,63 @@ impl FriendsView {
             .children(self.call_bar(cx))
     }
 
-    /// Friend's name and close button for the open DM.
+    /// The friend's page: who, and Call. The chat strip in the corner opens
+    /// the chat; Block and Unfriend are in the header's "..." menu.
+    fn dm_body(&self, friend: &Friend) -> Div {
+        let id = friend.id;
+        // ponytail: Call is a no-op until DM calls exist on the server.
+        let call = Button::new(("dm-call", id as u64), "Call")
+            .icon("phone")
+            .primary();
+        div()
+            .w_full()
+            .max_w(px(340.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .text_center()
+            .gap_3()
+            .child(Avatar::new(&friend.name, 96.))
+            .child(
+                div()
+                    .font_weight(FontWeight::BOLD)
+                    .text_size(px(20.))
+                    .child(friend.name.clone()),
+            )
+            .child(div().mt_2().child(call))
+    }
+
+    /// Friend's name, close button and "..." menu (Block, Unfriend) for the
+    /// open DM.
     fn dm_header(&self, friend: &Friend, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme();
         let close = cx.listener(|this, _, _, cx| this.close_friend(cx));
+        let id = friend.id;
+        let view = cx.entity();
+        let (on_dismiss, on_block, on_unfriend) = (view.clone(), view.clone(), view);
+        let menu = Dropdown::new(
+            ("dm-menu", id as u64),
+            ghost(("dm-more", id as u64), "More", "dots-three", &t).on_click(cx.listener(
+                |this, _, _, cx| {
+                    this.header_menu = !this.header_menu;
+                    cx.notify();
+                },
+            )),
+        )
+        .open(self.header_menu)
+        .width(px(140.))
+        .on_dismiss(move |_, cx| {
+            on_dismiss.update(cx, |this, cx| {
+                this.header_menu = false;
+                cx.notify();
+            })
+        })
+        .entry("eye-slash", "Block", move |_, _, cx| {
+            on_block.update(cx, |this, cx| this.block_friend(id, cx))
+        })
+        .entry("minus", "Unfriend", move |_, _, cx| {
+            on_unfriend.update(cx, |this, cx| this.remove_friend(id, cx))
+        });
         div()
             .flex()
             .items_center()
@@ -138,10 +159,57 @@ impl FriendsView {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(friend.name.clone()),
             )
+            .child(menu)
             .into_any_element()
     }
 
-    /// Chat over the corner of the stage: a pill when closed, a card when open.
+    /// Chat closed: a compact strip in the corner, as the text channel tray in
+    /// the server view. Last message as a one-line preview; Espandi opens the card.
+    fn chat_strip(&self, friend: &Friend, width: f32, t: &Theme, cx: &mut Context<Self>) -> Div {
+        let preview = match self.chat_log.get(&friend.id).and_then(|log| log.last()) {
+            Some(m) => {
+                let who = if m.mine { "Tu" } else { friend.name.as_str() };
+                format!("{who}: {}", m.text.lines().next().unwrap_or(""))
+            }
+            None => "Nessun messaggio ancora".to_string(),
+        };
+        div()
+            .w(px(width))
+            .max_w(relative(1.))
+            .h(px(44.))
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .rounded(t.radius)
+            .border_1()
+            .border_color(t.line)
+            .bg(t.opaque_panel())
+            .occlude()
+            .child(icon("hash", 14., t.muted))
+            .child(
+                div()
+                    .flex_none()
+                    .max_w(relative(0.35))
+                    .truncate()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(friend.name.clone()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(t.muted)
+                    .child(preview),
+            )
+            .child(
+                ghost(("dm-chat-expand", friend.id as u64), "Espandi", "caret-up", t)
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_chat(cx))),
+            )
+    }
+
+    /// Chat over the corner of the stage: a strip when closed, a card when open.
     /// The call behind it keeps its size.
     fn chat_overlay(
         &self,
@@ -152,11 +220,17 @@ impl FriendsView {
     ) -> AnyElement {
         if !self.chat_open {
             self.chat_shown.set(None);
-            return tonal(("dm-chat", friend.id as u64), "Chat", "chats-teardrop", t.accent, t)
+            // Same width as the card it opens into.
+            let (chat_w, _) = self.chat_size_for(window.viewport_size());
+            return div()
                 .absolute()
-                .right_4()
-                .bottom_4()
-                .on_click(cx.listener(|this, _, _, cx| this.toggle_chat(cx)))
+                .size_full()
+                .p_4()
+                .flex()
+                .flex_col()
+                .justify_end()
+                .items_end()
+                .child(self.chat_strip(friend, chat_w, t, cx))
                 .into_any_element();
         }
         let close = cx.listener(|this, _, _, cx| this.toggle_chat(cx));
@@ -164,8 +238,16 @@ impl FriendsView {
         // The eased size trails the target: never let it outgrow the stage now.
         let eased = self.ease_chat_size(target, window);
         let (w, h) = clamp_chat(eased, self.stage_area(window.viewport_size()));
-        let maxed = target == clamp_chat((f32::MAX, f32::MAX), self.stage_area(window.viewport_size()));
-        let (max_icon, max_label) = if maxed { ("corners-in", "Restore size") } else { ("corners-out", "Maximize") };
+        let maxed = target
+            == clamp_chat(
+                (f32::MAX, f32::MAX),
+                self.stage_area(window.viewport_size()),
+            );
+        let (max_icon, max_label) = if maxed {
+            ("corners-in", "Restore size")
+        } else {
+            ("corners-out", "Maximize")
+        };
         let card = div()
             .id(("dm-chat-card", friend.id as u64))
             .relative()
@@ -221,7 +303,15 @@ impl FriendsView {
                                         this.toggle_chat_max(window, cx)
                                     })),
                             )
-                            .child(ghost(("dm-chat-minimize", friend.id as u64), "Minimize", "minus", t).on_click(close)),
+                            .child(
+                                ghost(
+                                    ("dm-chat-minimize", friend.id as u64),
+                                    "Minimize",
+                                    "minus",
+                                    t,
+                                )
+                                .on_click(close),
+                            ),
                     ),
             )
             .child(self.chat_body(friend, t, cx))
@@ -280,7 +370,10 @@ impl FriendsView {
             Some((from, then)) if self.chat_drag.is_none() => {
                 let dt = now.duration_since(then).as_secs_f32().min(0.1);
                 let k = 1. - (-dt / 0.08).exp();
-                (from.0 + (target.0 - from.0) * k, from.1 + (target.1 - from.1) * k)
+                (
+                    from.0 + (target.0 - from.0) * k,
+                    from.1 + (target.1 - from.1) * k,
+                )
             }
             _ => target,
         };
@@ -321,7 +414,9 @@ impl FriendsView {
     }
 
     fn chat_drag_move(&mut self, e: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(((x0, y0), (w0, h0))) = self.chat_drag else { return };
+        let Some(((x0, y0), (w0, h0))) = self.chat_drag else {
+            return;
+        };
         // Button released somewhere we did not see it: stop the drag.
         if e.pressed_button != Some(MouseButton::Left) {
             return self.chat_drag_end_now(cx);
@@ -381,7 +476,7 @@ const MIN_CHAT_W: f32 = 300.;
 const MIN_CHAT_H: f32 = 360.;
 
 /// Height of the friend header the card must stay under (`dm_header`).
-const DM_HEADER: f32 = 56.;
+pub(super) const DM_HEADER: f32 = 56.;
 
 /// Keeps the card inside the stage, under the header, with a 16px margin.
 fn clamp_chat((w, h): (f32, f32), (sw, sh): (f32, f32)) -> (f32, f32) {
@@ -390,27 +485,8 @@ fn clamp_chat((w, h): (f32, f32), (sw, sh): (f32, f32)) -> (f32, f32) {
     // the sidebar.
     let max_w = (sw - 32.).max(0.);
     let max_h = (sh - 32.).max(0.);
-    (w.clamp(MIN_CHAT_W.min(max_w), max_w), h.clamp(MIN_CHAT_H.min(max_h), max_h))
-}
-
-/// The open friend, centred in the stage. DM calls are not on the server yet,
-/// so the button is a placeholder.
-fn dm_body(friend: &Friend, t: &Theme) -> Div {
-    div()
-        .w_full()
-        .max_w(px(340.))
-        .flex()
-        .flex_col()
-        .items_center()
-        .text_center()
-        .gap_3()
-        .child(Avatar::new(&friend.name, 96.))
-        .child(
-            div()
-                .font_weight(FontWeight::BOLD)
-                .text_size(px(20.))
-                .child(friend.name.clone()),
-        )
-        // ponytail: no-op until DM calls exist on the server.
-        .child(tonal(("dm-call", friend.id as u64), "Call", "phone", t.accent, t))
+    (
+        w.clamp(MIN_CHAT_W.min(max_w), max_w),
+        h.clamp(MIN_CHAT_H.min(max_h), max_h),
+    )
 }

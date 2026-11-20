@@ -221,12 +221,46 @@ fn commands(
                     let _ = events.send_blocking(Event::FriendFailed(e));
                 }
             },
-            Command::LoadDm { peer } => match friends::dm_history(&mut session, peer) {
+            Command::LoadDm { peer, before } => match friends::dm_history(&mut session, peer, before) {
                 Ok(msgs) => {
-                    let _ = events.send_blocking(Event::DmHistory { peer, msgs });
+                    let _ = events.send_blocking(Event::DmHistory { peer, msgs, before });
                 }
                 Err(e) => {
                     let _ = events.send_blocking(Event::FriendFailed(e));
+                }
+            },
+            Command::SendThread {
+                server_id,
+                channel_id,
+                text,
+            } => match server::send_thread(&mut session, server_id, channel_id, &text) {
+                Ok(msg) => {
+                    let _ = events.send_blocking(Event::ThreadSent {
+                        server_id,
+                        channel_id,
+                        msg,
+                    });
+                }
+                Err(e) => {
+                    let _ = events.send_blocking(Event::ThreadFailed(e));
+                }
+            },
+            Command::ListThread {
+                server_id,
+                channel_id,
+                before,
+            } => match server::list_thread(&mut session, channel_id, before) {
+                Ok((msgs, has_more)) => {
+                    let _ = events.send_blocking(Event::ThreadHistory {
+                        server_id,
+                        channel_id,
+                        msgs,
+                        before,
+                        has_more,
+                    });
+                }
+                Err(e) => {
+                    let _ = events.send_blocking(Event::ThreadFailed(e));
                 }
             },
             Command::ListFriends => send_friends(&mut session, &events),

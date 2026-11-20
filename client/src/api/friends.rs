@@ -135,11 +135,21 @@ pub(super) fn send_dm(session: &mut Session, peer: i64, text: &str) -> Result<Di
     dm_from(&ack["directInfo"]).ok_or_else(|| "bad reply".to_string())
 }
 
-/// Newest page of the conversation, oldest first. The server marks it read.
-pub(super) fn dm_history(session: &mut Session, peer: i64) -> Result<Vec<DirectMessage>, String> {
+/// Messages per history page; the server's default page.
+pub const DM_PAGE: usize = 50;
+
+/// A page of the conversation, oldest first: the newest one, or with `before`
+/// the one just older than that message id. The server marks it read.
+pub(super) fn dm_history(
+    session: &mut Session,
+    peer: i64,
+    before: Option<i64>,
+) -> Result<Vec<DirectMessage>, String> {
     let ack = session.call(json!({
         "type":"RECIEVE_DIRECT_MESSAGE",
         "directRecipientID":peer.to_string(),
+        "dmLimit": DM_PAGE,
+        "dmBeforeId": before.unwrap_or(0),
     }))?;
     let mut list: Vec<_> = ack["directMessages"]
         .as_array()

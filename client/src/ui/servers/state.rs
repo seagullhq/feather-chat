@@ -2,6 +2,7 @@
 
 use super::ServersView;
 use crate::api::{ChannelSummary, ChannelTypeSummary, Control, ServerMember, ServerSummary};
+use crate::model::CHANNEL_THREAD;
 use crate::model::{self, Member, Server};
 use gpui::prelude::*;
 
@@ -29,6 +30,7 @@ impl ServersView {
                     name: c.name,
                     channel_type: c.channel_type,
                     members: c.members.into_iter().map(Member::from_roster).collect(),
+                    thread: Default::default(),
                 })
                 .collect();
             // First list since start: reopen the channel saved last time
@@ -51,8 +53,9 @@ impl ServersView {
                 self.last.channels.insert(server_id, None);
                 self.last.save();
             }
-            cx.notify();
         }
+        self.ensure_thread_loaded();
+        cx.notify();
     }
 
     pub fn set_members(
@@ -108,9 +111,30 @@ impl ServersView {
         }
         self.servers_loaded = true;
         self.server = self.server.min(self.servers.len().saturating_sub(1));
+        self.remember_server();
         self.joined = None;
         self.load_channels();
         cx.notify();
+    }
+
+    /// Saves the open server as the one to reopen, so `last_view.json` never
+    /// points at a server we are no longer in (deleted, kicked, banned).
+    fn remember_server(&mut self) {
+        let open = self.servers.get(self.server).map(|s| s.id);
+        let gone: Vec<i64> = self
+            .last
+            .channels
+            .keys()
+            .filter(|id| !self.servers.iter().any(|s| s.id == **id))
+            .copied()
+            .collect();
+        if open != self.last.server || !gone.is_empty() {
+            self.last.server = open;
+            for id in gone {
+                self.last.channels.remove(&id);
+            }
+            self.last.save();
+        }
     }
 
     pub fn set_channel_types(&mut self, types: Vec<ChannelTypeSummary>, cx: &mut Context<Self>) {
@@ -220,10 +244,17 @@ impl ServersView {
                 name,
                 channel_type,
                 members: vec![],
+                thread: Default::default(),
             });
-            server.viewing = Some(created);
-            self.last.channels.insert(server_id, Some(id));
-            self.last.save();
+            // Text channels open in the chat card; voice channels become the view.
+            if channel_type != CHANNEL_THREAD {
+                server.viewing = Some(created);
+                self.last.channels.insert(server_id, Some(id));
+                self.last.save();
+            }
+        }
+        if channel_type == CHANNEL_THREAD {
+            self.open_thread(id, cx);
         }
         self.add_channel.update(cx, |modal, cx| modal.reset(cx));
         self.adding_channel = false;
@@ -250,6 +281,7 @@ impl ServersView {
                 name,
                 channel_type,
                 members: vec![],
+                thread: Default::default(),
             });
             cx.notify();
         }
@@ -320,6 +352,8 @@ impl ServersView {
         if self.server > i || self.server >= self.servers.len() {
             self.server = self.server.saturating_sub(1);
         }
+        self.last.channels.remove(&id);
+        self.remember_server();
         self.server_sheet = false;
         self.sheet_ui.set_error(None);
         let focus = self.focus.clone();

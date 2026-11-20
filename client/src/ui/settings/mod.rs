@@ -38,6 +38,9 @@ struct SettingsView {
     open: Option<&'static str>,
     mics: Vec<String>,
     outs: Vec<String>,
+    /// OS default device names, for the "System default (name)" labels.
+    default_mic: Option<String>,
+    default_out: Option<String>,
     /// `None` = follow the OS default device.
     mic: Option<usize>,
     out: Option<usize>,
@@ -70,7 +73,7 @@ struct SettingsView {
 /// keep it off the render path.
 fn device_lists() -> (Vec<String>, Vec<String>) {
     use cpal::traits::HostTrait;
-    let host = cpal::default_host();
+    let host = crate::media::host();
     let names = |it: Option<Vec<cpal::Device>>| {
         it.unwrap_or_default()
             .iter()
@@ -117,6 +120,8 @@ impl SettingsView {
             open: None,
             mics,
             outs,
+            default_mic: crate::media::system_default_device_name(true),
+            default_out: crate::media::system_default_device_name(false),
             volume: PREFS.volume.load(Relaxed) as i32,
             sensitivity: PREFS.sensitivity.load(Relaxed) as i32,
             titlebar: cx.new(|_| Titlebar::new("Settings").sheet()),
@@ -158,7 +163,14 @@ impl SettingsView {
     /// still there. Cheap enough every few seconds, too slow for every frame.
     fn refresh_devices(&mut self, cx: &mut Context<Self>) {
         let (mics, outs) = device_lists();
-        let listed = mics != self.mics || outs != self.outs;
+        let defaults = (
+            crate::media::system_default_device_name(true),
+            crate::media::system_default_device_name(false),
+        );
+        let listed = mics != self.mics
+            || outs != self.outs
+            || defaults != (self.default_mic.clone(), self.default_out.clone());
+        (self.default_mic, self.default_out) = defaults;
         if listed {
             self.mics = mics;
             self.outs = outs;
@@ -174,8 +186,7 @@ impl SettingsView {
         );
         let picked = mic != self.mic || out != self.out;
         (self.mic, self.out) = (mic, out);
-        // The "System default (name)" labels follow the OS default too.
-        if listed || picked || self.page == Page::Voice {
+        if listed || picked {
             cx.notify();
         }
     }

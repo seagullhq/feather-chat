@@ -1,5 +1,6 @@
 //! Body of the chat card: message list and composer, backed by the server's DM
-//! protocol (latest page loaded when a friend is opened).
+//! protocol (latest page loaded when a friend is opened, older pages when the
+//! list is scrolled to the top).
 
 use super::FriendsView;
 use crate::api::Friend;
@@ -9,7 +10,10 @@ use crate::ui::components::{Avatar, tonal};
 use crate::ui::markdown::{Markdown, MdTheme};
 use gpui::{prelude::*, *};
 
-pub(super) struct ChatMessage {
+/// Distance from the top of the chat log that loads older messages.
+const LOAD_OLDER_AT: f32 = 80.;
+
+pub(crate) struct ChatMessage {
     pub id: i64,
     pub mine: bool,
     pub text: String,
@@ -29,6 +33,12 @@ impl FriendsView {
             .min_h_0()
             .overflow_y_scroll()
             .track_scroll(&self.chat_scroll)
+            // Scrolled near the top: bring in the page before the oldest message.
+            .on_scroll(cx.listener(|this, _, _, cx| {
+                if this.chat_scroll.offset().y > -px(LOAD_OLDER_AT) {
+                    this.load_older_dm(cx);
+                }
+            }))
             .flex()
             .flex_col()
             .py_2();
@@ -59,11 +69,17 @@ impl FriendsView {
                     .w_full()
                     .child(self.chat_input.clone())
                     .child(
-                        tonal(("dm-chat-send", friend.id as u64), "Send", "paper-plane-right", t.accent, t)
-                            .absolute()
-                            .right(px(6.))
-                            .bottom(px(6.))
-                            .on_click(cx.listener(|this, _, _, cx| this.send_chat(cx))),
+                        tonal(
+                            ("dm-chat-send", friend.id as u64),
+                            "Send",
+                            "paper-plane-right",
+                            t.accent,
+                            t,
+                        )
+                        .absolute()
+                        .right(px(6.))
+                        .bottom(px(6.))
+                        .on_click(cx.listener(|this, _, _, cx| this.send_chat(cx))),
                     ),
             );
         div()
@@ -78,7 +94,9 @@ impl FriendsView {
 
     /// Adds the typed text to the open friend's log. Trimmed; empty is ignored.
     pub(super) fn send_chat(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.selected_friend else { return };
+        let Some(id) = self.open_friend().map(|f| f.id) else {
+            return;
+        };
         let text = self.chat_input.read(cx).text().trim().to_string();
         if text.is_empty() {
             return;
@@ -86,19 +104,28 @@ impl FriendsView {
         // The message shows up when the server confirms it (DmSent).
         let Some(c) = &self.control else { return };
         if c.send_dm(id, text) {
-            self.chat_input.update(cx, |input, cx| input.set_text("", cx));
+            self.chat_input
+                .update(cx, |input, cx| input.set_text("", cx));
         }
     }
 }
 
 /// Discord-style row: avatar and name on the first message of a run, then the
 /// text; later messages of the same author only indent under it.
-fn message(m: &ChatMessage, name: &str, first: bool, t: &Theme) -> Div {
+pub(crate) fn message(m: &ChatMessage, name: &str, first: bool, t: &Theme) -> Div {
     let side = div().w(px(36.)).flex_none();
-    let side = if first { side.child(Avatar::new(name, 36.)) } else { side };
+    let side = if first {
+        side.child(Avatar::new(name, 36.))
+    } else {
+        side
+    };
     let body = div().flex_1().min_w_0().flex().flex_col();
     let body = if first {
-        body.child(div().font_weight(FontWeight::SEMIBOLD).child(name.to_string()))
+        body.child(
+            div()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(name.to_string()),
+        )
     } else {
         body
     };
@@ -110,7 +137,10 @@ fn message(m: &ChatMessage, name: &str, first: bool, t: &Theme) -> Div {
         .when(first, |d| d.mt_2())
         .hover(|s| s.bg(t.fill_hover))
         .child(side)
-        .child(body.child(Markdown::new(&keep_newlines(&m.text), MdTheme::from_theme(t))))
+        .child(body.child(Markdown::new(
+            &keep_newlines(&m.text),
+            MdTheme::from_theme(t),
+        )))
 }
 
 /// Markdown folds a single newline into a space; chat keeps it as a line break.

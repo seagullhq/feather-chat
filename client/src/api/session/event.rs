@@ -123,6 +123,29 @@ pub enum Event {
     DmHistory {
         peer: i64,
         msgs: Vec<crate::api::DirectMessage>,
+        /// Set for an older page (it goes on top), `None` for the newest.
+        before: Option<i64>,
     },
+    /// Page of a text channel, oldest first. `before` as in `DmHistory`.
+    ThreadHistory {
+        server_id: i64,
+        channel_id: i64,
+        msgs: Vec<crate::api::DirectMessage>,
+        before: Option<i64>,
+        has_more: bool,
+    },
+    /// Your message in a text channel went through.
+    ThreadSent {
+        server_id: i64,
+        channel_id: i64,
+        msg: crate::api::DirectMessage,
+    },
+    /// Someone posted in a text channel (push).
+    ThreadReceived {
+        server_id: i64,
+        channel_id: i64,
+        msg: crate::api::DirectMessage,
+    },
+    ThreadFailed(String),
     Disconnected,
 }

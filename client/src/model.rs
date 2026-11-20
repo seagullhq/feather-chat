@@ -33,6 +33,9 @@ impl Member {
     }
 }
 
+/// `channel_types` row of a text channel (shown as "threads" in the UI).
+pub const CHANNEL_THREAD: i32 = 1;
+
 pub struct Channel {
     /// Channel row ID from the control plane.
     pub id: i64,
@@ -40,6 +43,21 @@ pub struct Channel {
     /// `channel_types` row: 1 thread, 2 voice, 3 stage.
     pub channel_type: i32,
     pub members: Vec<Member>,
+    /// Messages of a text channel; empty for voice and stage.
+    pub thread: ThreadLog,
+}
+
+/// In-memory copy of a text channel's messages, filled page by page.
+#[derive(Default)]
+pub struct ThreadLog {
+    /// Oldest first.
+    pub messages: Vec<crate::api::DirectMessage>,
+    /// The newest page was requested (it may still be on its way).
+    pub loaded: bool,
+    /// The server has messages older than the first one here.
+    pub more: bool,
+    /// An older page was asked for and has not arrived yet.
+    pub loading_older: bool,
 }
 
 pub struct Server {

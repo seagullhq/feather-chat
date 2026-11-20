@@ -5,8 +5,12 @@ use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
 
 impl super::ServersView {
-    pub(super) fn stage(&self, viewport: Size<Pixels>, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn stage(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let viewport = window.viewport_size();
         let t = cx.theme();
+        // Not in a call with a text channel open: the overview sits behind the chat.
+        let floating = self.thread_floating();
+        let overview = floating || self.channel_view().is_none();
         let joined_here =
             self.viewing().is_some() && self.joined == self.viewing().map(|v| (self.server, v));
         let mut tiles: Vec<(String, f32, bool, bool)> = self
@@ -30,15 +34,25 @@ impl super::ServersView {
         // below the smallest size the list scrolls instead. Positions never reorder.
         const GAP: f32 = 32.;
         let area_w = f32::from(viewport.width) - 240. - 48.;
-        let area_h = f32::from(viewport.height) - 70. - 36. - 26. - 48.;
+        let area_h = f32::from(viewport.height) - 70. - 36. - 26. - 48. - self.tray_room(viewport);
         let n = tiles.len().max(1) as f32;
         let fits = |size: f32| {
             let cols = ((area_w + GAP) / (size + 24. + GAP)).floor().max(1.);
             let rows = (n / cols).ceil();
             rows * (size + 30. + GAP) - GAP <= area_h
         };
-        let sizes = [144., 112., 88., 64., 48.];
-        let size = sizes.into_iter().find(|s| fits(*s)).unwrap_or(48.);
+        // Largest size that fits, found by bisection so it shrinks smoothly as the
+        // tray grows (fixed steps made everyone vanish into the scroll at once).
+        let size = if fits(144.) {
+            144.
+        } else {
+            let (mut lo, mut hi) = (48., 144.);
+            for _ in 0..16 {
+                let mid = (lo + hi) / 2.;
+                if fits(mid) { lo = mid } else { hi = mid }
+            }
+            lo
+        };
         let all_fit = fits(size);
 
         let body = if self.servers.get(self.server).is_none() {
@@ -59,7 +73,7 @@ impl super::ServersView {
                 .into_any_element()
         } else if self.channel_pending() {
             div().flex_1().into_any_element()
-        } else if let (None, Some(s)) = (self.channel_view(), self.servers.get(self.server)) {
+        } else if let (true, Some(s)) = (overview, self.servers.get(self.server)) {
             // Server home page. ponytail: fixed layout; a per-server
             // customizable home (banner, welcome text, links) will go here.
             div()
@@ -124,7 +138,7 @@ impl super::ServersView {
                 .into_any_element()
         };
 
-        let header = self.channel_view().map(|c| {
+        let header = self.channel_view().filter(|_| !floating).map(|c| {
             div()
                 .flex_none()
                 .px_4()
@@ -141,13 +155,60 @@ impl super::ServersView {
                     "Non connesso"
                 }))
         });
+        // Tall tray: it floats over the voice stage (a layer above it), instead
+        // of taking room from it.
+        let tray_floats = self.tray_on_top(viewport);
+        let tray = self.thread_tray(viewport, cx);
+        let (column_tray, tray_layer) = if tray_floats {
+            (
+                None,
+                tray.map(|t| {
+                    div()
+                        .absolute()
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .justify_end()
+                        .child(t)
+                }),
+            )
+        } else {
+            (tray, None)
+        };
+        let area = div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    // A grip drag keeps tracking the mouse outside the card.
+                    .on_mouse_move(cx.listener(Self::thread_drag_move))
+                    .on_mouse_up(MouseButton::Left, cx.listener(Self::thread_drag_end))
+                    .on_mouse_up_out(MouseButton::Left, cx.listener(Self::thread_drag_end))
+                    .child({
+                        let area = self.thread_area.clone();
+                        canvas(
+                            move |b, _, _| {
+                                area.set((f32::from(b.size.width), f32::from(b.size.height)))
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full()
+                    })
+                    .child(body)
+                    .children(self.thread_float(window, cx))
+                    .children(tray_layer);
         div()
             .flex_1()
             .h_full()
+            .relative()
             .flex()
             .flex_col()
             .children(header)
-            .child(body)
-            .children(self.controls(cx))
+            .child(area)
+            // Tray between the people and the call bar, unless it floats.
+            .children(column_tray)
+            .child(self.controls(cx))
     }
 }

@@ -35,7 +35,8 @@ actions!(
         FocusNext,
         FocusPrev,
         ToggleMute,
-        ToggleDeafen
+        ToggleDeafen,
+        Quit
     ]
 );
 

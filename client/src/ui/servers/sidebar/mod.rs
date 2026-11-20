@@ -5,6 +5,7 @@ mod server_chip;
 
 use super::super::components::{Dropdown, ghost, icon};
 use super::server_sheet::SheetTab;
+use crate::model::CHANNEL_THREAD;
 use crate::theme::{Theme, ThemeExt};
 use channel_row::ChannelRow;
 use gpui::{prelude::*, *};
@@ -194,6 +195,8 @@ impl super::ServersView {
                 )
                 .child({
                     let viewing = self.viewing();
+                    let open_thread = self.thread_view().map(|c| c.id);
+                    let no_call = self.joined.is_none();
                     div()
                         .id("channels")
                         .flex_1()
@@ -217,15 +220,27 @@ impl super::ServersView {
                                     self.me.deafened,
                                 ));
                             }
+                            let (cid, is_thread) = (c.id, c.channel_type == CHANNEL_THREAD);
                             ChannelRow {
                                 id: i,
                                 name: c.name.clone().into(),
                                 channel_type: c.channel_type,
                                 members,
-                                viewing: viewing == Some(i),
+                                // The call keeps the row highlight; a chat open next to it is
+                                // marked lightly (`open`), not filled.
+                                viewing: viewing == Some(i)
+                                    || (open_thread == Some(cid) && no_call),
                                 joined: here,
+                                open: open_thread == Some(cid) && !no_call,
                                 on_click: Box::new(cx.listener(move |this, _, _, cx| {
-                                    this.set_viewing(Some(i), cx);
+                                    // Text channels open their card; voice channels the view.
+                                    if is_thread {
+                                        this.toggle_thread(cid, cx);
+                                    } else {
+                                        // Voice takes the focus: the text chat (and its tray) goes.
+                                        this.close_thread(cx);
+                                        this.set_viewing(Some(i), cx);
+                                    }
                                     cx.notify();
                                 })),
                             }

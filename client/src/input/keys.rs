@@ -34,5 +34,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-v", Paste, Some("TextInput")),
         KeyBinding::new("cmd-c", Copy, Some("TextInput")),
         KeyBinding::new("cmd-x", Cut, Some("TextInput")),
+        KeyBinding::new("cmd-q", crate::ui::Quit, None),
     ]);
+    #[cfg(target_os = "macos")]
+    cx.on_action(|_: &crate::ui::Quit, cx| cx.quit());
 }

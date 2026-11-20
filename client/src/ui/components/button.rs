@@ -1,4 +1,4 @@
-use super::ClickHandler;
+use super::{ClickHandler, icon};
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
 
@@ -13,6 +13,8 @@ enum Tone {
 pub struct Button {
     id: ElementId,
     label: SharedString,
+    /// Optional glyph before the label (`icons/<name>.svg`).
+    icon: Option<&'static str>,
     disabled: bool,
     tone: Tone,
     on_click: Option<ClickHandler>,
@@ -23,10 +25,17 @@ impl Button {
         Self {
             id: id.into(),
             label: label.into(),
+            icon: None,
             disabled: false,
             tone: Tone::Normal,
             on_click: None,
         }
+    }
+
+    /// Icon before the label, in the label's color.
+    pub fn icon(mut self, name: &'static str) -> Self {
+        self.icon = Some(name);
+        self
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -85,6 +94,7 @@ impl RenderOnce for Button {
             .when(!enabled, |d| d.opacity(0.5))
             .when(enabled, |d| d.hover(move |s| s.bg(hover)))
             .when_some(self.on_click.filter(|_| enabled), |d, f| d.on_click(f))
+            .when_some(self.icon, |d, name| d.gap_2().child(icon(name, 16., fg)))
             .child(self.label)
     }
 }
