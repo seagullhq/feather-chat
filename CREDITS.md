@@ -24,15 +24,28 @@ and is also available at <https://openfontlicense.org>.
 Copyright (c) 2023 Phosphor Icons (<https://phosphoricons.com>).
 
 All UI icons in [`client/assets/icons/`](client/assets/icons/) come from the
-Phosphor Icons set: arrow-left, caret-down, chats-teardrop, compass, copy,
-dots-three, ear, ear-slash, eye, eye-slash, gear-six, hash, home, microphone,
-microphone-slash, minus, phone, phone-slash, plus, server, sidebar-simple,
-speaker-high, square, and x.
+Phosphor Icons set: arrow-left, caret-down, chats-teardrop, check, compass,
+copy, dots-three, ear, ear-slash, eye, eye-slash, gear-six, hash, home,
+microphone, microphone-slash, microphone-stage, minus, phone, phone-slash,
+plus, record, server, sidebar-simple, sign-out, sliders-horizontal,
+speaker-high, square, user-plus, users, waveform, and x.
 
 They are licensed under the MIT License. The full license text is in
 [`client/assets/icons/LICENSE`](client/assets/icons/LICENSE) and is also
 available at
 <https://github.com/phosphor-icons/core/blob/main/LICENSE>.
+
+## Datasets
+
+### profanity-filter
+
+The AI profanity filter uses the [profanity-filter] dataset by shawarmas
+(about 15k short text entries), hosted on Hugging Face.
+
+The dataset repository currently ships no dataset card and declares no
+license; check the source before redistributing its content.
+
+[profanity-filter]: https://huggingface.co/datasets/shawarmas/profanity-filter
 
 ## Libraries
 
@@ -48,12 +61,15 @@ covered by their own licenses in the respective lock files
 | [serde_json] | MIT OR Apache-2.0 | [serde-rs](https://github.com/serde-rs/json) |
 | [async-channel] | MIT OR Apache-2.0 | [smol-rs](https://github.com/smol-rs/async-channel) |
 | [unicode-segmentation] | MIT OR Apache-2.0 | [unicode-rs](https://github.com/unicode-rs/unicode-segmentation) |
+| [pulldown-cmark] | MIT | [raphlinus](https://github.com/raphlinus/pulldown-cmark) |
 | [rand] | MIT OR Apache-2.0 | [rust-random](https://github.com/rust-random/rand) |
 | [cpal] | Apache-2.0 | [RustAudio](https://github.com/rustaudio/cpal) |
 | [native-theme] | MIT OR Apache-2.0 OR 0BSD | [tiborgats](https://github.com/tiborgats/native-theme) |
 | [opus-rs] | BSD-3-Clause | [restsend](https://github.com/restsend/opus-rs) |
 | [rtrb] | MIT OR Apache-2.0 | [mgeier](https://github.com/mgeier/rtrb) |
 | [keyring] | MIT OR Apache-2.0 | [hwchen](https://github.com/hwchen/keyring-rs) |
+| [directories] | MIT OR Apache-2.0 | [soc](https://github.com/soc/directories-rs) |
+| [rust-embed] | MIT | [PyRossH](https://github.com/pyrossh/rust-embed) |
 | [image] (Linux/BSD) | MIT OR Apache-2.0 | [image-rs](https://github.com/image-rs/image) |
 | [objc2], [objc2-app-kit], [objc2-foundation] (macOS) | MIT | [madsmtm](https://github.com/madsmtm/objc2) |
 | [embed-resource] (build) | MIT | [nabijaczleweli](https://github.com/nabijaczleweli/rust-embed-resource) |
@@ -63,12 +79,15 @@ covered by their own licenses in the respective lock files
 [serde_json]: https://github.com/serde-rs/json
 [async-channel]: https://github.com/smol-rs/async-channel
 [unicode-segmentation]: https://github.com/unicode-rs/unicode-segmentation
+[pulldown-cmark]: https://github.com/raphlinus/pulldown-cmark
 [rand]: https://github.com/rust-random/rand
 [cpal]: https://github.com/rustaudio/cpal
 [native-theme]: https://github.com/tiborgats/native-theme
 [opus-rs]: https://github.com/restsend/opus-rs
 [rtrb]: https://github.com/mgeier/rtrb
 [keyring]: https://github.com/hwchen/keyring-rs
+[directories]: https://github.com/soc/directories-rs
+[rust-embed]: https://github.com/pyrossh/rust-embed
 [image]: https://github.com/image-rs/image
 [objc2]: https://github.com/madsmtm/objc2
 [objc2-app-kit]: https://github.com/madsmtm/objc2
@@ -87,11 +106,9 @@ Xiph.Org Foundation and contributors.
 | [golang-migrate/migrate/v4] | MIT | [golang-migrate](https://github.com/golang-migrate/migrate) |
 | [jackc/pgx/v5] | MIT | [jackc](https://github.com/jackc/pgx) |
 | [joho/godotenv] | MIT | [joho](https://github.com/joho/godotenv) |
-| [mongo-driver/v2] | Apache-2.0 | [mongodb](https://github.com/mongodb/mongo-go-driver) |
 | [golang.org/x/crypto] | BSD-3-Clause | [Go Authors](https://go.googlesource.com/crypto) |
 
 [golang-migrate/migrate/v4]: https://github.com/golang-migrate/migrate
 [jackc/pgx/v5]: https://github.com/jackc/pgx
 [joho/godotenv]: https://github.com/joho/godotenv
-[mongo-driver/v2]: https://github.com/mongodb/mongo-go-driver
 [golang.org/x/crypto]: https://go.googlesource.com/crypto

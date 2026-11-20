@@ -6,6 +6,7 @@
 //! thread does everything else on a 5 ms loop: ping, receive, encode, mix.
 
 mod audio;
+mod check;
 mod engine;
 mod peer;
 mod prefs;
@@ -17,8 +18,9 @@ mod worker;
 #[cfg(test)]
 mod tests;
 
+pub use check::{MicCheck, Step};
 pub use engine::Engine;
-pub use prefs::{PREFS, dev_name};
+pub use prefs::{PREFS, current_device, dev_name, host, system_default_device_name};
 pub use shared::Shared;
 
 use std::time::Duration;
@@ -36,5 +38,6 @@ const MAX_PRIME: usize = 6;
 const MAX_QUEUED: usize = 8;
 const PEER_TIMEOUT: Duration = Duration::from_secs(2);
 const OUT_RING: usize = RATE as usize / 2;
-/// Level gain: speech sits around rms 0.03..0.2, the UI wants 0..1.
-const LEVEL_GAIN: f32 = 6.;
+/// Level gain: raw speech rms is often as low as 0.01 on quiet mics; boost it
+/// so the 0..1 indicator (and the speaking ring) actually moves.
+const LEVEL_GAIN: f32 = 12.;

@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/seagullhq/feather-chat/server/internal/accounts"
 	"github.com/seagullhq/feather-chat/server/internal/config"
 	"github.com/seagullhq/feather-chat/server/internal/control"
+	"github.com/seagullhq/feather-chat/server/internal/friends"
+	"github.com/seagullhq/feather-chat/server/internal/messages"
 	"github.com/seagullhq/feather-chat/server/internal/migrations"
 	"github.com/seagullhq/feather-chat/server/internal/protocol"
 	"github.com/seagullhq/feather-chat/server/internal/room"
@@ -52,11 +55,11 @@ func testStore(t *testing.T) (*accounts.Store, *sql.DB) {
 
 // serveTest starts a whole server (control TCP + media UDP) on the given
 // listeners, the same way main wires it.
-func serveTest(t *testing.T, ltcp net.Listener, ludp net.PacketConn, users *accounts.Store, serverStore *servers.ServerStore) {
+func serveTest(t *testing.T, ltcp net.Listener, ludp net.PacketConn, users *accounts.Store, serverStore *servers.ServerStore, friendStore *friends.ServerStore, msgStore *messages.ServerStore) {
 	t.Helper()
 	rooms := room.NewManager()
 	go rooms.ServeUDP(ludp.(*net.UDPConn))
-	go control.New(users, serverStore, rooms).Serve(ltcp)
+	go control.New(users, serverStore, friendStore, msgStore, rooms).Serve(ltcp)
 }
 
 // dialControl connects a real client over TCP: HELLO, then LOGIN (and REGISTER
@@ -161,7 +164,7 @@ func TestIntegrationTwoClients(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	serveTest(t, ltcp, ludp, store, servers.NewStore(db))
+	serveTest(t, ltcp, ludp, store, servers.NewStore(db), friends.NewStore(db), messages.NewStore(db))
 
 	udpAddr := ludp.LocalAddr().String()
 
@@ -233,7 +236,11 @@ func TestIntegrationTwoClients(t *testing.T) {
 	// B leaves the room; A's next audio must not reach it. Before the fix LEAVE
 	// was deferred until the connection closed, so B kept receiving media.
 	sendTest(t, b, protocol.Control{Type: "LEAVE"})
-	time.Sleep(100 * time.Millisecond)
+	// LEAVE has no ACK: wait for the MEMBER_LEFT push instead of sleeping, so
+	// the assertion cannot race the room manager on a loaded machine.
+	awaitControl(t, a, "MEMBER_LEFT", func(m protocol.Control) bool {
+		return m.Type == "MEMBER_LEFT" && m.SSRC == 0x2222
+	})
 	audp.Write(append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindAudio, SSRC: 0x1111}), []byte("afterleave")...))
 	budp.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
 	if n, err := budp.Read(buf); err == nil {
@@ -294,7 +301,7 @@ func TestIntegrationCreateServer(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	serveTest(t, ltcp, ludp, store, serverStore)
+	serveTest(t, ltcp, ludp, store, serverStore, friends.NewStore(db), messages.NewStore(db))
 
 	// CREATE_SERVER before LOGIN must be refused.
 	anon, err := net.Dial("tcp", ltcp.Addr().String())
@@ -379,7 +386,7 @@ func TestIntegrationListServers(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	serveTest(t, ltcp, ludp, store, serverStore)
+	serveTest(t, ltcp, ludp, store, serverStore, friends.NewStore(db), messages.NewStore(db))
 
 	// LIST_SERVERS before LOGIN must be refused.
 	anon, err := net.Dial("tcp", ltcp.Addr().String())
@@ -465,7 +472,7 @@ func TestIntegrationKickAndBan(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	serveTest(t, ltcp, ludp, store, serverStore)
+	serveTest(t, ltcp, ludp, store, serverStore, friends.NewStore(db), messages.NewStore(db))
 
 	ownerConn := dialControl(t, ltcp.Addr().String(), 0x6666, 0, owner, owner+"@example.test", password, false)
 	defer ownerConn.Close()
@@ -505,10 +512,19 @@ func TestIntegrationKickAndBan(t *testing.T) {
 	roster := awaitControl(t, ownerConn, "LIST_MEMBERS ACK", func(m protocol.Control) bool {
 		return m.Type == "ACK" && m.ServerMembers != nil
 	})
+	// Owners and admins still see banned members so they can unban them; the
+	// Banned flag, not absence from the roster, is the expected signal.
+	var sawBanned bool
 	for _, m := range roster.ServerMembers {
 		if m.ID == memberUser.ID {
-			t.Fatalf("banned user %d still in roster", memberUser.ID)
+			if !m.Banned {
+				t.Fatalf("banned user %d is in the roster without the Banned flag", memberUser.ID)
+			}
+			sawBanned = true
 		}
+	}
+	if !sawBanned {
+		t.Fatalf("banned user %d missing from the owner's roster", memberUser.ID)
 	}
 
 	sendTest(t, memberConn, protocol.Control{Type: "JOIN_SERVER", InviteCode: srv.InviteCode})
@@ -564,7 +580,7 @@ func TestIntegrationMakeAdmin(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	serveTest(t, ltcp, ludp, store, serverStore)
+	serveTest(t, ltcp, ludp, store, serverStore, friends.NewStore(db), messages.NewStore(db))
 
 	ownerConn := dialControl(t, ltcp.Addr().String(), 0x8888, 0, owner, owner+"@example.test", password, false)
 	defer ownerConn.Close()
@@ -639,7 +655,7 @@ func TestIntegrationRoster(t *testing.T) {
 	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
 	defer ltcp.Close()
 	defer ludp.Close()
-	serveTest(t, ltcp, ludp, store, servers.NewStore(db))
+	serveTest(t, ltcp, ludp, store, servers.NewStore(db), friends.NewStore(db), messages.NewStore(db))
 	addr := ltcp.Addr().String()
 
 	a := dialControl(t, addr, 0x1111, 0, username, username+"@example.test", password, true)
@@ -700,6 +716,111 @@ func TestIntegrationRoster(t *testing.T) {
 	}
 }
 
+// TestIntegrationFriendRequest: SEND_FRIENDSHIP_REQUEST stores a pending request
+// and refuses a duplicate.
+func TestIntegrationFriendRequest(t *testing.T) {
+	store, db := testStore(t)
+	const password = "integration-password-123"
+	base := fmt.Sprintf("fr_%d", time.Now().UnixNano())
+	requester, addressee := base+"_a", base+"_b"
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, n := range []string{requester, addressee} {
+			if _, err := db.ExecContext(ctx, "DELETE FROM users WHERE LOWER(username) = LOWER($1)", n); err != nil {
+				t.Logf("cleanup user %s: %v", n, err)
+			}
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ids := make(map[string]int, 2)
+	for _, n := range []string{requester, addressee} {
+		if err := store.Register(ctx, n, n+"@example.test", password); err != nil {
+			t.Fatalf("Register %s: %v", n, err)
+		}
+		u, err := store.Authenticate(ctx, n, password)
+		if err != nil {
+			t.Fatalf("Authenticate %s: %v", n, err)
+		}
+		ids[n] = u.ID
+	}
+
+	ltcp, _ := net.Listen("tcp", "127.0.0.1:0")
+	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	defer ltcp.Close()
+	defer ludp.Close()
+	serveTest(t, ltcp, ludp, store, servers.NewStore(db), friends.NewStore(db), messages.NewStore(db))
+
+	c := dialControl(t, ltcp.Addr().String(), 0xAAAA, 0, requester, requester+"@example.test", password, false)
+	defer c.Close()
+
+	sendTest(t, c, protocol.Control{Type: "SEND_FRIENDSHIP_REQUEST", Username: addressee})
+	ack := awaitControl(t, c, "SEND_FRIENDSHIP_REQUEST ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.TargetUserID == ids[addressee]
+	})
+	if ack.TargetUserID != ids[addressee] {
+		t.Fatalf("ACK target = %d, want %d", ack.TargetUserID, ids[addressee])
+	}
+
+	var status string
+	if err := db.QueryRowContext(ctx,
+		`SELECT status FROM friendships WHERE requester_id = $1 AND addressee_id = $2`,
+		ids[requester], ids[addressee],
+	).Scan(&status); err != nil {
+		t.Fatalf("stored friend request: %v", err)
+	}
+	if status != "PENDING" {
+		t.Fatalf("stored status = %q, want PENDING", status)
+	}
+
+	sendTest(t, c, protocol.Control{Type: "SEND_FRIENDSHIP_REQUEST", Username: addressee})
+	if e := awaitControl(t, c, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != friends.ErrAlreadyExists.Error() {
+		t.Fatalf("duplicate request error = %q, want %q", e.Error, friends.ErrAlreadyExists.Error())
+	}
+
+	sendTest(t, c, protocol.Control{Type: "FETCH_FRIENDSHIP_REQUEST"})
+	f := awaitControl(t, c, "FETCH ACK", func(m protocol.Control) bool { return m.Type == "ACK" && len(m.Friends) > 0 })
+	if len(f.Friends) != 1 || f.Friends[0].ID != ids[addressee] || f.Friends[0].Relation != "outgoing" {
+		t.Fatalf("fetch = %+v, want one outgoing request to %d", f.Friends, ids[addressee])
+	}
+
+	sendTest(t, c, protocol.Control{Type: "SEARCH_USERS", Query: strings.ToUpper(base) + "_B"})
+	u := awaitControl(t, c, "SEARCH ACK", func(m protocol.Control) bool { return m.Type == "ACK" && len(m.Users) > 0 })
+	if len(u.Users) != 1 || u.Users[0].ID != ids[addressee] || u.Users[0].Relation != "outgoing" {
+		t.Fatalf("search = %+v, want %d as outgoing", u.Users, ids[addressee])
+	}
+
+	sendTest(t, c, protocol.Control{Type: "SEND_FRIENDSHIP_REQUEST", Username: "missing_" + base})
+	if e := awaitControl(t, c, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != accounts.ErrNotFound.Error() {
+		t.Fatalf("unknown user error = %q, want %q", e.Error, accounts.ErrNotFound.Error())
+	}
+
+	// The addressee declines: the row is gone, a second decline fails, and
+	// the requester may ask again.
+	d := dialControl(t, ltcp.Addr().String(), 0xBBBB, 0, addressee, addressee+"@example.test", password, false)
+	defer d.Close()
+	sendTest(t, d, protocol.Control{Type: "DECLINE_FRIENDSHIP_REQUEST", UserID: ids[requester]})
+	awaitControl(t, d, "DECLINE ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.TargetUserID == ids[requester]
+	})
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM friendships WHERE requester_id = $1 AND addressee_id = $2`,
+		ids[requester], ids[addressee]).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("after decline: %d rows, err %v; want 0", n, err)
+	}
+	sendTest(t, d, protocol.Control{Type: "DECLINE_FRIENDSHIP_REQUEST", UserID: ids[requester]})
+	if e := awaitControl(t, d, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != "friend request not found" {
+		t.Fatalf("second decline error = %q", e.Error)
+	}
+	sendTest(t, c, protocol.Control{Type: "SEND_FRIENDSHIP_REQUEST", Username: addressee})
+	awaitControl(t, c, "RESEND ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.TargetUserID == ids[addressee]
+	})
+}
+
 // TestIntegrationAdminModeration: an admin may kick plain members, but not the
 // owner or another admin; a plain member may not kick anyone.
 func TestIntegrationAdminModeration(t *testing.T) {
@@ -718,7 +839,9 @@ func TestIntegrationAdminModeration(t *testing.T) {
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// -race makes the remote Postgres round trips much slower; 10 s was enough
+	// without instrumentation but expired mid-test under the race detector.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	ids := make([]int, len(names))
 	for i, n := range names {
@@ -801,5 +924,313 @@ func TestIntegrationAdminModeration(t *testing.T) {
 	}
 	if err := ss.DeleteServer(ctx, admin, srv.ID); err == nil {
 		t.Fatal("admin deleted the server")
+	}
+}
+
+// TestIntegrationDirectMessages covers the DM path: validation, live push to
+// the recipient, history fetch (both wire spellings), and conversation isolation.
+func TestIntegrationDirectMessages(t *testing.T) {
+	store, db := testStore(t)
+	const password = "integration-password-123"
+	base := fmt.Sprintf("dm_%d", time.Now().UnixNano())
+	names := []string{base + "_a", base + "_b", base + "_c"}
+	ids := make([]int, len(names))
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, n := range names {
+			if _, err := db.ExecContext(ctx, "DELETE FROM users WHERE LOWER(username) = LOWER($1)", n); err != nil {
+				t.Logf("cleanup user %s: %v", n, err)
+			}
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for i, n := range names {
+		if err := store.Register(ctx, n, n+"@example.test", password); err != nil {
+			t.Fatalf("Register %s: %v", n, err)
+		}
+		u, err := store.Authenticate(ctx, n, password)
+		if err != nil {
+			t.Fatalf("Authenticate %s: %v", n, err)
+		}
+		ids[i] = u.ID
+	}
+
+	ltcp, _ := net.Listen("tcp", "127.0.0.1:0")
+	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	defer ltcp.Close()
+	defer ludp.Close()
+	serveTest(t, ltcp, ludp, store, servers.NewStore(db), friends.NewStore(db), messages.NewStore(db))
+	addr := ltcp.Addr().String()
+
+	a := dialControl(t, addr, 0x1101, 0, names[0], names[0]+"@example.test", password, false)
+	b := dialControl(t, addr, 0x2202, 0, names[1], names[1]+"@example.test", password, false)
+	outsider := dialControl(t, addr, 0x3303, 0, names[2], names[2]+"@example.test", password, false)
+	defer a.Close()
+	defer b.Close()
+	defer outsider.Close()
+
+	anon, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer anon.Close()
+	sendTest(t, anon, protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[1]), DirectContent: "hi"})
+	if e := awaitControl(t, anon, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != "authentication required" {
+		t.Fatalf("anonymous DM error = %q, want authentication required", e.Error)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		msg     protocol.Control
+		wantErr string
+	}{
+		{"bad peer", protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: "nope", DirectContent: "hi"}, "direct recipient id required"},
+		{"empty content", protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[1]), DirectContent: "   "}, "direct message content required"},
+		{"self", protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[0]), DirectContent: "hi"}, messages.ErrSelfRequest.Error()},
+	} {
+		sendTest(t, a, tc.msg)
+		if e := awaitControl(t, a, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != tc.wantErr {
+			t.Fatalf("%s error = %q, want %q", tc.name, e.Error, tc.wantErr)
+		}
+	}
+
+	// A sends to B: both the ACK and the unsolicited push carry the same ID.
+	sendTest(t, a, protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[1]), DirectContent: "hello b"})
+	sentA := awaitControl(t, a, "DM ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.DirectInfo != nil })
+	pushedB := awaitControl(t, b, "DIRECT_MESSAGE", func(m protocol.Control) bool { return m.Type == "DIRECT_MESSAGE" && m.DirectInfo != nil })
+	if sentA.DirectInfo.ID == 0 || sentA.DirectInfo.ID != pushedB.DirectInfo.ID {
+		t.Fatalf("send ACK %+v and push %+v disagree on message ID", sentA.DirectInfo, pushedB.DirectInfo)
+	}
+	if pushedB.DirectInfo.AuthorID != ids[0] || pushedB.DirectInfo.Content != "hello b" {
+		t.Fatalf("pushed DM = %+v, want author %d and 'hello b'", pushedB.DirectInfo, ids[0])
+	}
+
+	sendTest(t, b, protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[0]), DirectContent: "hi a"})
+	sentB := awaitControl(t, b, "reply ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.DirectInfo != nil })
+	pushedA := awaitControl(t, a, "reply DIRECT_MESSAGE", func(m protocol.Control) bool { return m.Type == "DIRECT_MESSAGE" && m.DirectInfo != nil })
+	if pushedA.DirectInfo.ID != sentB.DirectInfo.ID || pushedA.DirectInfo.AuthorID != ids[1] {
+		t.Fatalf("reply push = %+v, want ID %d from %d", pushedA.DirectInfo, sentB.DirectInfo.ID, ids[1])
+	}
+
+	// History uses the legacy wire spelling and comes back newest first.
+	sendTest(t, a, protocol.Control{Type: "RECIEVE_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[1])})
+	history := awaitControl(t, a, "DM history ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.DirectMessages != nil })
+	if len(history.DirectMessages) != 2 {
+		t.Fatalf("history has %d messages, want 2", len(history.DirectMessages))
+	}
+	if history.DirectMessages[0].ID != sentB.DirectInfo.ID || history.DirectMessages[1].ID != sentA.DirectInfo.ID {
+		t.Fatalf("history order = %+v, want reply then original", history.DirectMessages)
+	}
+
+	// The other side of the conversation gets the same history.
+	sendTest(t, b, protocol.Control{Type: "RECIEVE_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[0])})
+	other := awaitControl(t, b, "peer history ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.DirectMessages != nil })
+	if len(other.DirectMessages) != 2 {
+		t.Fatalf("alias history has %d messages, want 2", len(other.DirectMessages))
+	}
+
+	// A user outside the conversation gets no history.
+	sendTest(t, outsider, protocol.Control{Type: "RECIEVE_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[0])})
+	none := awaitControl(t, outsider, "empty history ACK", func(m protocol.Control) bool { return m.Type == "ACK" })
+	if len(none.DirectMessages) != 0 {
+		t.Fatalf("outsider saw %d DMs, want 0", len(none.DirectMessages))
+	}
+}
+
+// TestIntegrationDMMutations covers replies, edit/delete pushes, read state,
+// pagination, sidebar listing and block enforcement.
+func TestIntegrationDMMutations(t *testing.T) {
+	store, db := testStore(t)
+	const password = "integration-password-123"
+	base := fmt.Sprintf("dmm_%d", time.Now().UnixNano())
+	names := []string{base + "_a", base + "_b"}
+	ids := make([]int, len(names))
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, n := range names {
+			if _, err := db.ExecContext(ctx, "DELETE FROM users WHERE LOWER(username) = LOWER($1)", n); err != nil {
+				t.Logf("cleanup user %s: %v", n, err)
+			}
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for i, n := range names {
+		if err := store.Register(ctx, n, n+"@example.test", password); err != nil {
+			t.Fatalf("Register %s: %v", n, err)
+		}
+		u, err := store.Authenticate(ctx, n, password)
+		if err != nil {
+			t.Fatalf("Authenticate %s: %v", n, err)
+		}
+		ids[i] = u.ID
+	}
+
+	ltcp, _ := net.Listen("tcp", "127.0.0.1:0")
+	ludp, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	defer ltcp.Close()
+	defer ludp.Close()
+	serveTest(t, ltcp, ludp, store, servers.NewStore(db), friends.NewStore(db), messages.NewStore(db))
+	addr := ltcp.Addr().String()
+
+	a := dialControl(t, addr, 0x1404, 0, names[0], names[0]+"@example.test", password, false)
+	b := dialControl(t, addr, 0x2505, 0, names[1], names[1]+"@example.test", password, false)
+	defer a.Close()
+	defer b.Close()
+
+	send := func(from, to net.Conn, fromID, toID int, content, replyTo string) protocol.DirectMessageSummary {
+		t.Helper()
+		peer, err := strconv.Atoi(replyTo)
+		if err != nil {
+			peer = 0
+		}
+		sendTest(t, from, protocol.Control{
+			Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(toID),
+			DirectContent: content, DirectReplyTo: peer,
+		})
+		ack := awaitControl(t, from, "DM ACK", func(m protocol.Control) bool {
+			return m.Type == "ACK" && m.DirectInfo != nil
+		})
+		push := awaitControl(t, to, "DIRECT_MESSAGE", func(m protocol.Control) bool {
+			return m.Type == "DIRECT_MESSAGE" && m.DirectInfo != nil
+		})
+		if push.DirectInfo.ID != ack.DirectInfo.ID || push.DirectInfo.AuthorID != fromID {
+			t.Fatalf("push %+v does not match ACK %+v", push.DirectInfo, ack.DirectInfo)
+		}
+		return *ack.DirectInfo
+	}
+
+	first := send(a, b, ids[0], ids[1], "one", "")
+	second := send(a, b, ids[0], ids[1], "two", strconv.Itoa(first.ID))
+	if second.ReplyTo != first.ID {
+		t.Fatalf("replyTo = %d, want %d", second.ReplyTo, first.ID)
+	}
+	third := send(b, a, ids[1], ids[0], "reply", "")
+	fourth := send(a, b, ids[0], ids[1], "three", "")
+
+	// Sidebar: one conversation. B's own reply advanced its read pointer, so
+	// only A's last message remains unread.
+	sendTest(t, b, protocol.Control{Type: "LIST_DIRECT_CONVERSATIONS"})
+	sidebar := awaitControl(t, b, "conversation list ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.DirectConversations != nil
+	})
+	if len(sidebar.DirectConversations) != 1 {
+		t.Fatalf("sidebar has %d conversations, want 1", len(sidebar.DirectConversations))
+	}
+	conv := sidebar.DirectConversations[0]
+	if conv.PeerID != ids[0] || conv.LastMessageID != fourth.ID || conv.UnreadCount != 1 {
+		t.Fatalf("sidebar entry = %+v, want peer %d last %d unread 1", conv, ids[0], fourth.ID)
+	}
+
+	// Fetching a page marks it read and notifies the peer.
+	sendTest(t, b, protocol.Control{
+		Type: "RECIEVE_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[0]), DMLimit: 2,
+	})
+	page := awaitControl(t, b, "first history page", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.DirectMessages != nil
+	})
+	if len(page.DirectMessages) != 2 || page.DirectMessages[0].ID != fourth.ID || page.DirectMessages[1].ID != third.ID {
+		t.Fatalf("first page = %+v, want %d then %d", page.DirectMessages, fourth.ID, third.ID)
+	}
+	read := awaitControl(t, a, "DIRECT_MESSAGE_READ", func(m protocol.Control) bool {
+		return m.Type == "DIRECT_MESSAGE_READ"
+	})
+	if read.DirectMessageID != fourth.ID {
+		t.Fatalf("read receipt = %d, want %d", read.DirectMessageID, fourth.ID)
+	}
+
+	sendTest(t, b, protocol.Control{
+		Type: "RECIEVE_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[0]),
+		DMLimit: 2, DMBeforeID: third.ID,
+	})
+	older := awaitControl(t, b, "older history page", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.DirectMessages != nil
+	})
+	if len(older.DirectMessages) != 2 || older.DirectMessages[0].ID != second.ID || older.DirectMessages[1].ID != first.ID {
+		t.Fatalf("older page = %+v, want %d then %d", older.DirectMessages, second.ID, first.ID)
+	}
+
+	// Non-authors cannot edit or delete; the author can, and the peer is told.
+	sendTest(t, b, protocol.Control{Type: "UPDATE_DIRECT_MESSAGE", DirectMessageID: second.ID, DirectContent: "hijack"})
+	if e := awaitControl(t, b, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != messages.ErrMessageNotFound.Error() {
+		t.Fatalf("non-author edit error = %q", e.Error)
+	}
+	sendTest(t, a, protocol.Control{Type: "UPDATE_DIRECT_MESSAGE", DirectMessageID: second.ID, DirectContent: "two edited"})
+	edited := awaitControl(t, a, "edit ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.DirectInfo != nil
+	})
+	if edited.DirectInfo.Content != "two edited" || edited.DirectInfo.EditedAt == nil {
+		t.Fatalf("edit ACK = %+v, want edited content and timestamp", edited.DirectInfo)
+	}
+	editedPush := awaitControl(t, b, "DIRECT_MESSAGE_EDITED", func(m protocol.Control) bool {
+		return m.Type == "DIRECT_MESSAGE_EDITED"
+	})
+	if editedPush.DirectInfo == nil || editedPush.DirectInfo.ID != second.ID {
+		t.Fatalf("edit push = %+v, want message %d", editedPush, second.ID)
+	}
+
+	sendTest(t, b, protocol.Control{Type: "DELETE_DIRECT_MESSAGE", DirectMessageID: second.ID})
+	if e := awaitControl(t, b, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != messages.ErrMessageNotFound.Error() {
+		t.Fatalf("non-author delete error = %q", e.Error)
+	}
+	sendTest(t, a, protocol.Control{Type: "DELETE_DIRECT_MESSAGE", DirectMessageID: second.ID})
+	deleted := awaitControl(t, a, "delete ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.DirectMessageID != 0
+	})
+	if deleted.DirectMessageID != second.ID {
+		t.Fatalf("delete ACK id = %d, want %d", deleted.DirectMessageID, second.ID)
+	}
+	deletedPush := awaitControl(t, b, "DIRECT_MESSAGE_DELETED", func(m protocol.Control) bool {
+		return m.Type == "DIRECT_MESSAGE_DELETED"
+	})
+	if deletedPush.DirectMessageID != second.ID {
+		t.Fatalf("delete push id = %d, want %d", deletedPush.DirectMessageID, second.ID)
+	}
+
+	sendTest(t, b, protocol.Control{Type: "RECIEVE_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[0])})
+	afterDelete := awaitControl(t, b, "history after delete", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.DirectMessages != nil
+	})
+	for _, m := range afterDelete.DirectMessages {
+		if m.ID == second.ID {
+			t.Fatal("deleted message still in history")
+		}
+	}
+
+	// Explicit read marking advances the pointer and pushes a receipt.
+	sendTest(t, b, protocol.Control{
+		Type: "MARK_DIRECT_MESSAGE_READ", DirectRecipientID: strconv.Itoa(ids[0]), DirectMessageID: fourth.ID,
+	})
+	marked := awaitControl(t, b, "mark read ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.UnreadCount == 0
+	})
+	if marked.DirectMessageID != fourth.ID {
+		t.Fatalf("mark read id = %d, want %d", marked.DirectMessageID, fourth.ID)
+	}
+
+	// Blocking closes the conversation in both directions.
+	sendTest(t, a, protocol.Control{Type: "BLOCK_FRIENDSHIP", UserID: ids[1]})
+	awaitControl(t, a, "block ACK", func(m protocol.Control) bool { return m.Type == "ACK" })
+	sendTest(t, a, protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[1]), DirectContent: "blocked"})
+	if e := awaitControl(t, a, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != friends.ErrBlocked.Error() {
+		t.Fatalf("blocked send error = %q, want %q", e.Error, friends.ErrBlocked.Error())
+	}
+	sendTest(t, b, protocol.Control{Type: "RECIEVE_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[0])})
+	if e := awaitControl(t, b, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != friends.ErrBlocked.Error() {
+		t.Fatalf("blocked fetch error = %q, want %q", e.Error, friends.ErrBlocked.Error())
+	}
+	sendTest(t, b, protocol.Control{Type: "LIST_DIRECT_CONVERSATIONS"})
+	blockedSidebar := awaitControl(t, b, "blocked sidebar", func(m protocol.Control) bool { return m.Type == "ACK" })
+	for _, conv := range blockedSidebar.DirectConversations {
+		if conv.PeerID == ids[0] {
+			t.Fatal("blocked conversation still listed")
+		}
 	}
 }

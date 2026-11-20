@@ -22,19 +22,14 @@ pub struct Markdown {
 }
 
 impl Markdown {
-    pub fn new(src: &str) -> Self {
+    pub fn new(src: &str, theme: MdTheme) -> Self {
         let opts =
             Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
         let mut parser = Parser::new_ext(src, opts);
         Self {
             blocks: Arc::new(parse::blocks(&mut parser)),
-            theme: MdTheme::default(),
+            theme,
         }
-    }
-
-    pub fn theme(mut self, theme: MdTheme) -> Self {
-        self.theme = theme;
-        self
     }
 }
 

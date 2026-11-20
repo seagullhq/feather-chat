@@ -27,6 +27,8 @@ pub struct Theme {
     pub on_accent: Hsla,
     pub danger: Hsla,
     pub on_danger: Hsla,
+    /// Degraded but still working, e.g. a slow connection.
+    pub warning: Hsla,
     /// Someone is speaking / connected.
     pub success: Hsla,
     pub focus: Hsla,
@@ -85,6 +87,7 @@ impl Theme {
             on_accent: c(d.accent_text_color),
             danger: c(d.danger_color),
             on_danger: c(d.danger_text_color),
+            warning: c(d.warning_color),
             success: c(d.success_color),
             focus: c(d.focus_ring_color),
             selection: c(d.text_selection_background),

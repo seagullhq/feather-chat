@@ -26,5 +26,7 @@
     <string>public.app-category.social-networking</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Feather Chat uses your microphone so you can talk in voice calls.</string>
 </dict>
 </plist>

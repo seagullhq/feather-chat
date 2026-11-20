@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::api::friends::Friend;
 use crate::api::server::{
     ChannelSummary, ChannelTypeSummary, RosterMember, ServerMember, ServerSummary,
 };
@@ -100,5 +101,87 @@ pub enum Event {
         channel_id: i64,
         member: RosterMember,
     },
+    /// Your ring was registered; waiting for the friend to answer.
+    DmCallOutgoing {
+        peer: i64,
+    },
+    /// Someone you are friends with is ringing you (push).
+    DmCallInvite {
+        peer: i64,
+        name: String,
+    },
+    /// The friend accepted: start the local engine and show the call bar.
+    DmCallAccepted {
+        peer: i64,
+    },
+    /// Both sides are in the room; the engine is running.
+    DmCallActive {
+        peer: i64,
+        /// None if the voice engine could not start.
+        media: Option<Arc<media::Shared>>,
+    },
+    /// Peer mute/deafen changed during the call (push).
+    DmCallPeerState {
+        peer: i64,
+        muted: bool,
+        deafened: bool,
+    },
+    /// Rejected, cancelled, timed out, the peer left, or they went offline.
+    DmCallEnded {
+        peer: i64,
+        reason: String,
+    },
+    DmCallFailed(String),
+    FriendsListed(Vec<Friend>),
+    /// Search hits for `query` (the box may have changed since).
+    UsersFound {
+        query: String,
+        users: Vec<Friend>,
+    },
+    /// Friends or requests changed on the server (push): the list is stale.
+    FriendsChanged,
+    /// Your friend request was accepted by the server.
+    FriendRequested,
+    FriendFailed(String),
+    /// A friend wrote to you (push).
+    DmReceived(crate::api::DirectMessage),
+    /// Your message went through.
+    DmSent {
+        peer: i64,
+        msg: crate::api::DirectMessage,
+    },
+    /// A finished call logged in the chat with `peer`.
+    DmCallLog {
+        peer: i64,
+        msg: crate::api::DirectMessage,
+    },
+    /// Conversation with `peer`, oldest first.
+    DmHistory {
+        peer: i64,
+        msgs: Vec<crate::api::DirectMessage>,
+        /// Set for an older page (it goes on top), `None` for the newest.
+        before: Option<i64>,
+    },
+    /// Page of a text channel, oldest first. `before` as in `DmHistory`.
+    ThreadHistory {
+        server_id: i64,
+        channel_id: i64,
+        msgs: Vec<crate::api::DirectMessage>,
+        before: Option<i64>,
+        has_more: bool,
+    },
+    /// Your message in a text channel went through.
+    ThreadSent {
+        server_id: i64,
+        channel_id: i64,
+        msg: crate::api::DirectMessage,
+    },
+    /// Someone posted in a text channel (push).
+    ThreadReceived {
+        server_id: i64,
+        channel_id: i64,
+        msg: crate::api::DirectMessage,
+    },
+    ThreadFailed(String),
     Disconnected,
 }

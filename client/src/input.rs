@@ -4,7 +4,8 @@
 use std::ops::Range;
 
 use gpui::{
-    App, Bounds, Context, FocusHandle, Focusable, Pixels, ShapedLine, SharedString, Window, actions,
+    App, Bounds, Context, FocusHandle, Focusable, Pixels, ShapedLine, SharedString, Window,
+    WrappedLine, actions,
 };
 use unicode_segmentation::*;
 
@@ -29,6 +30,9 @@ actions!(
         Home,
         End,
         ShowCharacterPalette,
+        Up,
+        Down,
+        Newline,
         Paste,
         Cut,
         Copy,
@@ -45,6 +49,17 @@ pub struct TextInput {
     marked_range: Option<Range<usize>>,
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
+    /// Horizontal scroll: how far the text is shifted left to keep the cursor visible.
+    scroll_x: Pixels,
+    /// Several lines (wrapping, Shift+Enter for a new one) instead of one.
+    multiline: bool,
+    /// Multiline only: lines as last painted (hit tests, Up / Down), their
+    /// height, and how far the text is scrolled up to keep the cursor visible.
+    last_lines: Vec<WrappedLine>,
+    line_height: Pixels,
+    scroll_y: Pixels,
+    /// Space kept free on the right, for a button drawn over the input.
+    right_inset: Pixels,
     is_selecting: bool,
 }
 
@@ -60,8 +75,29 @@ impl TextInput {
             marked_range: None,
             last_layout: None,
             last_bounds: None,
+            scroll_x: gpui::px(0.),
+            multiline: false,
+            last_lines: Vec::new(),
+            line_height: gpui::px(20.),
+            scroll_y: gpui::px(0.),
+            right_inset: gpui::px(0.),
             is_selecting: false,
         }
+    }
+
+    /// Keeps `inset` px free on the right so text never runs under a button
+    /// placed over the input.
+    pub fn with_right_inset(mut self, inset: f32) -> Self {
+        self.right_inset = gpui::px(inset);
+        self
+    }
+
+    /// Wraps long text and grows with it (up to a few rows); Shift+Enter adds a
+    /// line. Plain Enter is left to the parent (send).
+    pub fn multiline(placeholder: &str, cx: &mut Context<Self>) -> Self {
+        let mut input = Self::new(placeholder, false, cx);
+        input.multiline = true;
+        input
     }
 
     pub fn set_text(&mut self, t: &str, cx: &mut Context<Self>) {
@@ -159,6 +195,17 @@ impl TextInput {
 
     fn range_from_utf16(&self, range_utf16: &Range<usize>) -> Range<usize> {
         self.offset_from_utf16(range_utf16.start)..self.offset_from_utf16(range_utf16.end)
+    }
+
+    /// Start of the line (up to the previous '\n') holding `offset`.
+    fn line_start(&self, offset: usize) -> usize {
+        self.content[..offset].rfind('\n').map_or(0, |i| i + 1)
+    }
+
+    fn line_end(&self, offset: usize) -> usize {
+        self.content[offset..]
+            .find('\n')
+            .map_or(self.content.len(), |i| offset + i)
     }
 
     fn previous_boundary(&self, offset: usize) -> usize {

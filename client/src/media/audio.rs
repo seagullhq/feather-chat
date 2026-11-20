@@ -2,42 +2,80 @@
 
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{FromSample, Sample, SizedSample, Stream, StreamConfig, SupportedStreamConfig};
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::RATE;
-use super::prefs::{PREFS, device};
+use super::prefs::{PREFS, dev_name, device};
 use super::resample::{Pull, Push};
 use super::shared::Shared;
 
-pub(super) fn audio(shared: Arc<Shared>, cap: rtrb::Producer<i16>, out: rtrb::Consumer<f32>) {
+/// `mic: false` opens only the speakers (test sound: no reason to hold the mic).
+pub(super) fn audio(
+    shared: Arc<Shared>,
+    mic: bool,
+    cap: rtrb::Producer<i16>,
+    out: rtrb::Consumer<f32>,
+) {
     // ponytail: the rings' ends sit behind a mutex so they outlive a stream
     // rebuild; uncontended, so the callbacks don't notice.
     let (cap, out) = (Arc::new(Mutex::new(cap)), Arc::new(Mutex::new(out)));
-    let host = cpal::default_host();
+    let host = super::prefs::host();
     let mut built = None;
+    let mut built_in: Option<String> = None;
+    let mut built_out: Option<String> = None;
+    let mut next_check = std::time::Instant::now();
     let (mut _mic, mut _speakers) = (None::<Stream>, None::<Stream>);
     while !shared.stop.load(Relaxed) {
         let generation = PREFS.generation.load(Relaxed);
-        if built != Some(generation) {
+        let now = std::time::Instant::now();
+        // Follow OS/default-device changes and unplugged devices even without a
+        // settings change by rebuilding when the resolved devices differ.
+        let changed = if now >= next_check {
+            next_check = now + Duration::from_secs(2);
+            let want_in = if mic {
+                let name = PREFS.input.lock().unwrap().clone();
+                device(host, name, true).and_then(|d| dev_name(&d))
+            } else {
+                None
+            };
+            let want_out = {
+                let name = PREFS.output.lock().unwrap().clone();
+                device(host, name, false).and_then(|d| dev_name(&d))
+            };
+            let dead = STREAM_DEAD.swap(false, Relaxed);
+            built == Some(generation) && (dead || want_in != built_in || want_out != built_out)
+        } else {
+            false
+        };
+        if built != Some(generation) || changed {
             built = Some(generation);
             // Release the old devices before opening the new ones.
             (_mic, _speakers) = (None, None);
-            let name = PREFS.input.lock().unwrap().clone();
-            _mic = match device(&host, name, true).map(|d| mic_stream(&d, cap.clone())) {
+            let in_name = PREFS.input.lock().unwrap().clone();
+            let in_dev = if mic {
+                device(host, in_name, true)
+            } else {
+                None
+            };
+            built_in = in_dev.as_ref().and_then(dev_name);
+            _mic = match in_dev.map(|d| mic_stream(&d, cap.clone())) {
                 Some(Ok(s)) => Some(s),
                 Some(Err(e)) => {
                     eprintln!("microphone: {e}");
                     None
                 }
-                None => {
+                None if mic => {
                     eprintln!("microphone: no input device");
                     None
                 }
+                None => None,
             };
-            let name = PREFS.output.lock().unwrap().clone();
-            _speakers = match device(&host, name, false).map(|d| speaker_stream(&d, out.clone())) {
+            let out_name = PREFS.output.lock().unwrap().clone();
+            let out_dev = device(host, out_name, false);
+            built_out = out_dev.as_ref().and_then(dev_name);
+            _speakers = match out_dev.map(|d| speaker_stream(&d, out.clone())) {
                 Some(Ok(s)) => Some(s),
                 Some(Err(e)) => {
                     eprintln!("speakers: {e}");
@@ -53,15 +91,30 @@ pub(super) fn audio(shared: Arc<Shared>, cap: rtrb::Producer<i16>, out: rtrb::Co
     }
 }
 
+/// Set by a stream that died (device gone or reset, host restarted, config
+/// invalidated). The audio thread rebuilds on its next device check: a
+/// headset that reconnects under the same name would otherwise stay silent.
+// ponytail: one global for every audio thread; a spurious rebuild of a
+// healthy stream costs one short gap.
+static STREAM_DEAD: AtomicBool = AtomicBool::new(false);
+
 /// Stream error callback (runs on the audio thread). An xrun is a dropped
 /// buffer, not a dead stream: the rings and jitter buffer absorb the gap, and
 /// WASAPI also reports one at the start of a fresh stream. It is not actionable
 /// and would flood stderr from the audio thread, so ignore it; other errors
 /// still show.
 fn log_stream_error(prefix: &'static str) -> impl FnMut(cpal::Error) + Send + 'static {
+    use cpal::ErrorKind::*;
     move |e| {
-        if e.kind() != cpal::ErrorKind::Xrun {
-            eprintln!("{prefix}: {e}");
+        if e.kind() == Xrun {
+            return;
+        }
+        eprintln!("{prefix}: {e}");
+        if matches!(
+            e.kind(),
+            DeviceNotAvailable | DeviceBusy | HostUnavailable | StreamInvalidated
+        ) {
+            STREAM_DEAD.store(true, Relaxed);
         }
     }
 }
@@ -152,7 +205,17 @@ where
         move |data: &[T], _| {
             let Ok(mut tx) = tx.lock() else { return };
             for frame in data.chunks(ch) {
-                let m = frame.iter().map(|s| f32::from_sample(*s)).sum::<f32>() / ch as f32;
+                // Some stereo devices carry voice on one channel: prefer the
+                // stronger channel instead of halving its level by averaging.
+                let m = if ch <= 1 {
+                    f32::from_sample(frame[0])
+                } else {
+                    frame
+                        .iter()
+                        .map(|s| f32::from_sample(*s))
+                        .max_by(|a, b| a.abs().total_cmp(&b.abs()))
+                        .unwrap_or(0.)
+                };
                 rs.push(m, |o| {
                     let _ = tx.push((o.clamp(-1., 1.) * 32767.) as i16);
                 });

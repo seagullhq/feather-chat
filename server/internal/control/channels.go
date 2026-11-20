@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/seagullhq/feather-chat/server/internal/messages"
 	"github.com/seagullhq/feather-chat/server/internal/protocol"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
 )
@@ -53,6 +54,11 @@ func (s *Server) handleListChannels(c *client, msg protocol.Control) {
 		c.sendError("channel listing failed")
 		return
 	}
+	// One saturating query for the whole sidebar, never one per channel.
+	unread, err := s.messages.UnreadCountsForUser(ctx, c.sess.UserID, msg.ServerID)
+	if err != nil {
+		log.Printf("[LIST] failed to count unread server messages for user %d: %v", c.sess.UserID, err)
+	}
 	summaries := make([]protocol.ChannelSummary, 0, len(list))
 	for _, channel := range list {
 		summaries = append(summaries, protocol.ChannelSummary{
@@ -60,6 +66,7 @@ func (s *Server) handleListChannels(c *client, msg protocol.Control) {
 			Name:        channel.Name,
 			ChannelType: channel.ChannelType,
 			Members:     s.rooms.Members("ch:"+strconv.Itoa(channel.ID), nil),
+			UnreadCount: unread[messages.ChannelID(channel.ID)],
 		})
 	}
 	c.send(protocol.Control{Type: "ACK", Channels: summaries})

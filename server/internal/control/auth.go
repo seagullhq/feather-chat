@@ -46,6 +46,7 @@ func (s *Server) handleRegister(c *client, msg protocol.Control) {
 		c.sendError("registration failed")
 		return
 	}
+	log.Printf("[AUTH] registered user %s", strings.TrimSpace(msg.Username))
 	c.send(protocol.Control{Type: "ACK"})
 }
 
@@ -64,6 +65,7 @@ func (s *Server) handleLogin(c *client, msg protocol.Control) {
 	}
 	c.sess.UserID = user.ID
 	c.sess.Username = user.Username
+	log.Printf("[AUTH] user %d (%s) logged in", user.ID, user.Username)
 	c.send(protocol.Control{Type: "ACK", Name: user.Username})
 }
 
@@ -139,6 +141,7 @@ func (s *Server) handleDeleteUser(c *client, msg protocol.Control) {
 	if err != nil {
 		log.Printf("[DELETE] failed to delete user %d: %v", c.sess.UserID, err)
 		c.sendError("member deletion failed")
+		return // a second reply would answer the client's next request
 	}
 	c.send(protocol.Control{Type: "ACK"})
 }

@@ -1,7 +1,7 @@
 //! Wire format and resampling tests. The jitter buffer test lives in `peer`.
 
 use super::resample::{Pull, Push};
-use super::wire::audio_packet;
+use super::wire::{audio_packet, rms, smooth_level};
 
 /// Byte layout from docs/wire-format.md §8, the same one the Go server decodes.
 #[test]
@@ -33,4 +33,42 @@ fn resampler_keeps_rate_ratio() {
         (47_990..=48_010).contains(&pulled),
         "pulled {pulled} for 1 s at 96k"
     );
+}
+
+#[test]
+fn rms_applies_level_gain_and_clamps() {
+    // Quiet speech would otherwise stay near zero and never reach the ring.
+    assert_eq!(rms([0.0; 4].into_iter(), 4), 0.);
+    assert!((rms([0.01; 4].into_iter(), 4) - 0.12).abs() < 1e-6);
+    assert_eq!(rms([0.5; 4].into_iter(), 4), 1.);
+}
+
+#[test]
+fn level_smoothing_attacks_fast_and_releases_slowly() {
+    // The first syllable should light the indicator right away...
+    assert!((smooth_level(0., 0.5) - 0.225).abs() < 1e-6);
+    // ...while a gap between words only dims it a little.
+    assert!((smooth_level(0.5, 0.) - 0.465).abs() < 1e-6);
+}
+
+#[test]
+fn level_smoothing_converges_to_the_signal() {
+    let mut level = 0.;
+    for _ in 0..200 {
+        level = smooth_level(level, 0.4);
+    }
+    assert!((level - 0.4).abs() < 1e-3, "stuck at {level}");
+    for _ in 0..200 {
+        level = smooth_level(level, 0.);
+    }
+    assert!(level < 1e-6, "did not decay: {level}");
+}
+
+#[test]
+fn test_tone_fades_in_and_out() {
+    use super::check::tone;
+    assert_eq!(tone(0), 0.);
+    let peak = (0..28_800).map(|i| tone(i).abs()).fold(0., f32::max);
+    assert!(peak > 0.2 && peak <= 0.25, "peak {peak}");
+    assert!(tone(28_799).abs() < 0.001, "no click at the end");
 }

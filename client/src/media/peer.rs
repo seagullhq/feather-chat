@@ -4,7 +4,7 @@ use opus_rs::OpusDecoder;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use super::wire::rms;
+use super::wire::{rms, smooth_level};
 use super::{FRAME, MAX_PRIME, MAX_QUEUED, PRIME, RATE};
 
 pub(super) struct Peer {
@@ -46,6 +46,13 @@ impl Peer {
         let now = Instant::now();
         if let Some(prev) = self.newest {
             let step = seq.wrapping_sub(prev) as i32;
+            // Far behind the newest: the sender rejoined (seq restarts at 0,
+            // new encoder) before PEER_TIMEOUT dropped us. Start over, or its
+            // packets count as late and the jitter estimate freezes.
+            if step < -(4 * MAX_QUEUED as i32) {
+                *self = Self::new();
+                return self.insert(seq, frame, term);
+            }
             let gap = now.duration_since(self.last).as_secs_f32() * 1000.;
             // Only consecutive packets of one talkspurt say something about the network.
             if (1..50).contains(&step) && gap < 200. {
@@ -71,7 +78,7 @@ impl Peer {
     pub(super) fn step(&mut self, acc: &mut [f32; FRAME]) {
         if !self.primed {
             if self.queue.len() < self.target() {
-                self.level *= 0.55;
+                self.level *= 0.93;
                 return;
             }
             self.next = *self.queue.keys().next().unwrap();
@@ -92,7 +99,7 @@ impl Peer {
                 self.missed += 1;
                 if self.queue.is_empty() && self.missed > 3 {
                     self.primed = false; // speaker went quiet: re-prime on return
-                    self.level *= 0.55;
+                    self.level *= 0.93;
                     return;
                 }
                 let _ = self.dec.decode(&[], FRAME, &mut pcm); // concealment
@@ -103,7 +110,8 @@ impl Peer {
         if ended {
             self.primed = false; // T flag: talkspurt over, no concealment after it
         }
-        self.level = self.level * 0.55 + rms(pcm.iter().copied(), FRAME) * 0.45;
+        let level = rms(pcm.iter().copied(), FRAME);
+        self.level = smooth_level(self.level, level);
         for (a, p) in acc.iter_mut().zip(pcm) {
             *a += p;
         }
@@ -146,5 +154,9 @@ mod tests {
             p.queue.len() <= 1,
             "late packets accepted only while unprimed"
         );
+        // Sender rejoined: seq restarts far behind the newest one.
+        p.insert(100, frame(100), false);
+        p.insert(0, frame(0), false);
+        assert!(p.newest == Some(0) && p.queue.len() == 1, "restarted stream resets the peer");
     }
 }

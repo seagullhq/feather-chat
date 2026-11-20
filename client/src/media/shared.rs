@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering::Relaxed};
 
 /// State shared with the UI. Atomics in, levels out.
 #[derive(Default)]
@@ -14,6 +14,8 @@ pub struct Shared {
     pub(super) rtt_us: AtomicU32,
     pub(super) peers: Mutex<HashMap<u32, f32>>,
     pub(super) stop: AtomicBool,
+    /// Mic check step (`check::Step`), unused by a voice session.
+    pub(super) check: AtomicU8,
 }
 
 impl Shared {

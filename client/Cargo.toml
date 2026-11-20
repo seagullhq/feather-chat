@@ -1,6 +1,6 @@
 [package]
 name = "feather-chat"
-version = "0.18.32"
+version = "0.19.2"
 edition = "2024"
 
 [profile.release]
@@ -24,8 +24,8 @@ strip = false
 embed-resource = "3"
 
 [dependencies]
-gpui = { git = "https://github.com/zed-industries/zed" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
+gpui = { git = "https://github.com/zed-industries/zed", rev = "78fde14d124dbbb7c6175ec2e25da7028b0573d6" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "78fde14d124dbbb7c6175ec2e25da7028b0573d6", features = [
     "font-kit",
     "wayland",
     "x11",
@@ -65,3 +65,13 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
     "std",
     "NSData",
 ] }
+
+# Installers for the Windows (.msi) and Linux (.AppImage) builds, see the
+# package-* tasks in Taskfile.yml. The binary itself is built by `task build`.
+[package.metadata.packager]
+product-name = "Feather Chat"
+identifier = "com.feather.chat"
+description = "Chat with your friends"
+category = "SocialNetworking"
+icons = ["assets/icon.png", "assets/icon.ico"]
+binaries = [{ path = "feather-chat", main = true }]

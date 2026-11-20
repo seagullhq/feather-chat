@@ -3,8 +3,11 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log"
 	"net"
+	"syscall"
 	"time"
 
 	"github.com/seagullhq/feather-chat/server/internal/protocol"
@@ -22,6 +25,10 @@ type client struct {
 // until the link dies or the listener stops.
 func (s *Server) handleConn(conn net.Conn) {
 	defer conn.Close()
+	remote := conn.RemoteAddr().String()
+	log.Printf("[CONTROL] connected %s", remote)
+	defer log.Printf("[CONTROL] disconnected %s", remote)
+
 	c := &client{srv: s, sess: room.NewSession(conn)}
 	// disconnect drops the media entry and tells the room-mates. It also
 	// runs when the TCP link dies, so nobody stays listed as a ghost.
@@ -30,12 +37,18 @@ func (s *Server) handleConn(conn net.Conn) {
 	for {
 		payload, err := protocol.ReadFrame(conn)
 		if err != nil {
+			// EOF and abrupt client disconnects are normal; only log real errors.
+			if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) && !errors.Is(err, syscall.ECONNRESET) {
+				log.Printf("[CONTROL] read from %s failed: %v", remote, err)
+			}
 			return
 		}
 		var msg protocol.Control
-		if json.Unmarshal(payload, &msg) != nil {
+		if err := json.Unmarshal(payload, &msg); err != nil {
+			log.Printf("[CONTROL] invalid frame from %s: %v", remote, err)
 			continue // tolerate unknown types (§7 interop rule)
 		}
+		log.Printf("[CONTROL] %s type=%s user=%d", remote, msg.Type, c.sess.UserID)
 		s.dispatch(c, msg)
 	}
 }
@@ -44,6 +57,7 @@ func (s *Server) handleConn(conn net.Conn) {
 // then, and conn.Close runs right after.
 func (s *Server) disconnect(c *client) {
 	s.leaveRoom(c)
+	s.dmCancelPendingFor(c.sess.UserID)
 	s.rooms.Release(c.sess)
 }
 

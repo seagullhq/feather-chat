@@ -18,6 +18,26 @@ fn push(frame: &Value) -> Option<Event> {
                 name: frame["name"].as_str()?.to_string(),
             });
         }
+        "DIRECT_MESSAGE" => {
+            let msg = super::super::friends::dm_from(&frame["directInfo"])?;
+            // A call log goes to both sides, with the other party's id: the
+            // author is the caller, so it cannot say which chat it belongs to.
+            return Some(match msg.call {
+                Some(_) => Event::DmCallLog {
+                    peer: frame["userId"].as_i64()?,
+                    msg,
+                },
+                None => Event::DmReceived(msg),
+            });
+        }
+        "SERVER_MESSAGE" => {
+            return Some(Event::ThreadReceived {
+                server_id,
+                channel_id: frame["channelId"].as_i64()?,
+                msg: super::super::friends::dm_from(&frame["serverInfo"])?,
+            });
+        }
+        "FRIENDS_CHANGED" => return Some(Event::FriendsChanged),
         "SERVER_DELETED" => return Some(Event::ServerDeleted { id: server_id }),
         "SERVER_MEMBERS_CHANGED" => return Some(Event::MembersChanged { server_id }),
         // Sent directly to the user who was kicked or banned.
@@ -30,6 +50,30 @@ fn push(frame: &Value) -> Option<Event> {
                 id: frame["channelId"].as_i64()?,
                 name: frame["channelName"].as_str()?.to_string(),
                 channel_type: frame["channelType"].as_str()?.parse().ok()?,
+            });
+        }
+        "DM_CALL_INVITE" => {
+            return Some(Event::DmCallInvite {
+                peer: frame["userId"].as_i64()?,
+                name: frame["username"].as_str()?.to_string(),
+            });
+        }
+        "DM_CALL_ACCEPTED" => {
+            return Some(Event::DmCallAccepted {
+                peer: frame["userId"].as_i64()?,
+            });
+        }
+        "DM_CALL_ENDED" => {
+            return Some(Event::DmCallEnded {
+                peer: frame["userId"].as_i64()?,
+                reason: frame["callReason"].as_str()?.to_string(),
+            });
+        }
+        "DM_CALL_STATE" => {
+            return Some(Event::DmCallPeerState {
+                peer: frame["userId"].as_i64()?,
+                muted: frame["muted"].as_bool().unwrap_or(false),
+                deafened: frame["deafened"].as_bool().unwrap_or(false),
             });
         }
         _ => {}

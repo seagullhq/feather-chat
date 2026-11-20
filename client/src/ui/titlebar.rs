@@ -21,11 +21,24 @@ pub fn height(window: &Window) -> Pixels {
     }
 }
 
+/// What the main window shows: servers, or friends with DMs and calls.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    #[default]
+    Servers,
+    Friends,
+}
+
 pub struct Titlebar {
     title: SharedString,
     should_move: bool,
     sheet: bool,
+    /// Servers/Friends toggle, shown only in the main window once logged in.
+    toggle: bool,
+    mode: Mode,
 }
+
+impl EventEmitter<Mode> for Titlebar {}
 
 impl Titlebar {
     pub fn new(title: impl Into<SharedString>) -> Self {
@@ -33,6 +46,30 @@ impl Titlebar {
             title: title.into(),
             should_move: false,
             sheet: false,
+            toggle: false,
+            mode: Mode::default(),
+        }
+    }
+
+    /// Starts with `mode` selected (restored from the last session).
+    pub fn with_mode(mut self, mode: Mode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// Bring the friends screen forward, e.g. for an incoming call: the ring
+    /// banner lives there, so it must be on screen when somebody calls.
+    pub fn show_friends(&mut self, cx: &mut Context<Self>) {
+        if self.mode != Mode::Friends {
+            self.mode = Mode::Friends;
+            cx.emit(Mode::Friends);
+        }
+    }
+
+    pub fn set_toggle(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.toggle != on {
+            self.toggle = on;
+            cx.notify();
         }
     }
 
@@ -109,8 +146,10 @@ impl Render for Titlebar {
                 },
             )
             .map(|d| {
+                // Toggle bg edge sits 5px from the left, like top/bottom (34-24)/2.
+                let pad = if self.toggle { px(5.) } else { px(8.) };
                 if fullscreen {
-                    d.pl_2()
+                    d.pl(pad)
                 } else if mac && !sheet {
                     d.pl(px(TRAFFIC_LIGHT_PADDING))
                 } else if let Some(c) =
@@ -118,9 +157,10 @@ impl Render for Titlebar {
                 {
                     d.child(c)
                 } else {
-                    d.pl_2()
+                    d.pl(pad)
                 }
             })
+            .when(self.toggle, |d| d.child(self.mode_toggle(cx)))
             .child(
                 div()
                     .flex_1()
@@ -141,6 +181,54 @@ impl Render for Titlebar {
                     )
                 }
             })
+    }
+}
+
+impl Titlebar {
+    fn mode_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme();
+        let button = |id: &'static str, glyph: &'static str, label: &'static str, mode: Mode| {
+            let on = self.mode == mode;
+            div()
+                .id(id)
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap_1p5()
+                .h(px(24.))
+                .px_2()
+                .text_color(if on { t.text } else { t.muted })
+                .rounded(t.radius)
+                .cursor_pointer()
+                .when(on, |d| d.bg(t.fill))
+                .hover(|s| s.bg(t.fill_hover))
+                .child(icon(glyph, 16., if on { t.text } else { t.muted }))
+                .child(label)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    if this.mode != mode {
+                        this.mode = mode;
+                        cx.emit(mode);
+                        cx.notify();
+                    }
+                }))
+        };
+        div()
+            .id("mode-toggle")
+            .flex()
+            .items_center()
+            .gap_1()
+            // Extra left inset only on macOS; elsewhere hug the left edge.
+            .when(cfg!(target_os = "macos"), |d| d.pl_2())
+            // Keep clicks from starting a window drag.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(button("mode-servers", "server", "Server", Mode::Servers))
+            .child(button(
+                "mode-friends",
+                "chats-teardrop",
+                "Friends",
+                Mode::Friends,
+            ))
     }
 }
 
