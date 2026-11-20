@@ -99,7 +99,8 @@ impl Encoder {
             .complexity(Complexity::Low)
             .bitrate(BitRate::from_bps(bitrate_bps))
             .max_frame_rate(FrameRate::from_hz(fps))
-            .usage_type(UsageType::ScreenContentRealTime);
+            // ScreenContentRealTime is ~3x slower here (50 ms vs 17 ms at 1080p).
+            .usage_type(UsageType::CameraVideoRealTime);
         let enc = H264Encoder::with_api_config(OpenH264API::from_source(), cfg)
             .map_err(|e| e.to_string())?;
         Ok(Self {
