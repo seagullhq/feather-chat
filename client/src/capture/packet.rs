@@ -54,7 +54,11 @@ pub struct Reassembler {
 impl Default for Reassembler {
     fn default() -> Self {
         // A new viewer can only start on a keyframe.
-        Self { cur: None, last_done: None, need_key: true }
+        Self {
+            cur: None,
+            last_done: None,
+            need_key: true,
+        }
     }
 }
 
@@ -95,7 +99,13 @@ impl Reassembler {
             if self.last_done.is_some_and(|d| frame != d.wrapping_add(1)) {
                 self.need_key = true;
             }
-            self.cur = Some(Partial { frame, ts_ms, key, chunks: vec![None; count], got: 0 });
+            self.cur = Some(Partial {
+                frame,
+                ts_ms,
+                key,
+                chunks: vec![None; count],
+                got: 0,
+            });
         }
         let c = self.cur.as_mut()?;
         if c.frame != frame || c.chunks.len() != count {
@@ -116,7 +126,11 @@ impl Reassembler {
         if c.key {
             self.need_key = false;
         }
-        Some(Assembled { ts_ms: c.ts_ms, key: c.key, data: c.chunks.into_iter().flatten().flatten().collect() })
+        Some(Assembled {
+            ts_ms: c.ts_ms,
+            key: c.key,
+            data: c.chunks.into_iter().flatten().flatten().collect(),
+        })
     }
 }
 

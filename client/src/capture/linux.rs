@@ -44,7 +44,10 @@ pub fn start(on_event: impl FnMut(Event) + Send + 'static) -> Capture {
         let err = run(stop_rx, sink.clone()).err();
         (sink.borrow_mut())(Event::Ended(err));
     });
-    Capture { stop, thread: Some(thread) }
+    Capture {
+        stop,
+        thread: Some(thread),
+    }
 }
 
 /// Portal handshake: returns the PipeWire fd and node, plus a closer for the session.
@@ -69,8 +72,15 @@ async fn portal() -> Result<(OwnedFd, u32, impl AsyncFnOnce()), String> {
         .map_err(e)?
         .response()
         .map_err(|_| "cancelled".to_string())?; // picker dismissed
-    let node = resp.streams().first().ok_or("no stream")?.pipe_wire_node_id();
-    let fd = proxy.open_pipe_wire_remote(&session, Default::default()).await.map_err(e)?;
+    let node = resp
+        .streams()
+        .first()
+        .ok_or("no stream")?
+        .pipe_wire_node_id();
+    let fd = proxy
+        .open_pipe_wire_remote(&session, Default::default())
+        .await
+        .map_err(e)?;
     Ok((fd, node, async move || {
         let _ = session.close().await;
     }))
@@ -120,7 +130,10 @@ fn stream(
     .map_err(pe)?;
 
     let ml = mainloop.clone();
-    let state = State { info: Default::default(), start: Instant::now() };
+    let state = State {
+        info: Default::default(),
+        start: Instant::now(),
+    };
     let _l = stream
         .add_local_listener_with_user_data(state)
         .state_changed(move |_, _, _, new| {
@@ -141,8 +154,12 @@ fn stream(
             }
         })
         .process(move |stream, st| {
-            let Some(mut buf) = stream.dequeue_buffer() else { return };
-            let Some(d) = buf.datas_mut().first_mut() else { return };
+            let Some(mut buf) = stream.dequeue_buffer() else {
+                return;
+            };
+            let Some(d) = buf.datas_mut().first_mut() else {
+                return;
+            };
             let (stride, size, off) = {
                 let c = d.chunk();
                 (c.stride() as usize, c.size() as usize, c.offset() as usize)
@@ -151,7 +168,12 @@ fn stream(
             let (w, h) = (sz.width as usize, sz.height as usize);
             let fmt = st.info.format();
             let Some(src) = d.data() else { return };
-            if w == 0 || h == 0 || stride < w * 4 || off + size > src.len() || size < stride * (h - 1) + w * 4 {
+            if w == 0
+                || h == 0
+                || stride < w * 4
+                || off + size > src.len()
+                || size < stride * (h - 1) + w * 4
+            {
                 return; // metadata-only buffer or format not negotiated yet
             }
             let src = &src[off..];
@@ -173,7 +195,12 @@ fn stream(
                 }
             }
             let ts_ms = st.start.elapsed().as_millis() as u32;
-            (sink.borrow_mut())(Event::Frame(Frame { width: w as u32, height: h as u32, data: out, ts_ms }));
+            (sink.borrow_mut())(Event::Frame(Frame {
+                width: w as u32,
+                height: h as u32,
+                data: out,
+                ts_ms,
+            }));
         })
         .register()
         .map_err(pe)?;
@@ -199,9 +226,18 @@ fn stream(
             Choice,
             Range,
             Rectangle,
-            spa::utils::Rectangle { width: 1920, height: 1080 },
-            spa::utils::Rectangle { width: 1, height: 1 },
-            spa::utils::Rectangle { width: 8192, height: 8192 }
+            spa::utils::Rectangle {
+                width: 1920,
+                height: 1080
+            },
+            spa::utils::Rectangle {
+                width: 1,
+                height: 1
+            },
+            spa::utils::Rectangle {
+                width: 8192,
+                height: 8192
+            }
         ),
         pw::spa::pod::property!(
             FormatProperties::VideoFramerate,

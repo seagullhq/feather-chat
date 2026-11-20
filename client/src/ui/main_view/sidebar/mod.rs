@@ -44,7 +44,9 @@ impl super::MainView {
         let view = cx.entity();
         div()
             .id("sidebar")
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| this.members_hover(0, *hovered, cx)))
+            .on_hover(
+                cx.listener(|this, hovered: &bool, _, cx| this.members_hover(0, *hovered, cx)),
+            )
             .w(px(WIDTH))
             .flex_none()
             .h_full()

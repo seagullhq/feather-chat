@@ -4,7 +4,10 @@
 mod capture;
 
 use capture::{Event, codec, packet};
-use std::{sync::mpsc, time::{Duration, Instant}};
+use std::{
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 
 fn cpu_secs() -> f64 {
     let s = std::fs::read_to_string("/proc/self/stat").unwrap();
@@ -17,8 +20,13 @@ fn main() {
     let _cap = capture::start(move |e| {
         let _ = tx.try_send(e); // drop when the encoder is behind: latest-wins is a later refinement
     });
-    let (mut enc, mut dec, mut re) = (None::<codec::Encoder>, codec::Decoder::new().unwrap(), packet::Reassembler::default());
-    let (mut n, mut dropped_enc, mut decoded, mut bytes, mut fid) = (0u32, 0u32, 0u32, 0usize, 0u32);
+    let (mut enc, mut dec, mut re) = (
+        None::<codec::Encoder>,
+        codec::Decoder::new().unwrap(),
+        packet::Reassembler::default(),
+    );
+    let (mut n, mut dropped_enc, mut decoded, mut bytes, mut fid) =
+        (0u32, 0u32, 0u32, 0usize, 0u32);
     let (mut te, mut td, mut tc, mut tp) = (0f64, 0f64, 0f64, 0f64);
     let mut start = None::<(Instant, f64)>;
     let mut dims = (0, 0);
@@ -32,14 +40,29 @@ fn main() {
             break;
         }
         dims = (f.width, f.height);
-        let e = enc.get_or_insert_with(|| codec::Encoder::new(f.width, f.height, std::env::var("MAXH").ok().and_then(|v| v.parse().ok()).unwrap_or(720), 30.0, 4_000_000).unwrap());
+        let e = enc.get_or_insert_with(|| {
+            codec::Encoder::new(
+                f.width,
+                f.height,
+                std::env::var("MAXH")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(720),
+                30.0,
+                4_000_000,
+            )
+            .unwrap()
+        });
         let key = n == 0;
         let t = Instant::now();
         let unit = e.encode(&f, key).unwrap();
         te += t.elapsed().as_secs_f64();
         tp += e.last_ms.0 / 1e3;
         n += 1;
-        let Some(u) = unit else { dropped_enc += 1; continue };
+        let Some(u) = unit else {
+            dropped_enc += 1;
+            continue;
+        };
         bytes += u.data.len();
         fid += 1;
         for p in packet::fragment(fid, f.ts_ms, u.key, &u.data) {
@@ -59,8 +82,14 @@ fn main() {
     let wall = t0.elapsed().as_secs_f64();
     println!(
         "{}x{}: {n} frames in {wall:.1}s ({:.1} fps in), enc {:.1} ms/f (prep {:.1}), dec {:.1} ms/f, reasm {:.2} ms/f total, {:.2} Mbit/s, decoded {decoded}, skipped {dropped_enc}, process cpu {:.0}% of one core",
-        dims.0, dims.1, n as f64 / wall,
-        te / n as f64 * 1e3, tp / n as f64 * 1e3, td / decoded.max(1) as f64 * 1e3, tc / n as f64 * 1e3,
-        bytes as f64 * 8.0 / wall / 1e6, (cpu_secs() - c0) / wall * 100.0
+        dims.0,
+        dims.1,
+        n as f64 / wall,
+        te / n as f64 * 1e3,
+        tp / n as f64 * 1e3,
+        td / decoded.max(1) as f64 * 1e3,
+        tc / n as f64 * 1e3,
+        bytes as f64 * 8.0 / wall / 1e6,
+        (cpu_secs() - c0) / wall * 100.0
     );
 }

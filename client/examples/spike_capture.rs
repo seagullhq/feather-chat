@@ -3,7 +3,10 @@
 #[path = "../src/capture/mod.rs"]
 mod capture;
 
-use std::{sync::mpsc, time::{Duration, Instant}};
+use std::{
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 
 fn main() {
     let (tx, rx) = mpsc::channel();
@@ -16,7 +19,12 @@ fn main() {
         match rx.recv_timeout(Duration::from_secs(120)) {
             Ok(capture::Event::Frame(f)) => {
                 let t0 = *first.get_or_insert_with(|| {
-                    println!("first frame {}x{} ({} bytes)", f.width, f.height, f.data.len());
+                    println!(
+                        "first frame {}x{} ({} bytes)",
+                        f.width,
+                        f.height,
+                        f.data.len()
+                    );
                     Instant::now()
                 });
                 size = (f.width, f.height);
@@ -33,6 +41,11 @@ fn main() {
         }
     }
     let secs = first.map(|t| t.elapsed().as_secs_f64()).unwrap_or(1.0);
-    println!("{n} frames {}x{} -> {:.1} fps, ended={end:?}", size.0, size.1, n as f64 / secs);
+    println!(
+        "{n} frames {}x{} -> {:.1} fps, ended={end:?}",
+        size.0,
+        size.1,
+        n as f64 / secs
+    );
     drop(cap);
 }

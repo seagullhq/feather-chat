@@ -3,11 +3,16 @@
 //! downscaling are the upgrade path if 1080p30 is too heavy.
 
 use super::Frame;
-use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer, images::{Image, ImageRef}};
+use fast_image_resize::{
+    FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer,
+    images::{Image, ImageRef},
+};
 use openh264::{
     OpenH264API,
     decoder::Decoder as H264Decoder,
-    encoder::{BitRate, Complexity, Encoder as H264Encoder, EncoderConfig, FrameRate, FrameType, UsageType},
+    encoder::{
+        BitRate, Complexity, Encoder as H264Encoder, EncoderConfig, FrameRate, FrameType, UsageType,
+    },
     formats::YUVSource,
 };
 use yuv::{
@@ -30,7 +35,11 @@ impl YUVSource for Yuv<'_> {
         (self.w, self.h)
     }
     fn strides(&self) -> (usize, usize, usize) {
-        (self.img.y_stride as _, self.img.u_stride as _, self.img.v_stride as _)
+        (
+            self.img.y_stride as _,
+            self.img.u_stride as _,
+            self.img.v_stride as _,
+        )
     }
     fn y(&self) -> &[u8] {
         self.img.y_plane.borrow()
@@ -61,7 +70,11 @@ pub struct Encoder {
 
 /// Encoded size: keep the aspect, cap the height, round to even (4:2:0 needs it).
 fn dst_size(w: u32, h: u32, max_h: u32) -> (u32, u32) {
-    let (w, h) = if h > max_h { ((w as u64 * max_h as u64 / h as u64) as u32, max_h) } else { (w, h) };
+    let (w, h) = if h > max_h {
+        ((w as u64 * max_h as u64 / h as u64) as u32, max_h)
+    } else {
+        (w, h)
+    };
     ((w & !1).max(2), (h & !1).max(2))
 }
 
@@ -73,7 +86,13 @@ pub struct Unit {
 
 impl Encoder {
     /// `max_height` caps the encoded height (frames are downscaled above it).
-    pub fn new(width: u32, height: u32, max_height: u32, fps: f32, bitrate_bps: u32) -> Result<Self, String> {
+    pub fn new(
+        width: u32,
+        height: u32,
+        max_height: u32,
+        fps: f32,
+        bitrate_bps: u32,
+    ) -> Result<Self, String> {
         let (dw, dh) = dst_size(width, height, max_height);
         let cfg = EncoderConfig::new()
             .num_threads(4)
@@ -81,7 +100,8 @@ impl Encoder {
             .bitrate(BitRate::from_bps(bitrate_bps))
             .max_frame_rate(FrameRate::from_hz(fps))
             .usage_type(UsageType::ScreenContentRealTime);
-        let enc = H264Encoder::with_api_config(OpenH264API::from_source(), cfg).map_err(|e| e.to_string())?;
+        let enc = H264Encoder::with_api_config(OpenH264API::from_source(), cfg)
+            .map_err(|e| e.to_string())?;
         Ok(Self {
             enc,
             img: YuvPlanarImageMut::alloc(dw, dh, YuvChromaSubsampling::Yuv420),
@@ -110,21 +130,48 @@ impl Encoder {
             Some(full) => {
                 // Convert at full size first, then scale the three U8 planes: ~2.7x
                 // less data than scaling BGRA.
-                bgra_to_yuv420(full, &f.data, f.width * 4, RANGE, MATRIX, MODE).map_err(|e| e.to_string())?;
-                let opts = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
+                bgra_to_yuv420(full, &f.data, f.width * 4, RANGE, MATRIX, MODE)
+                    .map_err(|e| e.to_string())?;
+                let opts =
+                    ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Bilinear));
                 let (sw, sh) = (f.width, f.height);
                 let (cw, ch) = ((sw + 1) / 2, (sh + 1) / 2);
                 let (dcw, dch) = ((dw + 1) / 2, (dh + 1) / 2);
                 let planes = [
-                    (full.y_plane.borrow(), sw, sh, self.img.y_plane.borrow_mut(), dw, dh),
-                    (full.u_plane.borrow(), cw, ch, self.img.u_plane.borrow_mut(), dcw, dch),
-                    (full.v_plane.borrow(), cw, ch, self.img.v_plane.borrow_mut(), dcw, dch),
+                    (
+                        full.y_plane.borrow(),
+                        sw,
+                        sh,
+                        self.img.y_plane.borrow_mut(),
+                        dw,
+                        dh,
+                    ),
+                    (
+                        full.u_plane.borrow(),
+                        cw,
+                        ch,
+                        self.img.u_plane.borrow_mut(),
+                        dcw,
+                        dch,
+                    ),
+                    (
+                        full.v_plane.borrow(),
+                        cw,
+                        ch,
+                        self.img.v_plane.borrow_mut(),
+                        dcw,
+                        dch,
+                    ),
                 ];
                 for (src, sw, sh, dst, dw, dh) in planes {
                     // alloc() makes tight planes (stride == width), as from_slice_u8 needs.
-                    let src = ImageRef::new(sw, sh, src, PixelType::U8).map_err(|e| e.to_string())?;
-                    let mut dst = Image::from_slice_u8(dw, dh, dst, PixelType::U8).map_err(|e| e.to_string())?;
-                    self.scaler.resize(&src, &mut dst, &opts).map_err(|e| e.to_string())?;
+                    let src =
+                        ImageRef::new(sw, sh, src, PixelType::U8).map_err(|e| e.to_string())?;
+                    let mut dst = Image::from_slice_u8(dw, dh, dst, PixelType::U8)
+                        .map_err(|e| e.to_string())?;
+                    self.scaler
+                        .resize(&src, &mut dst, &opts)
+                        .map_err(|e| e.to_string())?;
                 }
                 Ok(())
             }
@@ -135,13 +182,20 @@ impl Encoder {
             self.enc.force_intra_frame();
         }
         let t = std::time::Instant::now();
-        let src = Yuv { w: dw as usize, h: dh as usize, img: &self.img };
+        let src = Yuv {
+            w: dw as usize,
+            h: dh as usize,
+            img: &self.img,
+        };
         let bs = self.enc.encode(&src).map_err(|e| e.to_string())?;
         self.last_ms = (prep, t.elapsed().as_secs_f64() * 1e3);
         if matches!(bs.frame_type(), FrameType::Skip | FrameType::Invalid) {
             return Ok(None);
         }
-        Ok(Some(Unit { data: bs.to_vec(), key: matches!(bs.frame_type(), FrameType::IDR | FrameType::I) }))
+        Ok(Some(Unit {
+            data: bs.to_vec(),
+            key: matches!(bs.frame_type(), FrameType::IDR | FrameType::I),
+        }))
     }
 }
 
@@ -170,8 +224,14 @@ impl Decoder {
             height: h as u32,
         };
         let mut data = vec![0u8; w * h * 4];
-        yuv420_to_bgra(&img, &mut data, (w * 4) as u32, RANGE, MATRIX).map_err(|e| e.to_string())?;
-        Ok(Some(Frame { width: w as u32, height: h as u32, data, ts_ms }))
+        yuv420_to_bgra(&img, &mut data, (w * 4) as u32, RANGE, MATRIX)
+            .map_err(|e| e.to_string())?;
+        Ok(Some(Frame {
+            width: w as u32,
+            height: h as u32,
+            data,
+            ts_ms,
+        }))
     }
 }
 
@@ -181,7 +241,12 @@ mod tests {
 
     fn frame(w: u32, h: u32, k: u8) -> Frame {
         let data = (0..w * h * 4).map(|i| (i as u8).wrapping_mul(k)).collect();
-        Frame { width: w, height: h, data, ts_ms: 0 }
+        Frame {
+            width: w,
+            height: h,
+            data,
+            ts_ms: 0,
+        }
     }
 
     /// A viewer that joins mid-stream starts from a forced keyframe with a fresh
@@ -191,11 +256,18 @@ mod tests {
         let mut enc = Encoder::new(320, 240, 1080, 30.0, 1_000_000).unwrap();
         let mut units = vec![];
         for i in 0..4 {
-            units.push(enc.encode(&frame(320, 240, i + 1), i == 2).unwrap().unwrap());
+            units.push(
+                enc.encode(&frame(320, 240, i + 1), i == 2)
+                    .unwrap()
+                    .unwrap(),
+            );
         }
         assert!(units[2].key, "forced keyframe");
         let mut dec = Decoder::new().unwrap();
-        let out = dec.decode(&units[2].data, 0).unwrap().expect("decodes without earlier frames");
+        let out = dec
+            .decode(&units[2].data, 0)
+            .unwrap()
+            .expect("decodes without earlier frames");
         assert_eq!((out.width, out.height), (320, 240));
     }
 

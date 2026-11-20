@@ -1,9 +1,9 @@
 //! State shared with the UI: atomics in, levels out.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
-use std::sync::Arc;
 
 use gpui::RenderImage;
 

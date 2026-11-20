@@ -6,7 +6,10 @@ use std::time::Instant;
 
 fn main() {
     let (w, h) = (1920usize, 1080usize);
-    let cfg = EncoderConfig::new().bitrate(openh264::encoder::BitRate::from_bps(4_000_000)).max_frame_rate(openh264::encoder::FrameRate::from_hz(30.0)).usage_type(openh264::encoder::UsageType::ScreenContentRealTime);
+    let cfg = EncoderConfig::new()
+        .bitrate(openh264::encoder::BitRate::from_bps(4_000_000))
+        .max_frame_rate(openh264::encoder::FrameRate::from_hz(30.0))
+        .usage_type(openh264::encoder::UsageType::ScreenContentRealTime);
     let mut enc = Encoder::with_api_config(openh264::OpenH264API::from_source(), cfg).unwrap();
     let mut dec = Decoder::new().unwrap();
     let mut rgb = vec![0u8; w * h * 3];
@@ -32,7 +35,9 @@ fn main() {
     }
     println!(
         "enc {:.1} ms/f, dec {:.1} ms/f, {:.0} kB/f avg, {:.2} Mbit/s @30fps, decoded {dec_ok}/{n}",
-        te / n as f64 * 1e3, td / n as f64 * 1e3, bytes as f64 / n as f64 / 1e3,
+        te / n as f64 * 1e3,
+        td / n as f64 * 1e3,
+        bytes as f64 / n as f64 / 1e3,
         bytes as f64 / n as f64 * 30.0 * 8.0 / 1e6
     );
 }
