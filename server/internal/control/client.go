@@ -57,6 +57,7 @@ func (s *Server) handleConn(conn net.Conn) {
 // then, and conn.Close runs right after.
 func (s *Server) disconnect(c *client) {
 	s.leaveRoom(c)
+	s.dmCancelPendingFor(c.sess.UserID)
 	s.rooms.Release(c.sess)
 }
 

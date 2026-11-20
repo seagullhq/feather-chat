@@ -22,7 +22,7 @@ impl FriendsView {
         let t = cx.theme();
         // The call bar under the stage shows a call in progress: the page
         // stays about this friend.
-        let body = self.dm_body(friend);
+        let body = self.dm_body(friend, cx);
         let stage = div()
             .id("friends-stage")
             .flex_1()
@@ -86,12 +86,12 @@ impl FriendsView {
 
     /// The friend's page: who, and Call. The chat strip in the corner opens
     /// the chat; Block and Unfriend are in the header's "..." menu.
-    fn dm_body(&self, friend: &Friend) -> Div {
+    fn dm_body(&self, friend: &Friend, cx: &mut Context<Self>) -> Div {
         let id = friend.id;
-        // ponytail: Call is a no-op until DM calls exist on the server.
         let call = Button::new(("dm-call", id as u64), "Call")
             .icon("phone")
-            .primary();
+            .primary()
+            .on_click(cx.listener(move |this, _, _, cx| this.call_friend(id, cx)));
         div()
             .w_full()
             .max_w(px(340.))

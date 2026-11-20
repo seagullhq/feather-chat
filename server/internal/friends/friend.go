@@ -19,7 +19,22 @@ var (
 	ErrRemoveFriend   = errors.New("could not remove the friendship")
 	ErrAlreadyExists  = errors.New("friend request already exists")
 	ErrBlocked        = errors.New("direct messages are blocked")
+	ErrCallBlocked    = errors.New("calls are blocked")
 )
+
+// AreFriends reports whether the pair has an ACCEPTED friendship. Voice calls
+// are limited to friends, the same way DM history and sending are.
+func (s *ServerStore) AreFriends(ctx context.Context, userID, otherID int) (bool, error) {
+	var friends bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM friendships
+			WHERE status = 'ACCEPTED'
+			  AND ((requester_id = $1 AND addressee_id = $2)
+			    OR (requester_id = $2 AND addressee_id = $1))
+		)`, userID, otherID).Scan(&friends)
+	return friends, err
+}
 
 // BlockedEitherWay reports whether either user blocked the other, so DM paths
 // can refuse conversations that friendship state has closed.

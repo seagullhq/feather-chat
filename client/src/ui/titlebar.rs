@@ -57,6 +57,15 @@ impl Titlebar {
         self
     }
 
+    /// Bring the friends screen forward, e.g. for an incoming call: the ring
+    /// banner lives there, so it must be on screen when somebody calls.
+    pub fn show_friends(&mut self, cx: &mut Context<Self>) {
+        if self.mode != Mode::Friends {
+            self.mode = Mode::Friends;
+            cx.emit(Mode::Friends);
+        }
+    }
+
     pub fn set_toggle(&mut self, on: bool, cx: &mut Context<Self>) {
         if self.toggle != on {
             self.toggle = on;

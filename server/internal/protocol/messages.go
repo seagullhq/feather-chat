@@ -30,6 +30,7 @@ type Control struct {
 	Password          string                `json:"password,omitempty"`
 	OldPassword       string                `json:"oldPassword,omitempty"`
 	Error             string                `json:"error,omitempty"`
+	CallReason        string                `json:"callReason,omitempty"`
 	ChannelName       string                `json:"channelName,omitempty"`
 	ChannelType       string                `json:"channelType,omitempty"`
 	ChannelTypeList   []ChannelTypeSummary  `json:"channelTypes,omitempty"`

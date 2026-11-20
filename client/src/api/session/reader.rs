@@ -43,6 +43,30 @@ fn push(frame: &Value) -> Option<Event> {
                 channel_type: frame["channelType"].as_str()?.parse().ok()?,
             });
         }
+        "DM_CALL_INVITE" => {
+            return Some(Event::DmCallInvite {
+                peer: frame["userId"].as_i64()?,
+                name: frame["username"].as_str()?.to_string(),
+            });
+        }
+        "DM_CALL_ACCEPTED" => {
+            return Some(Event::DmCallAccepted {
+                peer: frame["userId"].as_i64()?,
+            });
+        }
+        "DM_CALL_ENDED" => {
+            return Some(Event::DmCallEnded {
+                peer: frame["userId"].as_i64()?,
+                reason: frame["callReason"].as_str()?.to_string(),
+            });
+        }
+        "DM_CALL_STATE" => {
+            return Some(Event::DmCallPeerState {
+                peer: frame["userId"].as_i64()?,
+                muted: frame["muted"].as_bool().unwrap_or(false),
+                deafened: frame["deafened"].as_bool().unwrap_or(false),
+            });
+        }
         _ => {}
     }
     let channel_id = frame["channelId"].as_i64()?;

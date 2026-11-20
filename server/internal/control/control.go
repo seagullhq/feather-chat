@@ -20,6 +20,7 @@ import (
 // one accept loop feeding per-connection goroutines.
 type Server struct {
 	rooms    *room.Manager
+	calls    *callManager
 	users    *accounts.Store
 	servers  *servers.ServerStore
 	friends  *friends.ServerStore
@@ -28,7 +29,7 @@ type Server struct {
 
 // New wires a control server around the stores and the room state.
 func New(users *accounts.Store, serverStore *servers.ServerStore, friendStore *friends.ServerStore, msgStore *messages.ServerStore, rooms *room.Manager) *Server {
-	return &Server{rooms: rooms, users: users, servers: serverStore, friends: friendStore, messages: msgStore}
+	return &Server{rooms: rooms, calls: newCallManager(), users: users, servers: serverStore, friends: friendStore, messages: msgStore}
 }
 
 // Serve accepts and dispatches control connections until the listener stops.
@@ -54,6 +55,10 @@ var handlers = map[string]func(*Server, *client, protocol.Control){
 	"JOIN":                       (*Server).handleJoin,
 	"STATE":                      (*Server).handleState,
 	"LEAVE":                      (*Server).handleLeave,
+	"DM_CALL":                    (*Server).handleDmCall,
+	"DM_ACCEPT_CALL":             (*Server).handleDmCallAccept,
+	"DM_REJECT_CALL":             (*Server).handleDmCallReject,
+	"DM_CANCEL_CALL":             (*Server).handleDmCallCancel,
 	"LIST_SERVERS":               (*Server).handleListServers,
 	"CREATE_SERVER":              (*Server).handleCreateServer,
 	"JOIN_SERVER":                (*Server).handleJoinServer,

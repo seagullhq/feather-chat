@@ -1,11 +1,25 @@
 //! Call bar of the voice channel you are in, shown under the friends stage.
 
-use super::FriendsView;
+use super::{DmPhase, FriendsView};
 use crate::ui::components::CallBar;
 use gpui::prelude::*;
 
 impl FriendsView {
     pub(super) fn call_bar(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        // A live DM call wins: the server view only holds the mic check then.
+        if let Some(dm) = &self.dm_call
+            && dm.phase == DmPhase::Active
+        {
+            let (a, b, c) = (cx.entity(), cx.entity(), cx.entity());
+            return Some(
+                CallBar::new(true)
+                    .connected_to(Some(dm.name.clone()))
+                    .state(dm.muted, dm.deafened, dm.level)
+                    .on_mute(move |_, _, cx| a.update(cx, |v, cx| v.toggle_dm_mute(cx)))
+                    .on_deafen(move |_, _, cx| b.update(cx, |v, cx| v.toggle_dm_deafen(cx)))
+                    .on_leave(move |_, _, cx| c.update(cx, |v, cx| v.end_dm_call(cx))),
+            );
+        }
         let call = self.servers.read(cx).call_state()?;
         let (a, b, c) = (
             self.servers.clone(),

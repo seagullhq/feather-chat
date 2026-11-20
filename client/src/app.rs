@@ -284,9 +284,14 @@ impl Root {
                 channel_id,
                 members,
                 media,
-            } => self.servers.update(cx, |view, cx| {
-                view.on_joined(server_id, channel_id, members, media, cx)
-            }),
+            } => {
+                self.servers.update(cx, |view, cx| {
+                    view.on_joined(server_id, channel_id, members, media, cx)
+                });
+                // One room per session: joining a channel ended any DM call.
+                self.friends
+                    .update(cx, |view, cx| view.on_server_call_started(cx));
+            }
             Event::JoinFailed(m) => eprintln!("could not join channel: {m}"),
             Event::MemberJoined { channel_id, member } => self
                 .servers
@@ -297,6 +302,35 @@ impl Root {
             Event::MemberState { channel_id, member } => self
                 .servers
                 .update(cx, |view, cx| view.on_member_state(channel_id, member, cx)),
+            Event::DmCallOutgoing { peer } => self
+                .friends
+                .update(cx, |view, cx| view.on_dm_call_outgoing(peer, cx)),
+            Event::DmCallInvite { peer, name } => {
+                if self.mode != Mode::Friends {
+                    self.titlebar.update(cx, |t, cx| t.show_friends(cx));
+                }
+                self.friends
+                    .update(cx, |view, cx| view.on_dm_call_invite(peer, name, cx));
+            }
+            Event::DmCallAccepted { peer } => self
+                .friends
+                .update(cx, |view, cx| view.on_dm_call_accepted(peer, cx)),
+            Event::DmCallActive { peer } => self
+                .friends
+                .update(cx, |view, cx| view.on_dm_call_active(peer, cx)),
+            Event::DmCallPeerState {
+                peer,
+                muted,
+                deafened,
+            } => self.friends.update(cx, |view, cx| {
+                view.on_dm_call_peer_state(peer, muted, deafened, cx)
+            }),
+            Event::DmCallEnded { peer, reason } => self
+                .friends
+                .update(cx, |view, cx| view.on_dm_call_ended(peer, reason, cx)),
+            Event::DmCallFailed(m) => self
+                .friends
+                .update(cx, |view, cx| view.on_dm_call_failed(m, cx)),
             Event::ChannelAdded {
                 server_id,
                 id,

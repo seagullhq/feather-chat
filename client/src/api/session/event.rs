@@ -101,6 +101,35 @@ pub enum Event {
         channel_id: i64,
         member: RosterMember,
     },
+    /// Your ring was registered; waiting for the friend to answer.
+    DmCallOutgoing {
+        peer: i64,
+    },
+    /// Someone you are friends with is ringing you (push).
+    DmCallInvite {
+        peer: i64,
+        name: String,
+    },
+    /// The friend accepted: start the local engine and show the call bar.
+    DmCallAccepted {
+        peer: i64,
+    },
+    /// Both sides are in the room; the engine is running.
+    DmCallActive {
+        peer: i64,
+    },
+    /// Peer mute/deafen changed during the call (push).
+    DmCallPeerState {
+        peer: i64,
+        muted: bool,
+        deafened: bool,
+    },
+    /// Rejected, cancelled, timed out, the peer left, or they went offline.
+    DmCallEnded {
+        peer: i64,
+        reason: String,
+    },
+    DmCallFailed(String),
     FriendsListed(Vec<Friend>),
     /// Search hits for `query` (the box may have changed since).
     UsersFound {

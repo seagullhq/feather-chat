@@ -79,10 +79,10 @@ impl FriendsView {
                     cx.notify();
                 });
                 let on_dismiss = view.clone();
+                let on_call = view.clone();
                 let on_message = view.clone();
                 let on_block = view.clone();
                 let on_unfriend = view.clone();
-                // ponytail: Call is a no-op until DM calls exist on the server.
                 let menu = Dropdown::new(
                     ("friend-menu", f.id as u64),
                     ghost(("more", f.id as u64), "More", "dots-three", &t).on_click(toggle),
@@ -95,7 +95,9 @@ impl FriendsView {
                         cx.notify();
                     })
                 })
-                .entry("phone", "Call", |_, _, _| {})
+                .entry("phone", "Call", move |_, _, cx| {
+                    on_call.update(cx, |this, cx| this.call_friend(id, cx))
+                })
                 .entry("chats-teardrop", "Message", move |_, window, cx| {
                     on_message.update(cx, |this, cx| this.message_friend(id, window, cx))
                 })
@@ -109,8 +111,12 @@ impl FriendsView {
                     .flex()
                     .gap_1()
                     .child(
-                        ghost(("call", f.id as u64), "Call", "phone", &t)
-                            .on_click(|_, _, cx| cx.stop_propagation()),
+                        ghost(("call", f.id as u64), "Call", "phone", &t).on_click(
+                            cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.call_friend(id, cx);
+                            }),
+                        ),
                     )
                     .child(menu);
                 let selected = self.selected_friend == Some(f.id);

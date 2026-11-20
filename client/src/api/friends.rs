@@ -106,6 +106,32 @@ pub(super) fn add_friend(session: &mut Session, username: &str) -> Result<(), St
         .map(drop)
 }
 
+/// Ring a friend. The server answers when the invitation is registered; the
+/// microphone opens only after the other side accepts.
+pub(super) fn call_peer(session: &mut Session, peer: i64) -> Result<(), String> {
+    session
+        .call(json!({"type":"DM_CALL","directRecipientID":peer.to_string()}))
+        .map(drop)
+}
+
+pub(super) fn accept_call(session: &mut Session, peer: i64) -> Result<(), String> {
+    session
+        .call(json!({"type":"DM_ACCEPT_CALL","directRecipientID":peer.to_string()}))
+        .map(drop)
+}
+
+pub(super) fn reject_call(session: &mut Session, peer: i64) -> Result<(), String> {
+    session
+        .call(json!({"type":"DM_REJECT_CALL","directRecipientID":peer.to_string()}))
+        .map(drop)
+}
+
+pub(super) fn cancel_call(session: &mut Session, peer: i64) -> Result<(), String> {
+    session
+        .call(json!({"type":"DM_CANCEL_CALL","directRecipientID":peer.to_string()}))
+        .map(drop)
+}
+
 /// One direct message as the server sends it.
 #[derive(Clone)]
 pub struct DirectMessage {

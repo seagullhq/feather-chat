@@ -4,17 +4,21 @@
 mod call_bar;
 pub(crate) mod chat;
 mod overview;
+mod ring;
 mod sidebar;
 mod stage;
 
 use super::ServersView;
 use crate::api::{Control, DM_PAGE, DirectMessage, Friend, Relation};
 use crate::input::TextInput;
+use crate::media;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::time::Duration;
 
 /// Same width as the servers sidebar, so the layout does not jump on switch.
 /// Most messages of the open chat kept in memory (new ones push out the
@@ -22,9 +26,32 @@ use std::rc::Rc;
 const DM_MAX: usize = 1000;
 const SIDEBAR_WIDTH: f32 = 240.;
 
+/// Phase of a 1:1 voice call. Only `Active` owns the microphone.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum DmPhase {
+    Outgoing,
+    Incoming,
+    Connecting,
+    Active,
+}
+
+pub(super) struct DmCall {
+    pub peer: i64,
+    pub name: SharedString,
+    pub phase: DmPhase,
+    pub muted: bool,
+    pub deafened: bool,
+    pub level: f32,
+    pub peer_muted: bool,
+    pub peer_deafened: bool,
+    pub media: Option<Arc<media::Shared>>,
+}
+
 pub struct FriendsView {
-    /// Owner of the voice call, shown in the call bar while you are in one.
+    /// Owner of the server voice call, shown in the call bar while you are in one.
     servers: Entity<ServersView>,
+    /// The 1:1 call with a friend: ringing, connecting, or live.
+    dm_call: Option<DmCall>,
     /// Search box: filters your friends and is the name to send a request to.
     search: Entity<TextInput>,
     control: Option<Control>,
@@ -72,6 +99,19 @@ impl FriendsView {
         cx.observe(&servers, |_, _, cx| cx.notify()).detach();
         let check = servers.read(cx).voice_check();
         cx.observe(&check, |_, _, cx| cx.notify()).detach();
+        // Like the server view: copy the mic level into the model, but only
+        // notify on a visible change so a quiet call does not redraw forever.
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(80))
+                    .await;
+                if this.update(cx, |view, cx| view.poll_dm_media(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         let search = cx.new(|cx| TextInput::new("Search or add friends", false, cx));
         // The input repaints itself on typing; repaint the results with it.
         cx.observe(&search, |this, search, cx| {
@@ -89,6 +129,7 @@ impl FriendsView {
         };
         Self {
             servers,
+            dm_call: None,
             search,
             control: None,
             friends: Vec::new(),
@@ -141,6 +182,291 @@ impl FriendsView {
     pub fn set_control(&mut self, control: Control, cx: &mut Context<Self>) {
         self.control = Some(control);
         cx.notify();
+    }
+
+    /// Mic level of the live DM call, at most one repaint per visible step.
+    fn poll_dm_media(&mut self, cx: &mut Context<Self>) {
+        let Some(call) = self.dm_call.as_mut() else {
+            return;
+        };
+        let Some(media) = &call.media else {
+            return;
+        };
+        let level = if call.muted || call.deafened {
+            0.
+        } else {
+            media.mic_level()
+        };
+        if (call.level - level).abs() > 0.01 || (level == 0.) != (call.level == 0.) {
+            call.level = level;
+            cx.notify();
+        }
+    }
+
+    fn dm_name(&self, peer: i64) -> SharedString {
+        self.friends
+            .iter()
+            .find(|f| f.id == peer)
+            .map(|f| f.name.clone().into())
+            .unwrap_or_else(|| "Friend".into())
+    }
+
+    fn in_a_call(&self, cx: &Context<Self>) -> bool {
+        self.dm_call.is_some() || self.servers.read(cx).call_state().is_some()
+    }
+
+    fn stop_mic_check(&self, cx: &mut Context<Self>) {
+        let check = self.servers.read(cx).voice_check();
+        check.update(cx, |v, cx| v.stop(cx));
+    }
+
+    /// "Call" on a friend: ring them, without opening the microphone.
+    pub(super) fn call_friend(&mut self, peer: i64, cx: &mut Context<Self>) {
+        self.error = None;
+        if self.in_a_call(cx) {
+            self.error = Some("Already in a call.".into());
+            cx.notify();
+            return;
+        }
+        if let Some(control) = &self.control
+            && control.dm_call(peer)
+        {
+            self.dm_call = Some(DmCall {
+                peer,
+                name: self.dm_name(peer),
+                phase: DmPhase::Outgoing,
+                muted: false,
+                deafened: false,
+                level: 0.,
+                peer_muted: false,
+                peer_deafened: false,
+                media: None,
+            });
+            self.stop_mic_check(cx);
+        }
+        cx.notify();
+    }
+
+    pub fn on_dm_call_outgoing(&mut self, peer: i64, cx: &mut Context<Self>) {
+        if let Some(call) = &mut self.dm_call
+            && call.peer == peer
+        {
+            call.phase = DmPhase::Outgoing;
+            cx.notify();
+        }
+    }
+
+    /// A friend is ringing. Refuse it locally when already in a call; the
+    /// server checks the same thing but this avoids a needless ring.
+    pub fn on_dm_call_invite(&mut self, peer: i64, name: String, cx: &mut Context<Self>) {
+        if self.in_a_call(cx) {
+            if let Some(control) = &self.control {
+                control.dm_call_reject(peer);
+            }
+            return;
+        }
+        if self.control.is_none() {
+            return;
+        }
+        self.error = None;
+        self.dm_call = Some(DmCall {
+            peer,
+            name: name.into(),
+            phase: DmPhase::Incoming,
+            muted: false,
+            deafened: false,
+            level: 0.,
+            peer_muted: false,
+            peer_deafened: false,
+            media: None,
+        });
+        self.stop_mic_check(cx);
+        cx.notify();
+    }
+
+    /// The caller was told the ring was accepted: start the engine too.
+    pub fn on_dm_call_accepted(&mut self, peer: i64, cx: &mut Context<Self>) {
+        let Some(call) = self.dm_call.as_mut() else {
+            return;
+        };
+        if call.peer != peer || call.phase == DmPhase::Active {
+            return;
+        }
+        call.phase = DmPhase::Connecting;
+        let (muted, deafened) = (call.muted, call.deafened);
+        if let Some(control) = &self.control {
+            control.dm_call_join(peer, muted, deafened);
+        }
+        cx.notify();
+    }
+
+    pub fn on_dm_call_active(&mut self, peer: i64, cx: &mut Context<Self>) {
+        let Some(call) = self.dm_call.as_mut() else {
+            return;
+        };
+        if call.peer != peer {
+            return;
+        }
+        call.phase = DmPhase::Active;
+        cx.notify();
+    }
+
+    pub fn on_dm_call_peer_state(
+        &mut self,
+        peer: i64,
+        muted: bool,
+        deafened: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(call) = &mut self.dm_call
+            && call.peer == peer
+        {
+            call.peer_muted = muted;
+            call.peer_deafened = deafened;
+            cx.notify();
+        }
+    }
+
+    pub fn on_dm_call_ended(&mut self, peer: i64, reason: String, cx: &mut Context<Self>) {
+        let Some(call) = self.dm_call.as_ref() else {
+            return;
+        };
+        if call.peer != peer {
+            return;
+        }
+        // The peer left the media room, but our session is still in it: drop
+        // the local engine and tell the server, or the mic stays open.
+        if call.phase == DmPhase::Active {
+            if let Some(control) = &self.control {
+                control.leave();
+            }
+        }
+        self.dm_call = None;
+        self.error = Some(match reason.as_str() {
+            "rejected" => "Call rejected.".into(),
+            "cancelled" | "left" => "Call ended.".into(),
+            "timeout" => "Call timed out.".into(),
+            "offline" => "Friend is offline.".into(),
+            _ => "Call failed.".into(),
+        });
+        cx.notify();
+    }
+
+    pub fn on_dm_call_failed(&mut self, message: String, cx: &mut Context<Self>) {
+        if self
+            .dm_call
+            .as_ref()
+            .is_some_and(|call| call.phase != DmPhase::Active)
+        {
+            self.dm_call = None;
+        }
+        self.error = Some(message);
+        cx.notify();
+    }
+
+    /// Joining a server voice channel ends the DM call (one room per session).
+    /// An active call is closed server-side by JOIN; a still-ringing invitation
+    /// has to be declined here, or the caller keeps waiting for the timeout.
+    pub fn on_server_call_started(&mut self, cx: &mut Context<Self>) {
+        let Some(call) = self.dm_call.take() else {
+            return;
+        };
+        if call.phase != DmPhase::Active {
+            if let Some(control) = &self.control {
+                control.dm_call_reject(call.peer);
+            }
+        }
+        cx.notify();
+    }
+
+    pub(super) fn accept_dm_call(&mut self, cx: &mut Context<Self>) {
+        let Some(call) = self.dm_call.as_ref() else {
+            return;
+        };
+        if call.phase != DmPhase::Incoming {
+            return;
+        }
+        let (peer, muted, deafened) = (call.peer, call.muted, call.deafened);
+        if let Some(control) = &self.control
+            && control.dm_call_accept(peer, muted, deafened)
+        {
+            if let Some(call) = self.dm_call.as_mut() {
+                call.phase = DmPhase::Connecting;
+            }
+        }
+        cx.notify();
+    }
+
+    pub(super) fn reject_dm_call(&mut self, cx: &mut Context<Self>) {
+        let Some(peer) = self.dm_call.as_ref().map(|call| call.peer) else {
+            return;
+        };
+        if let Some(control) = &self.control {
+            control.dm_call_reject(peer);
+        }
+        self.dm_call = None;
+        cx.notify();
+    }
+
+    pub(super) fn cancel_dm_call(&mut self, cx: &mut Context<Self>) {
+        let Some(peer) = self.dm_call.as_ref().map(|call| call.peer) else {
+            return;
+        };
+        if let Some(control) = &self.control {
+            control.dm_call_cancel(peer);
+        }
+        self.dm_call = None;
+        cx.notify();
+    }
+
+    pub(super) fn end_dm_call(&mut self, cx: &mut Context<Self>) {
+        if let Some(control) = &self.control {
+            control.leave(); // drops the worker's engine and leaves the room
+        }
+        if let Some(call) = self.dm_call.as_mut() {
+            call.media = None;
+            call.level = 0.;
+        }
+        self.dm_call = None;
+        cx.notify();
+    }
+
+    pub(super) fn toggle_dm_mute(&mut self, cx: &mut Context<Self>) {
+        let Some(call) = self.dm_call.as_mut() else {
+            return;
+        };
+        if call.deafened {
+            call.deafened = false;
+            call.muted = false;
+        } else {
+            call.muted = !call.muted;
+        }
+        let (muted, deafened) = (call.muted, call.deafened);
+        self.sync_dm_state(muted, deafened);
+        cx.notify();
+    }
+
+    pub(super) fn toggle_dm_deafen(&mut self, cx: &mut Context<Self>) {
+        let Some(call) = self.dm_call.as_mut() else {
+            return;
+        };
+        call.deafened = !call.deafened;
+        let (muted, deafened) = (call.muted, call.deafened);
+        self.sync_dm_state(muted, deafened);
+        cx.notify();
+    }
+
+    fn sync_dm_state(&self, muted: bool, deafened: bool) {
+        use std::sync::atomic::Ordering::Relaxed;
+        if let Some(call) = &self.dm_call
+            && let Some(media) = &call.media
+        {
+            media.muted.store(muted, Relaxed);
+            media.deafened.store(deafened, Relaxed);
+        }
+        if let Some(control) = &self.control {
+            control.state(muted, deafened);
+        }
     }
 
     /// A message of the conversation with `peer` arrived (or was sent). Only
@@ -319,6 +645,7 @@ impl FriendsView {
 
     pub fn on_disconnected(&mut self, cx: &mut Context<Self>) {
         self.control = None;
+        self.dm_call = None;
         self.friends.clear();
         self.chat_log.clear();
         self.found.clear();
@@ -452,6 +779,7 @@ impl Render for FriendsView {
             })
             .child(self.sidebar(cx))
             .child(self.stage(window, cx))
+            .children(self.dm_call_banner(cx))
     }
 }
 

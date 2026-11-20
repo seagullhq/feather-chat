@@ -11,6 +11,28 @@ pub(super) enum Command {
         muted: bool,
         deafened: bool,
     },
+    /// Ring a friend for a 1:1 voice call.
+    DmCall {
+        peer: i64,
+    },
+    /// Answer an incoming ring; the server joins both sides to the room.
+    DmCallAccept {
+        peer: i64,
+        muted: bool,
+        deafened: bool,
+    },
+    /// Start the engine after the caller is told the ring was accepted.
+    DmCallJoin {
+        peer: i64,
+        muted: bool,
+        deafened: bool,
+    },
+    DmCallReject {
+        peer: i64,
+    },
+    DmCallCancel {
+        peer: i64,
+    },
     ListChannels {
         server_id: i64,
     },
@@ -174,6 +196,39 @@ impl Control {
 
     pub fn state(&self, muted: bool, deafened: bool) -> bool {
         self.tx.try_send(Command::State { muted, deafened }).is_ok()
+    }
+
+    pub fn dm_call(&self, peer: i64) -> bool {
+        self.tx.try_send(Command::DmCall { peer }).is_ok()
+    }
+
+    pub fn dm_call_accept(&self, peer: i64, muted: bool, deafened: bool) -> bool {
+        self.tx
+            .try_send(Command::DmCallAccept {
+                peer,
+                muted,
+                deafened,
+            })
+            .is_ok()
+    }
+
+    /// The caller starts its engine only after the ACCEPTED push.
+    pub fn dm_call_join(&self, peer: i64, muted: bool, deafened: bool) -> bool {
+        self.tx
+            .try_send(Command::DmCallJoin {
+                peer,
+                muted,
+                deafened,
+            })
+            .is_ok()
+    }
+
+    pub fn dm_call_reject(&self, peer: i64) -> bool {
+        self.tx.try_send(Command::DmCallReject { peer }).is_ok()
+    }
+
+    pub fn dm_call_cancel(&self, peer: i64) -> bool {
+        self.tx.try_send(Command::DmCallCancel { peer }).is_ok()
     }
 
     pub fn list_channels(&self, server_id: i64) -> bool {

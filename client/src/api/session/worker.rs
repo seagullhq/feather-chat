@@ -1,6 +1,7 @@
 //! Worker thread: authenticates, then executes commands one at a time.
 
 use serde_json::json;
+use std::sync::Arc;
 
 use super::super::auth::{self, Request};
 use super::super::friends;
@@ -10,6 +11,35 @@ use super::command::{Command, Control};
 use super::event::Event;
 use super::reader::reader;
 use crate::media;
+
+/// Starts the media engine for a room the server already accepted, replacing
+/// any previous call's engine. The STATE frame keeps server-side mute flags in
+/// sync with the flags the engine started with.
+fn start_voice(
+    host: &str,
+    ssrc: u32,
+    muted: bool,
+    deafened: bool,
+    session: &mut Session,
+    engine: &mut Option<media::Engine>,
+) -> Option<Arc<media::Shared>> {
+    drop(engine.take());
+    let media = match media::Engine::start(host, ssrc, muted, deafened) {
+        Ok(e) => {
+            let shared = e.shared();
+            let _ = engine.replace(e);
+            Some(shared)
+        }
+        Err(e) => {
+            eprintln!("voice engine: {e}");
+            None
+        }
+    };
+    let _ = session
+        .conn
+        .write(&json!({"type":"STATE","muted":muted,"deafened":deafened}));
+    media
+}
 
 fn commands(
     mut session: Session,
@@ -50,26 +80,10 @@ fn commands(
             } => {
                 match server::join_channel(&mut session, channel_id) {
                     Ok(j) => {
-                        // Moved channels: stop the old voice session first. A
-                        // failed JOIN leaves the server in the old room, so the
-                        // old call keeps its engine instead of going silent.
-                        drop(engine.take());
-                        let media = match media::Engine::start(&host, ssrc, muted, deafened) {
-                            Ok(e) => {
-                                let shared = e.shared();
-                                drop(engine.replace(e));
-                                Some(shared)
-                            }
-                            Err(e) => {
-                                eprintln!("voice engine: {e}");
-                                None
-                            }
-                        };
-                        // Always: the server keeps the last call's flags, so
-                        // unmuting between calls would otherwise show a stale mute.
-                        let _ = session
-                            .conn
-                            .write(&json!({"type":"STATE","muted":muted,"deafened":deafened}));
+                        // A failed JOIN leaves the old room/engine alone; only
+                        // a successful one replaces it.
+                        let media =
+                            start_voice(&host, ssrc, muted, deafened, &mut session, &mut engine);
                         let _ = events.send_blocking(Event::Joined {
                             server_id: j.server_id,
                             channel_id: j.channel_id,
@@ -90,6 +104,44 @@ fn commands(
                 let _ = session
                     .conn
                     .write(&json!({"type":"STATE","muted":muted,"deafened":deafened}));
+            }
+            Command::DmCall { peer } => {
+                let _ = events.send_blocking(match friends::call_peer(&mut session, peer) {
+                    Ok(()) => Event::DmCallOutgoing { peer },
+                    Err(e) => Event::DmCallFailed(e),
+                });
+            }
+            Command::DmCallAccept {
+                peer,
+                muted,
+                deafened,
+            } => match friends::accept_call(&mut session, peer) {
+                Ok(()) => {
+                    let _ = start_voice(&host, ssrc, muted, deafened, &mut session, &mut engine);
+                    let _ = events.send_blocking(Event::DmCallActive { peer });
+                }
+                Err(e) => {
+                    let _ = events.send_blocking(Event::DmCallFailed(e));
+                }
+            },
+            Command::DmCallJoin {
+                peer,
+                muted,
+                deafened,
+            } => {
+                // The server already joined both sessions on accept.
+                let _ = start_voice(&host, ssrc, muted, deafened, &mut session, &mut engine);
+                let _ = events.send_blocking(Event::DmCallActive { peer });
+            }
+            Command::DmCallReject { peer } => {
+                if let Err(e) = friends::reject_call(&mut session, peer) {
+                    let _ = events.send_blocking(Event::DmCallFailed(e));
+                }
+            }
+            Command::DmCallCancel { peer } => {
+                if let Err(e) = friends::cancel_call(&mut session, peer) {
+                    let _ = events.send_blocking(Event::DmCallFailed(e));
+                }
             }
             Command::ListChannels { server_id } => {
                 let _ =
