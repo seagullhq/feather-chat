@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 use super::peer::Peer;
 use super::prefs::PREFS;
 use super::shared::Shared;
-use super::wire::{KIND_AUDIO, KIND_PING, KIND_VIDEO, TERMINATOR, audio_packet, header, rms};
+use super::wire::{
+    KIND_AUDIO, KIND_PING, KIND_VIDEO, TERMINATOR, audio_packet, header, rms, smooth_level,
+};
 use super::{FRAME, OUT_RING, PEER_TIMEOUT, RATE};
 
 pub(super) fn worker(
@@ -92,7 +94,7 @@ pub(super) fn worker(
             mic_level = if silent {
                 0.
             } else {
-                mic_level * 0.55 + level * 0.45
+                smooth_level(mic_level, level)
             };
             shared.mic.store(mic_level.to_bits(), Relaxed);
             // Muting ends the talkspurt with one terminator frame, then stops.

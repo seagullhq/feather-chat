@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering::Relaxed};
 
 use gpui::RenderImage;
 
@@ -24,6 +24,8 @@ pub struct Shared {
     /// Latest decoded frame per sharing SSRC, with a version that grows per frame.
     pub(super) screens: Mutex<HashMap<u32, (u64, Arc<RenderImage>)>>,
     pub(super) screen_ver: AtomicU64,
+    /// Mic check step (`check::Step`), unused by a voice session.
+    pub(super) check: AtomicU8,
 }
 
 impl Shared {

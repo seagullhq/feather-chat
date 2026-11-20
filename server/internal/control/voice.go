@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"strconv"
+	"strings"
 
 	"github.com/seagullhq/feather-chat/server/internal/protocol"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
@@ -57,6 +58,14 @@ func (s *Server) handleState(c *client, msg protocol.Control) {
 		return
 	}
 	me := s.rooms.SetState(c.sess, msg.Muted, msg.Deafened)
+	if strings.HasPrefix(c.sess.Room, "dm:") {
+		// DM calls have no server to fan out to: tell the room-mates directly.
+		notify(s.rooms.Others(c.sess), protocol.Control{
+			Type: "DM_CALL_STATE", Room: c.sess.Room, UserID: c.sess.UserID,
+			Muted: msg.Muted, Deafened: msg.Deafened,
+		})
+		return
+	}
 	s.notifyServer(c.sess.ServerID, c.sess, protocol.Control{Type: "MEMBER_STATE", ChannelID: c.sess.ChannelID, Member: &me})
 }
 
@@ -71,6 +80,11 @@ func (s *Server) leaveRoom(c *client) {
 	if c.sess.Room == "" {
 		return
 	}
+	roomName := c.sess.Room
 	s.rooms.Leave(c.sess)
+	if strings.HasPrefix(roomName, "dm:") {
+		s.onDmCallLeave(c, roomName)
+		return
+	}
 	s.notifyServer(c.sess.ServerID, c.sess, protocol.Control{Type: "MEMBER_LEFT", ChannelID: c.sess.ChannelID, SSRC: c.sess.SSRC})
 }

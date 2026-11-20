@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seagullhq/feather-chat/server/internal/friends"
+	"github.com/seagullhq/feather-chat/server/internal/messages"
 	"github.com/seagullhq/feather-chat/server/internal/protocol"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
 )
@@ -43,7 +45,7 @@ func screenFixture(t *testing.T) (net.Conn, net.Conn) {
 		_ = ltcp.Close()
 		_ = ludp.Close()
 	})
-	serveTest(t, ltcp, ludp, store, servers.NewStore(db))
+	serveTest(t, ltcp, ludp, store, servers.NewStore(db), friends.NewStore(db), messages.NewStore(db))
 
 	a := dialControl(t, ltcp.Addr().String(), 0x1111, 0, username, email, password, true)
 	b := dialControl(t, ltcp.Addr().String(), 0x2222, 0, username, email, password, false)

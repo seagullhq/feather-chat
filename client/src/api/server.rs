@@ -318,3 +318,42 @@ pub(super) fn join_channel(session: &mut Session, channel_id: i64) -> Result<Joi
         members: RosterMember::list(&ack["members"]),
     })
 }
+
+/// Posts a text message to a text channel (thread). The ACK carries the stored
+/// message; the other members get it as a push.
+pub(super) fn send_thread(
+    session: &mut Session,
+    server_id: i64,
+    channel_id: i64,
+    text: &str,
+) -> Result<super::friends::DirectMessage, String> {
+    let ack = session.call(json!({
+        "type": "SEND_SERVER_MESSAGE",
+        "serverId": server_id,
+        "channelId": channel_id,
+        "serverContent": text,
+    }))?;
+    super::friends::dm_from(&ack["serverInfo"]).ok_or_else(|| "bad reply".to_string())
+}
+
+/// A page of a text channel, oldest first: the newest one, or with `before`
+/// the one just older than that message id. Also says whether older ones exist.
+pub(super) fn list_thread(
+    session: &mut Session,
+    channel_id: i64,
+    before: Option<i64>,
+) -> Result<(Vec<super::friends::DirectMessage>, bool), String> {
+    let ack = session.call(json!({
+        "type": "LIST_SERVER_MESSAGES",
+        "channelId": channel_id,
+        "serverBeforeId": before.unwrap_or(0),
+    }))?;
+    let mut list: Vec<_> = ack["serverMessages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(super::friends::dm_from)
+        .collect();
+    list.reverse();
+    Ok((list, ack["serverHasMore"].as_bool().unwrap_or(false)))
+}

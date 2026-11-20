@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
 mod api;
 mod app;
 mod assets;
@@ -5,6 +10,7 @@ mod capture;
 mod input;
 mod media;
 mod model;
+mod single_instance;
 mod store;
 mod theme;
 mod ui;
@@ -27,6 +33,10 @@ fn load_fonts(cx: &mut App) {
 }
 
 fn main() {
+    let Ok(lock) = single_instance::claim() else {
+        return; // already running: it was brought to the front
+    };
+    media::PREFS.load();
     gpui_platform::application()
         .with_assets(Assets)
         .run(|cx: &mut App| {
@@ -57,10 +67,13 @@ fn main() {
                 icon: window_icon(),
                 ..Default::default()
             };
-            let main = cx
+            let window = cx
                 .open_window(opts, |window, cx| cx.new(|cx| Root::new(window, cx)))
-                .unwrap()
-                .window_id();
+                .unwrap();
+            let main = window.window_id();
+            if let Some(lock) = lock {
+                single_instance::serve(lock, window.into(), cx);
+            }
             // Settings and Credits are children of the main window: closing it ends the app.
             cx.on_window_closed(move |cx, id| {
                 if id == main || cx.windows().is_empty() {

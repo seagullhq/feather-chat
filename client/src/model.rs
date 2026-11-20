@@ -9,11 +9,10 @@ pub struct Member {
     pub deafened: bool,
     /// Sharing their screen.
     pub sharing: bool,
-    /// Smoothed audio level, 0..1. Above `SPEAKING` the member counts as speaking.
+    /// Smoothed audio level, 0..1. Above the speaking threshold the member
+    /// counts as speaking.
     pub level: f32,
 }
-
-pub const SPEAKING: f32 = 0.12;
 
 impl Member {
     pub fn new(name: &str) -> Self {
@@ -38,6 +37,9 @@ impl Member {
     }
 }
 
+/// `channel_types` row of a text channel (shown as "threads" in the UI).
+pub const CHANNEL_THREAD: i32 = 1;
+
 pub struct Channel {
     /// Channel row ID from the control plane.
     pub id: i64,
@@ -45,6 +47,21 @@ pub struct Channel {
     /// `channel_types` row: 1 thread, 2 voice, 3 stage.
     pub channel_type: i32,
     pub members: Vec<Member>,
+    /// Messages of a text channel; empty for voice and stage.
+    pub thread: ThreadLog,
+}
+
+/// In-memory copy of a text channel's messages, filled page by page.
+#[derive(Default)]
+pub struct ThreadLog {
+    /// Oldest first.
+    pub messages: Vec<crate::api::DirectMessage>,
+    /// The newest page was requested (it may still be on its way).
+    pub loaded: bool,
+    /// The server has messages older than the first one here.
+    pub more: bool,
+    /// An older page was asked for and has not arrived yet.
+    pub loading_older: bool,
 }
 
 pub struct Server {
@@ -58,8 +75,8 @@ pub struct Server {
     /// Profile picture (local file). None = initial on a system-color tint.
     pub icon: Option<std::path::PathBuf>,
     pub channels: Vec<Channel>,
-    /// Index of the channel being watched on this server.
-    pub viewing: usize,
+    /// Index of the channel being watched on this server; None = its home page.
+    pub viewing: Option<usize>,
 }
 
 impl Server {
@@ -83,18 +100,18 @@ mod tests {
             members: vec![],
             icon: None,
             channels: vec![],
-            viewing: 0,
+            viewing: None,
         }
     }
 
     #[test]
     fn server_tracks_viewing_channel() {
         let mut servers = [server(1, "Casa"), server(2, "Band")];
-        assert_eq!(servers[0].viewing, 0);
-        assert_eq!(servers[1].viewing, 0);
+        assert_eq!(servers[0].viewing, None);
+        assert_eq!(servers[1].viewing, None);
 
-        servers[0].viewing = 2;
-        assert_eq!(servers[0].viewing, 2);
-        assert_eq!(servers[1].viewing, 0);
+        servers[0].viewing = Some(2);
+        assert_eq!(servers[0].viewing, Some(2));
+        assert_eq!(servers[1].viewing, None);
     }
 }

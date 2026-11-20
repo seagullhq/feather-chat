@@ -59,6 +59,11 @@ jobs:
             libx11-xcb-dev \
             libxkbcommon-x11-dev
 
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        if: runner.os != 'macOS'
+        with:
+          tool: cargo-packager@0.11.8
+
       - name: Build client
         if: runner.os != 'macOS'
         run: task build
@@ -67,26 +72,157 @@ jobs:
         if: runner.os == 'macOS'
         run: task bundle-client
 
+      # signtool is not on PATH on windows-2025: add the newest Windows SDK
+      # copy to PATH for the signing steps below.
+      - name: Locate signtool
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $st = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1
+          if (-not $st) { throw "signtool.exe not found: install the Windows SDK" }
+          Add-Content -Path $env:GITHUB_PATH -Value $st.DirectoryName
+
+      # Optional: signs the exe and the msi when the secrets are set (a PFX
+      # from a paid or free OSS code-signing certificate). Without them the
+      # installer ships unsigned and Windows SmartScreen warns on first run.
+      - name: Sign Windows binaries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
+          PFX_PASS: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
+        run: |
+          if (-not $env:PFX_B64) { Write-Host "No signing certificate, skipping"; exit 0 }
+          $pfx = Join-Path $env:RUNNER_TEMP "sign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_B64))
+          signtool sign /fd SHA256 /f $pfx /p $env:PFX_PASS /tr http://timestamp.digicert.com /td SHA256 dist/client/release/feather-chat.exe
+          Remove-Item $pfx
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        run: task package-msi
+
+      - name: Sign Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
+          PFX_PASS: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
+        run: |
+          if (-not $env:PFX_B64) { exit 0 }
+          $pfx = Join-Path $env:RUNNER_TEMP "sign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_B64))
+          $msi = Get-ChildItem dist/packages -Filter *.msi | Select-Object -First 1
+          signtool sign /fd SHA256 /f $pfx /p $env:PFX_PASS /tr http://timestamp.digicert.com /td SHA256 $msi.FullName
+          Remove-Item $pfx
+
+      - name: Build MSIX (Microsoft Store)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}
+          PFX_PASS: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
+          MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+        run: task package-msix
+
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
           tar -C dist/client/release -czf feather-chat-linux-x86_64.tar.gz feather-chat
 
+      - name: Build Linux AppImage
+        if: runner.os == 'Linux'
+        run: task package-appimage
+
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: |
-          ditto -c -k --keepParent "dist/Feather Chat.app" "feather-chat-macos-$(uname -m).zip"
+          ditto -c -k --keepParent "dist/Feather Chat.app" feather-chat-macos-arm64.zip
+          task dmg
+          mv dist/feather-chat-macos.dmg feather-chat-macos-arm64.dmg
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Compress-Archive -Path dist/client/release/feather-chat.exe -DestinationPath feather-chat-windows-x86_64.zip
+          Copy-Item (Get-ChildItem dist/packages -Filter *.msi | Select-Object -First 1).FullName feather-chat-windows-x86_64.msi
+          Copy-Item dist/packages/feather-chat-windows-x86_64.msix feather-chat-windows-x86_64.msix
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Collect AppImage (Linux)
+        if: runner.os == 'Linux'
+        run: cp dist/packages/*.AppImage feather-chat-linux-x86_64.AppImage
+
+      # One artifact per file, not zipped: GitHub otherwise wraps each upload
+      # in an extra zip, so the run shows one zip per OS.
+      - name: Upload Linux AppImage
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: feather-chat-${{ runner.os }}
-          path: feather-chat-*
+          name: feather-chat-linux-x86_64.AppImage
+          path: feather-chat-linux-x86_64.AppImage
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Linux tarball
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: feather-chat-linux-x86_64.tar.gz
+          path: feather-chat-linux-x86_64.tar.gz
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload macOS dmg
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: feather-chat-macos-arm64.dmg
+          path: feather-chat-macos-arm64.dmg
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload macOS zip
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: feather-chat-macos-arm64.zip
+          path: feather-chat-macos-arm64.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Windows msi
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: feather-chat-windows-x86_64.msi
+          path: feather-chat-windows-x86_64.msi
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Windows msix
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: feather-chat-windows-x86_64.msix
+          path: feather-chat-windows-x86_64.msix
+          archive: false
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Windows zip
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: feather-chat-windows-x86_64.zip
+          path: feather-chat-windows-x86_64.zip
+          archive: false
           if-no-files-found: error
           retention-days: 7
 
@@ -176,6 +312,10 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      # Build provenance attestations (free for public repos), verified with
+      # `gh attestation verify <file> -R seagullhq/feather-chat`.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
@@ -185,6 +325,11 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: sha256sum feather-chat-* > SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/feather-chat-*
 
       - name: Create GitHub release
         env:

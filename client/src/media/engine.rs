@@ -50,7 +50,7 @@ impl Engine {
         let (out_tx, out_rx) = rtrb::RingBuffer::<f32>::new(OUT_RING);
 
         let s = shared.clone();
-        let audio = std::thread::spawn(move || audio(s, cap_tx, out_rx));
+        let audio = std::thread::spawn(move || audio(s, true, cap_tx, out_rx));
         let (video_tx, video_rx) = std::sync::mpsc::sync_channel(1024);
         let s = shared.clone();
         let wsock = sock.try_clone().map_err(|e| e.to_string())?;

@@ -24,3 +24,13 @@ pub(super) fn audio_packet(ssrc: u32, seq: u32, term: bool, frame: &[u8]) -> Vec
 pub(super) fn rms(pcm: impl Iterator<Item = f32>, n: usize) -> f32 {
     ((pcm.map(|x| x * x).sum::<f32>() / n as f32).sqrt() * LEVEL_GAIN).min(1.)
 }
+
+/// Fast attack, slow release: the indicator lights on the first syllable and
+/// lingers through the gaps between words instead of flickering.
+pub(super) fn smooth_level(prev: f32, sample: f32) -> f32 {
+    if sample >= prev {
+        prev * 0.55 + sample * 0.45
+    } else {
+        prev * 0.93 + sample * 0.07
+    }
+}

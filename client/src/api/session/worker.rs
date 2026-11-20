@@ -1,14 +1,46 @@
 //! Worker thread: authenticates, then executes commands one at a time.
 
 use serde_json::json;
+use std::sync::Arc;
 
 use super::super::auth::{self, Request};
+use super::super::friends;
 use super::super::server;
 use super::Session;
 use super::command::{Command, Control};
 use super::event::Event;
 use super::reader::reader;
 use crate::media;
+
+/// Starts the media engine for a room the server already accepted, replacing
+/// any previous call's engine. The STATE frame keeps server-side mute flags in
+/// sync with the flags the engine started with.
+fn start_voice(
+    host: &str,
+    ssrc: u32,
+    muted: bool,
+    deafened: bool,
+    session: &mut Session,
+    engine: &mut Option<media::Engine>,
+    notify: media::Notify,
+) -> Option<Arc<media::Shared>> {
+    drop(engine.take());
+    let media = match media::Engine::start(host, ssrc, muted, deafened, notify) {
+        Ok(e) => {
+            let shared = e.shared();
+            let _ = engine.replace(e);
+            Some(shared)
+        }
+        Err(e) => {
+            eprintln!("voice engine: {e}");
+            None
+        }
+    };
+    let _ = session
+        .conn
+        .write(&json!({"type":"STATE","muted":muted,"deafened":deafened}));
+    media
+}
 
 fn commands(
     mut session: Session,
@@ -39,6 +71,8 @@ fn commands(
         }
     }
 
+    send_friends(&mut session, &events);
+
     while let Ok(command) = commands.recv_blocking() {
         match command {
             Command::Join {
@@ -46,33 +80,19 @@ fn commands(
                 muted,
                 deafened,
             } => {
-                drop(engine.take()); // moving channels: stop the old voice session first
                 match server::join_channel(&mut session, channel_id) {
                     Ok(j) => {
-                        let media = match media::Engine::start(
+                        // A failed JOIN leaves the old room/engine alone; only
+                        // a successful one replaces it.
+                        let media = start_voice(
                             &host,
                             ssrc,
                             muted,
                             deafened,
+                            &mut session,
+                            &mut engine,
                             notify(&self_tx),
-                        ) {
-                            Ok(e) => {
-                                let shared = e.shared();
-                                drop(engine.replace(e));
-                                Some(shared)
-                            }
-                            Err(e) => {
-                                let _ = events.send_blocking(Event::Error(format!(
-                                    "Impossibile avviare l'audio: {e}"
-                                )));
-                                None
-                            }
-                        };
-                        if muted || deafened {
-                            let _ = session
-                                .conn
-                                .write(&json!({"type":"STATE","muted":muted,"deafened":deafened}));
-                        }
+                        );
                         let _ = events.send_blocking(Event::Joined {
                             server_id: j.server_id,
                             channel_id: j.channel_id,
@@ -146,6 +166,60 @@ fn commands(
                 let _ = session
                     .conn
                     .write(&json!({"type":"STATE","muted":muted,"deafened":deafened}));
+            }
+            Command::DmCall { peer } => {
+                let _ = events.send_blocking(match friends::call_peer(&mut session, peer) {
+                    Ok(()) => Event::DmCallOutgoing { peer },
+                    Err(e) => Event::DmCallFailed(e),
+                });
+            }
+            Command::DmCallAccept {
+                peer,
+                muted,
+                deafened,
+            } => match friends::accept_call(&mut session, peer) {
+                Ok(()) => {
+                    let media = start_voice(
+                        &host,
+                        ssrc,
+                        muted,
+                        deafened,
+                        &mut session,
+                        &mut engine,
+                        notify(&self_tx),
+                    );
+                    let _ = events.send_blocking(Event::DmCallActive { peer, media });
+                }
+                Err(e) => {
+                    let _ = events.send_blocking(Event::DmCallFailed(e));
+                }
+            },
+            Command::DmCallJoin {
+                peer,
+                muted,
+                deafened,
+            } => {
+                // The server already joined both sessions on accept.
+                let media = start_voice(
+                    &host,
+                    ssrc,
+                    muted,
+                    deafened,
+                    &mut session,
+                    &mut engine,
+                    notify(&self_tx),
+                );
+                let _ = events.send_blocking(Event::DmCallActive { peer, media });
+            }
+            Command::DmCallReject { peer } => {
+                if let Err(e) = friends::reject_call(&mut session, peer) {
+                    let _ = events.send_blocking(Event::DmCallFailed(e));
+                }
+            }
+            Command::DmCallCancel { peer } => {
+                if let Err(e) = friends::cancel_call(&mut session, peer) {
+                    let _ = events.send_blocking(Event::DmCallFailed(e));
+                }
             }
             Command::ListChannels { server_id } => {
                 let _ =
@@ -269,6 +343,121 @@ fn commands(
                     let _ = events.send_blocking(Event::MembersChanged { server_id });
                 }
             }
+            Command::SendDm { peer, text } => match friends::send_dm(&mut session, peer, &text) {
+                Ok(msg) => {
+                    let _ = events.send_blocking(Event::DmSent { peer, msg });
+                }
+                Err(e) => {
+                    let _ = events.send_blocking(Event::FriendFailed(e));
+                }
+            },
+            Command::LoadDm { peer, before } => {
+                match friends::dm_history(&mut session, peer, before) {
+                    Ok(msgs) => {
+                        let _ = events.send_blocking(Event::DmHistory { peer, msgs, before });
+                    }
+                    Err(e) => {
+                        let _ = events.send_blocking(Event::FriendFailed(e));
+                    }
+                }
+            }
+            Command::SendThread {
+                server_id,
+                channel_id,
+                text,
+            } => match server::send_thread(&mut session, server_id, channel_id, &text) {
+                Ok(msg) => {
+                    let _ = events.send_blocking(Event::ThreadSent {
+                        server_id,
+                        channel_id,
+                        msg,
+                    });
+                }
+                Err(e) => {
+                    let _ = events.send_blocking(Event::ThreadFailed(e));
+                }
+            },
+            Command::ListThread {
+                server_id,
+                channel_id,
+                before,
+            } => match server::list_thread(&mut session, channel_id, before) {
+                Ok((msgs, has_more)) => {
+                    let _ = events.send_blocking(Event::ThreadHistory {
+                        server_id,
+                        channel_id,
+                        msgs,
+                        before,
+                        has_more,
+                    });
+                }
+                Err(e) => {
+                    let _ = events.send_blocking(Event::ThreadFailed(e));
+                }
+            },
+            Command::ListFriends => send_friends(&mut session, &events),
+            Command::SearchUsers { query } => {
+                if let Ok(users) = friends::search_users(&mut session, &query) {
+                    let _ = events.send_blocking(Event::UsersFound { query, users });
+                }
+            }
+            Command::AcceptFriend { user_id } => {
+                match friends::accept_friend(&mut session, user_id) {
+                    Ok(()) => send_friends(&mut session, &events),
+                    Err(e) => {
+                        let _ = events.send_blocking(Event::FriendFailed(e));
+                    }
+                }
+            }
+            Command::DeclineFriend { user_id } => {
+                match friends::decline_friend(&mut session, user_id) {
+                    Ok(()) => send_friends(&mut session, &events),
+                    Err(e) => {
+                        let _ = events.send_blocking(Event::FriendFailed(e));
+                    }
+                }
+            }
+            Command::RemoveFriend { user_id } => {
+                match friends::remove_friend(&mut session, user_id) {
+                    Ok(()) => send_friends(&mut session, &events),
+                    Err(e) => {
+                        let _ = events.send_blocking(Event::FriendFailed(e));
+                    }
+                }
+            }
+            Command::BlockFriend { user_id } => {
+                match friends::block_friend(&mut session, user_id) {
+                    Ok(()) => send_friends(&mut session, &events),
+                    Err(e) => {
+                        let _ = events.send_blocking(Event::FriendFailed(e));
+                    }
+                }
+            }
+            Command::CancelFriend { user_id } => {
+                match friends::cancel_friend(&mut session, user_id) {
+                    Ok(()) => send_friends(&mut session, &events),
+                    Err(e) => {
+                        let _ = events.send_blocking(Event::FriendFailed(e));
+                    }
+                }
+            }
+            Command::UnblockFriend { user_id } => {
+                match friends::unblock_friend(&mut session, user_id) {
+                    Ok(()) => send_friends(&mut session, &events),
+                    Err(e) => {
+                        let _ = events.send_blocking(Event::FriendFailed(e));
+                    }
+                }
+            }
+            Command::AddFriend { username } => match friends::add_friend(&mut session, &username) {
+                Ok(()) => {
+                    let _ = events.send_blocking(Event::FriendRequested);
+                    send_friends(&mut session, &events);
+                }
+                Err(e) => {
+                    let _ = events.send_blocking(Event::FriendFailed(e));
+                }
+            },
         }
     }
     session.shutdown();
@@ -285,6 +474,13 @@ fn notify(tx: &async_channel::Sender<Command>) -> media::Notify {
             media::Notice::KeyReq(ssrc) => Command::ScreenKeyReq { ssrc },
         });
     })
+}
+
+/// Pushes the fresh friend list to the UI. ponytail: a failed refresh keeps the old list.
+fn send_friends(session: &mut Session, events: &async_channel::Sender<Event>) {
+    if let Ok(list) = friends::list_friends(session) {
+        let _ = events.send_blocking(Event::FriendsListed(list));
+    }
 }
 
 /// Runs `req` on a worker thread and reports through `tx`. The returned handle

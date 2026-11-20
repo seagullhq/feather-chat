@@ -1,7 +1,8 @@
 use gpui::{App, KeyBinding};
 
 use super::{
-    Backspace, Copy, Cut, Delete, End, Home, Left, Paste, Right, SelectAll, SelectLeft, SelectRight,
+    Backspace, Copy, Cut, Delete, Down, End, Home, Left, Newline, Paste, Right, SelectAll,
+    SelectLeft, SelectRight, Up,
 };
 
 pub fn bind_keys(cx: &mut App) {
@@ -12,11 +13,29 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("right", Right, Some("TextInput")),
         KeyBinding::new("shift-left", SelectLeft, Some("TextInput")),
         KeyBinding::new("shift-right", SelectRight, Some("TextInput")),
+        KeyBinding::new("home", Home, Some("TextInput")),
+        KeyBinding::new("end", End, Some("TextInput")),
+        KeyBinding::new("up", Up, Some("TextInput")),
+        KeyBinding::new("down", Down, Some("TextInput")),
+        KeyBinding::new("shift-enter", Newline, Some("TextInput")),
+    ]);
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    cx.bind_keys([
         KeyBinding::new("ctrl-a", SelectAll, Some("TextInput")),
         KeyBinding::new("ctrl-v", Paste, Some("TextInput")),
         KeyBinding::new("ctrl-c", Copy, Some("TextInput")),
         KeyBinding::new("ctrl-x", Cut, Some("TextInput")),
-        KeyBinding::new("home", Home, Some("TextInput")),
-        KeyBinding::new("end", End, Some("TextInput")),
     ]);
+
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([
+        KeyBinding::new("cmd-a", SelectAll, Some("TextInput")),
+        KeyBinding::new("cmd-v", Paste, Some("TextInput")),
+        KeyBinding::new("cmd-c", Copy, Some("TextInput")),
+        KeyBinding::new("cmd-x", Cut, Some("TextInput")),
+        KeyBinding::new("cmd-q", crate::ui::Quit, None),
+    ]);
+    #[cfg(target_os = "macos")]
+    cx.on_action(|_: &crate::ui::Quit, cx| cx.quit());
 }

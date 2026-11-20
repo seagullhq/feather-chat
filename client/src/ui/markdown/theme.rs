@@ -1,6 +1,6 @@
 //! Colors and fonts used by the markdown renderer.
 
-use gpui::{Hsla, SharedString, rgb};
+use gpui::{Hsla, SharedString};
 
 #[derive(Clone)]
 pub struct MdTheme {
@@ -12,21 +12,6 @@ pub struct MdTheme {
     pub rule: Hsla,
     pub border: Hsla,
     pub mono: SharedString,
-}
-
-impl Default for MdTheme {
-    fn default() -> Self {
-        Self {
-            fg: rgb(0xcdd6f4).into(),
-            link: rgb(0x89b4fa).into(),
-            code_fg: rgb(0xf5c2e7).into(),
-            code_bg: rgb(0x313244).into(),
-            quote_bar: rgb(0x585b70).into(),
-            rule: rgb(0x45475a).into(),
-            border: rgb(0x45475a).into(),
-            mono: "monospace".into(), // set to a font you actually ship/have installed
-        }
-    }
 }
 
 impl MdTheme {

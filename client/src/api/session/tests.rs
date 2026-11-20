@@ -42,8 +42,11 @@ fn login_flow() {
             &json!({"type":"ACK","channelTypes":[{"id":2,"name":"voice"}]}),
         )
         .unwrap();
+        let m = read_frame(&mut s).unwrap();
+        assert_eq!(m["type"], "FETCH_FRIENDSHIP_REQUEST");
+        write_frame(&mut s, &json!({"type":"ACK","friends":[]})).unwrap();
         // Keep the socket open for a moment: closing immediately can race
-        // the Disconnected event ahead of ServersListed.
+        // the Disconnected event ahead of the final events.
         std::thread::sleep(std::time::Duration::from_millis(100));
     });
     let (tx, rx) = async_channel::unbounded();
@@ -73,6 +76,10 @@ fn login_flow() {
         }
         _ => panic!("expected ChannelTypesListed"),
     }
+    match rx.recv_blocking().unwrap() {
+        Event::FriendsListed(friends) => assert!(friends.is_empty()),
+        _ => panic!("expected FriendsListed"),
+    }
     assert!(matches!(rx.recv_blocking().unwrap(), Event::Disconnected));
     server.join().unwrap();
 }
@@ -100,6 +107,9 @@ fn create_server_flow() {
         )
         .unwrap();
         let m = read_frame(&mut s).unwrap();
+        assert_eq!(m["type"], "FETCH_FRIENDSHIP_REQUEST");
+        write_frame(&mut s, &json!({"type":"ACK","friends":[]})).unwrap();
+        let m = read_frame(&mut s).unwrap();
         assert_eq!(m["type"], "CREATE_SERVER");
         assert_eq!(m["serverName"], "Nuovo");
         write_frame(
@@ -112,6 +122,7 @@ fn create_server_flow() {
             }),
         )
         .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(100));
     });
     let (tx, rx) = async_channel::unbounded();
     let control = spawn(
@@ -140,8 +151,9 @@ fn create_server_flow() {
                 assert_eq!(invite_code, "abc1234");
                 break;
             }
-            Event::Disconnected => continue,
-            Event::ChannelTypesListed(_) => continue,
+            Event::Disconnected | Event::ChannelTypesListed(_) | Event::FriendsListed(_) => {
+                continue;
+            }
             _ => panic!("unexpected event"),
         }
     }
@@ -171,6 +183,9 @@ fn change_role_flow() {
         )
         .unwrap();
         let m = read_frame(&mut s).unwrap();
+        assert_eq!(m["type"], "FETCH_FRIENDSHIP_REQUEST");
+        write_frame(&mut s, &json!({"type":"ACK","friends":[]})).unwrap();
+        let m = read_frame(&mut s).unwrap();
         assert_eq!(m["type"], "MAKE_SERVER_ADMIN");
         assert_eq!(m["serverId"], 7);
         assert_eq!(m["userId"], 9);
@@ -180,7 +195,7 @@ fn change_role_flow() {
         assert_eq!(m["serverId"], 7);
         assert_eq!(m["userId"], 9);
         write_frame(&mut s, &json!({"type":"ACK"})).unwrap();
-        // Keep the socket open so the ACK is read before the Disconnected event.
+        // Keep the socket open so the ACKs are read before the Disconnected event.
         std::thread::sleep(std::time::Duration::from_millis(100));
     });
     let (tx, rx) = async_channel::unbounded();
@@ -210,7 +225,9 @@ fn change_role_flow() {
                     assert_eq!(server_id, 7);
                     break;
                 }
-                Event::ChannelTypesListed(_) | Event::Disconnected => continue,
+                Event::ChannelTypesListed(_) | Event::FriendsListed(_) | Event::Disconnected => {
+                    continue;
+                }
                 _ => panic!("unexpected event"),
             }
         }

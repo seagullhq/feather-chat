@@ -116,6 +116,30 @@ func (s *Store) Authenticate(ctx context.Context, identifier string, password st
 	return &user, nil
 }
 
+// FindByUsername returns the user with the given username, case-insensitively.
+func (s *Store) FindByUsername(ctx context.Context, username string) (*User, error) {
+	var user User
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, username, email, password_hash, created_at, updated_at
+		FROM users
+		WHERE lower(username) = lower($1)
+	`, strings.TrimSpace(username)).Scan(
+		&user.ID,
+		&user.Username,
+		&user.Email,
+		&user.PasswordHash,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
 // UpdateUsername changes the username of userID and returns the refreshed user.
 func (s *Store) UpdateUsername(ctx context.Context, userID int, username string) (*User, error) {
 	query := `

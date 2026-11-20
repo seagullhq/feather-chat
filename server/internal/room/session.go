@@ -35,6 +35,8 @@ type Session struct {
 	lastMu     sync.Mutex
 }
 
+const writeTimeout = 5 * time.Second
+
 // NewSession starts a session on a freshly accepted control connection.
 func NewSession(conn net.Conn) *Session {
 	return &Session{tcp: conn, lastSeen: time.Now()}
@@ -52,6 +54,9 @@ func (s *Session) Send(control protocol.Control) error {
 	}
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
+	// Pushes are written from other sessions' goroutines: a peer that stopped
+	// reading (half-open link, frozen client) must not stall them forever.
+	_ = s.tcp.SetWriteDeadline(time.Now().Add(writeTimeout))
 	return protocol.WriteFrame(s.tcp, b)
 }
 
