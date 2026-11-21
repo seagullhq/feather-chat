@@ -64,9 +64,13 @@ fn main() {
         )
         .unwrap()
     });
+    // Runtime detection macro is x86-only; CI also builds ARM macOS.
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     println!(
         "cpu features: avx2={} sse4.1={}",
         std::is_x86_feature_detected!("avx2"),
         std::is_x86_feature_detected!("sse4.1")
     );
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    println!("cpu features: n/a");
 }
