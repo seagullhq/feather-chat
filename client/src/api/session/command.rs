@@ -85,6 +85,22 @@ pub(super) enum Command {
         server_id: i64,
         user_id: i64,
     },
+    ScreenStart,
+    ScreenStop,
+    ScreenWatch {
+        ssrc: u32,
+    },
+    ScreenUnwatch {
+        ssrc: u32,
+    },
+    /// From the capture pipeline: first frame is ready, tell the server.
+    ScreenAnnounce,
+    /// From the capture pipeline: capture ended by itself.
+    ScreenEnded(Option<String>),
+    /// From the viewer pipeline: frames of this sharer were lost.
+    ScreenKeyReq {
+        ssrc: u32,
+    },
     ListFriends,
     SearchUsers {
         query: String,
@@ -275,6 +291,24 @@ impl Control {
             .is_ok()
     }
 
+    /// Starts sharing; the OS shows its source picker first.
+    pub fn screen_start(&self) -> bool {
+        self.tx.try_send(Command::ScreenStart).is_ok()
+    }
+
+    pub fn screen_stop(&self) -> bool {
+        self.tx.try_send(Command::ScreenStop).is_ok()
+    }
+
+    /// Subscribes to a room-mate's share (the server sends it only to watchers).
+    pub fn screen_watch(&self, ssrc: u32) -> bool {
+        self.tx.try_send(Command::ScreenWatch { ssrc }).is_ok()
+    }
+
+    pub fn screen_unwatch(&self, ssrc: u32) -> bool {
+        self.tx.try_send(Command::ScreenUnwatch { ssrc }).is_ok()
+    }
+
     pub fn ban_user(&self, server_id: i64, user_id: i64) -> bool {
         self.tx
             .try_send(Command::BanUser { server_id, user_id })
@@ -318,13 +352,18 @@ impl Control {
     }
 
     pub fn load_dm(&self, peer: i64) -> bool {
-        self.tx.try_send(Command::LoadDm { peer, before: None }).is_ok()
+        self.tx
+            .try_send(Command::LoadDm { peer, before: None })
+            .is_ok()
     }
 
     /// The page just older than message `before`.
     pub fn load_older_dm(&self, peer: i64, before: i64) -> bool {
         self.tx
-            .try_send(Command::LoadDm { peer, before: Some(before) })
+            .try_send(Command::LoadDm {
+                peer,
+                before: Some(before),
+            })
             .is_ok()
     }
 

@@ -250,14 +250,8 @@ impl Element for TextElement {
             (
                 Some(fill(
                     Bounds::from_corners(
-                        point(
-                            left + line.x_for_index(selected_range.start),
-                            bounds.top(),
-                        ),
-                        point(
-                            left + line.x_for_index(selected_range.end),
-                            bounds.bottom(),
-                        ),
+                        point(left + line.x_for_index(selected_range.start), bounds.top()),
+                        point(left + line.x_for_index(selected_range.end), bounds.bottom()),
                     ),
                     theme.selection,
                 )),
@@ -375,7 +369,10 @@ impl TextElement {
         };
         let runs = match input.marked_range.as_ref() {
             Some(m) if m.end <= text.len() => [
-                TextRun { len: m.start, ..run.clone() },
+                TextRun {
+                    len: m.start,
+                    ..run.clone()
+                },
                 TextRun {
                     len: m.end - m.start,
                     underline: Some(UnderlineStyle {
@@ -385,7 +382,10 @@ impl TextElement {
                     }),
                     ..run.clone()
                 },
-                TextRun { len: text.len() - m.end, ..run },
+                TextRun {
+                    len: text.len() - m.end,
+                    ..run
+                },
             ]
             .into_iter()
             .filter(|r| r.len > 0)
@@ -406,7 +406,9 @@ impl TextElement {
         if cur.y + lh > scroll + bounds.size.height {
             scroll = cur.y + lh - bounds.size.height;
         }
-        let scroll = scroll.min((total - bounds.size.height).max(px(0.))).max(px(0.));
+        let scroll = scroll
+            .min((total - bounds.size.height).max(px(0.)))
+            .max(px(0.));
         let origin = point(bounds.left(), bounds.top() - scroll);
 
         let mut selections = Vec::new();
@@ -435,7 +437,11 @@ impl TextElement {
             cursor,
             selection: None,
             scroll: px(0.),
-            multi: Some(Multi { lines, selections, scroll_y: scroll }),
+            multi: Some(Multi {
+                lines,
+                selections,
+                scroll_y: scroll,
+            }),
         }
     }
 }

@@ -49,7 +49,11 @@ impl Root {
             // ponytail: write errors ignored, the view just isn't remembered.
             let _ = ui::userfiles::write_user_file(
                 "last_view",
-                if *mode == Mode::Friends { "friends" } else { "servers" },
+                if *mode == Mode::Friends {
+                    "friends"
+                } else {
+                    "servers"
+                },
             );
             // Switching screens closes the mic check.
             let check = this.servers.read(cx).voice_check();
@@ -294,6 +298,14 @@ impl Root {
                     .update(cx, |view, cx| view.on_server_call_started(cx));
             }
             Event::JoinFailed(m) => eprintln!("could not join channel: {m}"),
+            Event::ShareStarted => self
+                .servers
+                .update(cx, |view, cx| view.on_share_started(cx)),
+            Event::ShareEnded(reason) => self
+                .servers
+                .update(cx, |view, cx| view.on_share_ended(reason, cx)),
+            Event::ScreenKeyReq => self.servers.update(cx, |view, _| view.on_key_req()),
+            Event::Error(m) => self.servers.update(cx, |view, cx| view.on_error(m, cx)),
             Event::MemberJoined { channel_id, member } => self
                 .servers
                 .update(cx, |view, cx| view.on_member_joined(channel_id, member, cx)),
@@ -367,9 +379,9 @@ impl Root {
             Event::DmReceived(m) => self
                 .friends
                 .update(cx, |view, cx| view.on_dm(m.author, m, false, cx)),
-            Event::DmCallLog { peer, msg } => self
-                .friends
-                .update(cx, |view, cx| view.on_dm(peer, msg.clone(), msg.author != peer, cx)),
+            Event::DmCallLog { peer, msg } => self.friends.update(cx, |view, cx| {
+                view.on_dm(peer, msg.clone(), msg.author != peer, cx)
+            }),
             Event::DmSent { peer, msg } => self
                 .friends
                 .update(cx, |view, cx| view.on_dm(peer, msg, true, cx)),

@@ -1,4 +1,5 @@
 use super::super::components::{CallBar, ToolButton};
+use super::members::ShareState;
 use crate::theme::ThemeExt;
 use gpui::prelude::*;
 
@@ -44,6 +45,19 @@ impl super::ServersView {
             Some(_) if !joined => bar = bar.lead(join("Join", true, cx)),
             Some(_) if self.joined != target => bar = bar.lead(join("Move here", false, cx)),
             _ => {}
+        }
+        if joined {
+            let (label, color) = match self.share {
+                ShareState::Off => ("Share", t.text),
+                ShareState::Picking => ("Cancel", t.muted),
+                ShareState::Live => ("Stop", t.danger),
+            };
+            bar = bar.lead(
+                ToolButton::new("share", label, "monitor")
+                    .reserve(5)
+                    .color(color)
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_share(cx))),
+            );
         }
         bar
     }

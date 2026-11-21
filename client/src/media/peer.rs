@@ -157,6 +157,9 @@ mod tests {
         // Sender rejoined: seq restarts far behind the newest one.
         p.insert(100, frame(100), false);
         p.insert(0, frame(0), false);
-        assert!(p.newest == Some(0) && p.queue.len() == 1, "restarted stream resets the peer");
+        assert!(
+            p.newest == Some(0) && p.queue.len() == 1,
+            "restarted stream resets the peer"
+        );
     }
 }

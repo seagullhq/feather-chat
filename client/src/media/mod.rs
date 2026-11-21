@@ -11,6 +11,7 @@ mod engine;
 mod peer;
 mod prefs;
 mod resample;
+mod share;
 mod shared;
 mod wire;
 mod worker;
@@ -21,9 +22,23 @@ mod tests;
 pub use check::{MicCheck, Step};
 pub use engine::Engine;
 pub use prefs::{PREFS, current_device, dev_name, host, system_default_device_name};
+pub use share::LOCAL_SCREEN;
 pub use shared::Shared;
 
+use std::sync::Arc;
 use std::time::Duration;
+
+/// What the screen-share pipelines tell the session layer.
+pub enum Notice {
+    /// Capture produced its first frame: announce the share to the server.
+    ShareStarted,
+    /// Capture ended by itself (picker cancelled, source closed, error).
+    ShareEnded(Option<String>),
+    /// A viewer lost frames of this sharer and needs a keyframe.
+    KeyReq(u32),
+}
+
+pub type Notify = Arc<dyn Fn(Notice) + Send + Sync>;
 
 pub const MEDIA_PORT: u16 = 7701;
 

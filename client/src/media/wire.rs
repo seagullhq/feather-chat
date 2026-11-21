@@ -4,6 +4,7 @@ use super::LEVEL_GAIN;
 
 pub(super) const KIND_AUDIO: u8 = 0;
 pub(super) const KIND_PING: u8 = 1;
+pub(super) const KIND_VIDEO: u8 = 2;
 pub(super) const TERMINATOR: u8 = 0x20;
 
 pub(super) fn header(flags: u8, ssrc: u32) -> Vec<u8> {

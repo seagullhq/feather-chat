@@ -16,17 +16,9 @@ impl super::SettingsView {
         cx: &mut Context<Self>,
     ) -> Div {
         let (list, cur, default_name) = if id == "mic" {
-            (
-                &self.mics,
-                self.mic,
-                self.default_mic.clone(),
-            )
+            (&self.mics, self.mic, self.default_mic.clone())
         } else {
-            (
-                &self.outs,
-                self.out,
-                self.default_out.clone(),
-            )
+            (&self.outs, self.out, self.default_out.clone())
         };
         let current = match cur {
             None => match &default_name {

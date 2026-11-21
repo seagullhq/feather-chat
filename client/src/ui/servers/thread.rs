@@ -441,14 +441,16 @@ impl super::ServersView {
         if !self.thread_floating() || !self.thread_expanded {
             // In a call with the chat unfolded: remember the tray's height, so
             // leaving the call eases the card up from it to its full size.
-            let in_tray = self.joined.is_some() && self.thread_expanded && self.thread_view().is_some();
+            let in_tray =
+                self.joined.is_some() && self.thread_expanded && self.thread_view().is_some();
             // The open-snap is for the card only: spent here, or it would skip the leave-call ease.
             self.thread_snap.set(0);
             if in_tray {
                 let vp = window.viewport_size();
                 let (w, _) = self.thread_area_for(vp);
                 let h = self.tray_body_h(vp) + TRAY_STRIP_H;
-                self.thread_shown.set(Some(((w, h), std::time::Instant::now())));
+                self.thread_shown
+                    .set(Some(((w, h), std::time::Instant::now())));
             } else {
                 // Folded: forget the size drawn last, so the next opening starts
                 // at its target instead of easing down from an old, larger size.

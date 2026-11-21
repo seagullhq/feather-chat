@@ -231,8 +231,14 @@ mod tests {
 
     #[test]
     fn call_lines_read_per_side() {
-        assert_eq!(call_line(&log("ended", 201), true), "Chiamata terminata · 3:21");
-        assert_eq!(call_line(&log("ended", 3725), false), "Chiamata terminata · 1:02:05");
+        assert_eq!(
+            call_line(&log("ended", 201), true),
+            "Chiamata terminata · 3:21"
+        );
+        assert_eq!(
+            call_line(&log("ended", 3725), false),
+            "Chiamata terminata · 1:02:05"
+        );
         assert_eq!(call_line(&log("ended", 0), true), "Chiamata terminata");
         assert_eq!(call_line(&log("missed", 0), true), "Nessuna risposta");
         assert_eq!(call_line(&log("missed", 0), false), "Chiamata persa");

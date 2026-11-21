@@ -148,4 +148,5 @@ type Member struct {
 	Name     string `json:"name"`
 	Muted    bool   `json:"muted"`
 	Deafened bool   `json:"deafened"`
+	Sharing  bool   `json:"sharing,omitempty"`
 }

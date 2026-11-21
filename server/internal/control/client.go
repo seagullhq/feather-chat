@@ -19,6 +19,9 @@ import (
 type client struct {
 	srv  *Server
 	sess *room.Session
+	// keyReq throttles SCREEN_KEYREQ per presenter. Owned by this connection's
+	// read loop, so it needs no lock.
+	keyReq keyReqLimiter
 }
 
 // handleConn runs the per-client TCP control session (HELLO/JOIN/LEAVE)

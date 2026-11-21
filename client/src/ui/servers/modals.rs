@@ -1,4 +1,4 @@
-//! Open/close state of the "add server" and "add channel" dialogs.
+//! Open/close state of the add dialogs.
 
 use super::ServersView;
 use gpui::{prelude::*, *};

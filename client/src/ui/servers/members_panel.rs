@@ -1,7 +1,7 @@
 //! Quick member list: a panel that slides out next to the sidebar and
 //! collapses as soon as the mouse leaves it.
 
-use super::super::components::Avatar;
+use super::super::components::{Avatar, icon};
 use super::sidebar::WIDTH;
 use crate::theme::ThemeExt;
 use gpui::{prelude::*, *};
@@ -72,6 +72,20 @@ impl super::ServersView {
             .filter(|_| self.members_visible)?;
         let opening = self.members_panel;
         let t = cx.theme();
+        // Server members and voice members are different lists: match the
+        // sharing flag by name (the roster uses SSRCs only while in a room).
+        let voice_sharing: std::collections::HashSet<&str> = self
+            .joined
+            .and_then(|(s, c)| self.servers.get(s).and_then(|s| s.channels.get(c)))
+            .map(|c| {
+                c.members
+                    .iter()
+                    .filter(|m| m.sharing)
+                    .map(|m| m.name.as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let me_sharing = self.share == super::members::ShareState::Live;
         let (owners, others): (Vec<_>, Vec<_>) = server
             .members
             .iter()
@@ -104,6 +118,10 @@ impl super::ServersView {
                             .hover(|s| s.bg(t.fill))
                             .child(Avatar::new(&m.name, 20.))
                             .child(div().flex_1().min_w_0().truncate().child(m.name.clone()))
+                            .when(
+                                (m.me && me_sharing) || voice_sharing.contains(m.name.as_str()),
+                                |d| d.child(icon("monitor", 13., t.accent)),
+                            )
                     }))
             })
         };

@@ -107,18 +107,17 @@ impl FriendsView {
                 .entry("minus", "Unfriend", move |_, _, cx| {
                     on_unfriend.update(cx, |this, cx| this.remove_friend(id, cx))
                 });
-                let actions = div()
-                    .flex()
-                    .gap_1()
-                    .child(
-                        ghost(("call", f.id as u64), "Call", "phone", &t).on_click(
+                let actions =
+                    div()
+                        .flex()
+                        .gap_1()
+                        .child(ghost(("call", f.id as u64), "Call", "phone", &t).on_click(
                             cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
                                 this.call_friend(id, cx);
                             }),
-                        ),
-                    )
-                    .child(menu);
+                        ))
+                        .child(menu);
                 let selected = self.selected_friend == Some(f.id);
                 row(
                     f.id,

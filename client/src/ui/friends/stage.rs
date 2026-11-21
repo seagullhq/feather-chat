@@ -229,8 +229,13 @@ impl FriendsView {
                     .child(preview),
             )
             .child(
-                ghost(("dm-chat-expand", friend.id as u64), "Espandi", "caret-up", t)
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_chat(cx))),
+                ghost(
+                    ("dm-chat-expand", friend.id as u64),
+                    "Espandi",
+                    "caret-up",
+                    t,
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_chat(cx))),
             )
     }
 

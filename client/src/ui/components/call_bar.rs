@@ -124,7 +124,11 @@ impl RenderOnce for CallBar {
             )
             .child(audio)
             .children(self.lead);
-        let right = if self.joined { right.child(leave) } else { right };
+        let right = if self.joined {
+            right.child(leave)
+        } else {
+            right
+        };
 
         div()
             .flex_none()

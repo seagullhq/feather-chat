@@ -20,6 +20,7 @@ use std::time::Duration;
 mod add_channel;
 mod add_server;
 mod controls;
+mod errors;
 mod last_view;
 mod members;
 mod members_panel;
@@ -84,6 +85,14 @@ pub struct ServersView {
     sheet_focus: FocusHandle,
     /// Levels and mute flags of the running voice session, while joined.
     media: Option<std::sync::Arc<media::Shared>>,
+    /// Our own screen share.
+    share: members::ShareState,
+    /// Sharers (by SSRC) whose screen we asked the server for.
+    watching: std::collections::HashSet<u32>,
+    /// Latest frame per watched sharer, with its version.
+    screens: std::collections::HashMap<u32, (u64, std::sync::Arc<RenderImage>)>,
+    /// Last background failure, shown over the stage until dismissed.
+    error: Option<String>,
     /// Mic check on the server home pages, shared with the friends stage.
     voice_check: Entity<VoiceCheck>,
     /// Open server and last channels, saved for the next start.
@@ -146,11 +155,13 @@ impl ServersView {
         )
         .detach();
 
-        // Copies mic and speaker levels from the voice engine into the model.
+        // Copies levels and new screen frames from the voice engine into the model.
+        // Screens need ~30 fps; levels only repaint on a visible change, so a
+        // silent call without a share still lets macOS pause its display link.
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
-                    .timer(Duration::from_millis(80))
+                    .timer(Duration::from_millis(33))
                     .await;
                 if this.update(cx, |t, cx| t.poll_media(cx)).is_err() {
                     break;
@@ -184,6 +195,10 @@ impl ServersView {
             row_top: Rc::default(),
             sheet_focus: cx.focus_handle(),
             media: None,
+            share: members::ShareState::Off,
+            watching: Default::default(),
+            screens: Default::default(),
+            error: None,
             voice_check,
             last: last_view::LastView::load(),
             thread_open: None,

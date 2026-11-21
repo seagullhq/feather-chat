@@ -24,14 +24,15 @@ type Session struct {
 	UserID   int
 	Username string
 
-	tcp      net.Conn
-	wmu      sync.Mutex // guards tcp writes
-	name     string     // display name, guarded by Manager.mu
-	lastSeen time.Time
-	pinged   bool // Prima ping ricevuta?
-	muted    bool // guarded by Manager.mu
-	deafened bool // guarded by Manager.mu
-	lastMu   sync.Mutex
+	tcp        net.Conn
+	wmu        sync.Mutex // guards tcp writes
+	name       string     // display name, guarded by Manager.mu
+	lastSeen   time.Time
+	pinged     bool // Prima ping ricevuta?
+	muted      bool // guarded by Manager.mu
+	deafened   bool // guarded by Manager.mu
+	shareState      // screen-share state, guarded by Manager.mu
+	lastMu     sync.Mutex
 }
 
 const writeTimeout = 5 * time.Second

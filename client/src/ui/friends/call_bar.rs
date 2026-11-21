@@ -55,7 +55,13 @@ impl FriendsView {
     /// only when it changes (both views observe each other, so it must not echo).
     pub(crate) fn dm_key(&self) -> Option<(i64, u8, bool, bool, u8)> {
         let dm = self.dm_call.as_ref()?;
-        Some((dm.peer, dm.phase as u8, dm.muted, dm.deafened, (dm.level * 20.) as u8))
+        Some((
+            dm.peer,
+            dm.phase as u8,
+            dm.muted,
+            dm.deafened,
+            (dm.level * 20.) as u8,
+        ))
     }
 
     pub(super) fn call_bar(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
