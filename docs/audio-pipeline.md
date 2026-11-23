@@ -1,46 +1,51 @@
-# Client audio pipeline (Qt side)
+# Client audio pipeline
 
 Design notes for the in-client media path. Server-side forwarding is in
 [server-design.md](server-design.md); protocol rationale in
-[protocol.md](protocol.md).
+[protocol.md](protocol.md); datagram layout in [wire-format.md](wire-format.md).
 
 ```
-mic ─► QAudioSource ─► ring buffer ─► Opus encode (20 ms) ─► QUdpSocket -► server
-                                        ▲ server received AUDIO per-SSRC ─► jitter buffer
-                                        │ per SSRC ─► Opus decode ─► mixer ─► QAudioSink
+mic ──► cpal ──► ring ──► Opus (20 ms) ──► UDP AUDIO
+                                              ▲ server forwards per SSRC
+desktop output ──► ring ──► Opus (20 ms) ──► UDP SYSAUDIO ──► watchers only
+                                              │
+UDP ──► per-speaker jitter buffer ──► Opus ──► mixer ──► cpal speakers
 ```
 
 ## Capture
 
-- `QAudioSource` with the callback API where the Qt version allows
-  (6.11+), `QIODevice` fallback otherwise — the callback is the only
-  low-latency interface Qt offers, and its thread is must-not-block.
-- Format: Int16 mono at 48 kHz. Encoder:
-  `opus_encoder_create(48000, 1, OPUS_APPLICATION_VOIP)`. Frame = 20 ms =
-  960 samples.
-- Each encoded frame becomes one UDP datagram with header + seq per
-  [wire-format.md](wire-format.md).
+- Format is 48 kHz mono i16; encoder is Opus, 20 ms = 960 samples.
+- The mic stream comes from cpal; a device rate other than 48 kHz is linearly
+  resampled. Device callbacks only push into lock-free rings.
+- Desktop audio is a **separate opt-in toggle**, not part of starting a share.
+  Video and audio can be started/stopped independently; stopping the share
+  always stops audio. It uses the presenter's SSRC and a separate Opus sequence.
+  - **Windows**: cpal loopback input stream on the selected output (render)
+    device; cpal sets `AUDCLNT_STREAMFLAGS_LOOPBACK`.
+  - **macOS**: a second, audio-only ScreenCaptureKit stream
+    (`with_captures_audio(true)`, `SCStreamOutputType::Audio`), downmixed to mono;
+    the video stream captures video only.
+  - **Linux**: the PulseAudio monitor source (`Monitor of ...` / `*.monitor`)
+    of the selected output device, via cpal.
+- Each encoded frame is one datagram: AUDIO (kind 0) for the mic, SYSAUDIO
+  (kind 3) for desktop audio. The server forwards SYSAUDIO only to sessions
+  subscribed with `SCREEN_WATCH`. Turning audio off sends one terminator frame.
+- Capture setup or runtime failures are reported to the UI and reset the
+  toggle; they never silently leave a live-looking control.
 
 ## Playback
 
-- Per-remote-SSRC jitter buffer: sorted deque sized 3–6 frames (60–120 ms
-  typically); driven by `QAudioSink`'s pull. Packets arriving after their
-  playout point are dropped (late == lost).
-- Packet Loss Concealment: gaps passed to `opus_decode(NULL, ...)`.
-- The **T flag** resets both the decoder and the speaking indicator on the
-  next packet, without timeout heuristics.
-- Mixer: sum PCM of active SSRCs into the output buffer, applying per-source
-  volume limiting.
+- Per-remote-SSRC jitter buffer, primed to 2 frames (up to 6 under jitter),
+  driven by the 20 ms mix loop. Late packets are dropped; gaps use Opus PLC.
+- The **T flag** ends the talkspurt, resets PLC and stops the level indicator.
+- Mic and desktop audio from the same SSRC use separate jitter buffers. Only
+  the mic drives the speaking ring; both are summed into the output mix.
+- Deafening keeps the speakers silent for both kinds.
 
 ## Threading
 
 - The audio callback does not allocate, lock, or do blocking IO — it only
   pushes into a lock-free ring buffer.
-- UDP receive lives on a dedicated `QThread` or event loop; no GUI objects
-  off the GUI thread.
-
-## Out of scope
-
-DTX and timestamps are excluded (see [protocol.md](protocol.md));
-encryption is a later roadmap item documented in
-[security-model.md](security-model.md).
+- The worker thread does ping, receive, encode, decode and mix on a fast loop;
+  video decode and desktop-audio capture each own a separate thread.
+- No GUI objects are touched off the UI thread.

@@ -105,6 +105,8 @@ pub enum Event {
     ShareStarted,
     /// Our screen share ended (None = we stopped it; Some = why it failed).
     ShareEnded(Option<String>),
+    /// Desktop-audio capture failed: the toggle is back off.
+    ShareAudioFailed(String),
     /// The server wants a keyframe from our share (a viewer joined or lost frames).
     ScreenKeyReq,
     /// A background operation failed: show the reason in the stage.

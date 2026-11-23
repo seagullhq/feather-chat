@@ -120,8 +120,27 @@ impl ServersView {
         }
         control.screen_stop();
         self.share = ShareState::Off;
+        self.share_audio = false;
         self.forget_screen(media::LOCAL_SCREEN, cx);
         cx.notify();
+    }
+
+    /// Turns the presenter's system audio on/off while sharing.
+    pub(super) fn toggle_share_audio(&mut self, cx: &mut Context<Self>) {
+        self.clear_error(cx);
+        let Some(control) = &self.control else {
+            return;
+        };
+        let on = !self.share_audio;
+        control.screen_audio(on);
+        self.share_audio = on;
+        cx.notify();
+    }
+
+    /// Capture failed in the media thread: reset the toggle and explain why.
+    pub fn on_share_audio_failed(&mut self, reason: String, cx: &mut Context<Self>) {
+        self.share_audio = false;
+        self.on_error(reason, cx);
     }
 
     pub fn on_share_started(&mut self, cx: &mut Context<Self>) {
@@ -136,6 +155,7 @@ impl ServersView {
             self.on_error(r, cx);
         }
         self.share = ShareState::Off;
+        self.share_audio = false;
         self.forget_screen(media::LOCAL_SCREEN, cx);
         cx.notify();
     }
@@ -169,6 +189,7 @@ impl ServersView {
     /// Drops every share state: we left the room or moved to another.
     fn reset_shares(&mut self, cx: &mut Context<Self>) {
         self.share = ShareState::Off;
+        self.share_audio = false;
         self.picker_open = false;
         self.watching.clear();
         self.clear_error(cx);

@@ -304,6 +304,9 @@ impl Root {
             Event::ShareEnded(reason) => self
                 .servers
                 .update(cx, |view, cx| view.on_share_ended(reason, cx)),
+            Event::ShareAudioFailed(reason) => self
+                .servers
+                .update(cx, |view, cx| view.on_share_audio_failed(reason, cx)),
             Event::ScreenKeyReq => self.servers.update(cx, |view, _| view.on_key_req()),
             Event::Error(m) => self.servers.update(cx, |view, cx| view.on_error(m, cx)),
             Event::MemberJoined { channel_id, member } => self

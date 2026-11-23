@@ -92,6 +92,8 @@ pub struct ServersView {
     media: Option<std::sync::Arc<media::Shared>>,
     /// Our own screen share.
     share: members::ShareState,
+    /// System audio is on for our share (independent of video).
+    pub(super) share_audio: bool,
     /// Sharers (by SSRC) whose screen we asked the server for.
     watching: std::collections::HashSet<u32>,
     /// Latest frame per watched sharer, with its version.
@@ -216,6 +218,7 @@ impl ServersView {
             sheet_focus: cx.focus_handle(),
             media: None,
             share: members::ShareState::Off,
+            share_audio: false,
             watching: Default::default(),
             screens: Default::default(),
             error: None,

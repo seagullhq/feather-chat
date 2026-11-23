@@ -91,6 +91,10 @@ pub(super) enum Command {
         source: Source,
     },
     ScreenStop,
+    /// Opt-in system audio for our screen share, independent of video.
+    ScreenAudio(bool),
+    /// From the desktop-audio pipeline: capture failed.
+    ScreenAudioFailed(String),
     ScreenWatch {
         ssrc: u32,
     },
@@ -302,6 +306,11 @@ impl Control {
 
     pub fn screen_stop(&self) -> bool {
         self.tx.try_send(Command::ScreenStop).is_ok()
+    }
+
+    /// Turns system-audio sharing on or off while a screen share is live.
+    pub fn screen_audio(&self, on: bool) -> bool {
+        self.tx.try_send(Command::ScreenAudio(on)).is_ok()
     }
 
     /// Subscribes to a room-mate's share (the server sends it only to watchers).

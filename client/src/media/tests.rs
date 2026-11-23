@@ -1,7 +1,8 @@
 //! Wire format and resampling tests. The jitter buffer test lives in `peer`.
 
+use super::audio::{mono, mono_average};
 use super::resample::{Pull, Push};
-use super::wire::{audio_packet, rms, smooth_level};
+use super::wire::{audio_packet, rms, smooth_level, sysaudio_packet};
 
 /// Byte layout from docs/wire-format.md §8, the same one the Go server decodes.
 #[test]
@@ -11,6 +12,28 @@ fn audio_packet_matches_wire_format() {
         [0x00, 0x11, 0x22, 0x33, 0x44, 0, 0, 0, 7, 0xAA]
     );
     assert_eq!(audio_packet(1, 0, true, &[])[0], 0x20);
+}
+
+/// SYSAUDIO is the AUDIO layout with kind 3 (wire-format.md §4b).
+#[test]
+fn sysaudio_packet_matches_wire_format() {
+    assert_eq!(
+        sysaudio_packet(0x11223344, 7, false, &[0xAA]),
+        [0x03, 0x11, 0x22, 0x33, 0x44, 0, 0, 0, 7, 0xAA]
+    );
+    assert_eq!(sysaudio_packet(1, 0, true, &[])[0], 0x20 | 0x03);
+}
+
+#[test]
+fn stereo_downmix_prefers_the_stronger_channel() {
+    // Same rule as the mic: a voice on one side must not be halved.
+    assert_eq!(mono(&[0.1f32, 0.8f32]), 0.8);
+    assert_eq!(mono(&[-0.9f32, 0.2f32]), -0.9);
+    assert_eq!(mono(&[0.5f32]), 0.5);
+    assert_eq!(mono::<f32>(&[]), 0.);
+    // System audio keeps both sides of a stereo mix.
+    assert_eq!(mono_average(&[1.0f32, 0.0]), 0.5);
+    assert_eq!(mono_average::<f32>(&[]), 0.);
 }
 
 #[test]

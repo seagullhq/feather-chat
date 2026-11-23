@@ -145,6 +145,27 @@ fn commands(
                     let _ = events.send_blocking(Event::ShareEnded(reason));
                 }
             }
+            Command::ScreenAudio(on) => {
+                let started = match (on, engine.as_mut()) {
+                    (false, Some(e)) => {
+                        let _ = e.set_share_audio(false);
+                        Ok(())
+                    }
+                    (true, Some(e)) if e.is_sharing() => e.set_share_audio(true),
+                    (true, _) => Err("start sharing before turning audio on".to_string()),
+                    (false, None) => Ok(()),
+                };
+                if let Err(e) = started {
+                    let _ = events.send_blocking(Event::ShareAudioFailed(e));
+                }
+            }
+            Command::ScreenAudioFailed(reason) => {
+                // The capture thread is gone; drop its sender and reset the UI.
+                if let Some(e) = engine.as_mut() {
+                    let _ = e.set_share_audio(false);
+                }
+                let _ = events.send_blocking(Event::ShareAudioFailed(reason));
+            }
             Command::ScreenWatch { ssrc } => {
                 if let Err(e) = session.call(json!({"type":"SCREEN_WATCH","ssrc":ssrc})) {
                     let _ = events.send_blocking(Event::Error(format!(
@@ -472,6 +493,7 @@ fn notify(tx: &async_channel::Sender<Command>) -> media::Notify {
             media::Notice::ShareStarted => Command::ScreenAnnounce,
             media::Notice::ShareEnded(r) => Command::ScreenEnded(r),
             media::Notice::KeyReq(ssrc) => Command::ScreenKeyReq { ssrc },
+            media::Notice::ShareAudioFailed(r) => Command::ScreenAudioFailed(r),
         });
     })
 }

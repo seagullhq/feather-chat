@@ -58,6 +58,20 @@ impl super::ServersView {
                     .color(color)
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_share(window, cx))),
             );
+            // Audio is opt-in and only exists while the share is live.
+            if self.share == ShareState::Live {
+                let (label, color) = if self.share_audio {
+                    ("Audio on", t.success)
+                } else {
+                    ("Share audio", t.text)
+                };
+                bar = bar.lead(
+                    ToolButton::new("share-audio", label, "speaker-high")
+                        .reserve(11)
+                        .color(color)
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_share_audio(cx))),
+                );
+            }
         }
         bar
     }

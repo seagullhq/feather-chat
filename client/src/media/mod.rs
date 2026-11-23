@@ -7,12 +7,14 @@
 
 mod audio;
 mod check;
+mod desktop;
 mod engine;
 mod peer;
 mod prefs;
 mod resample;
 mod share;
 mod shared;
+mod sysaudio;
 mod wire;
 mod worker;
 
@@ -36,6 +38,8 @@ pub enum Notice {
     ShareEnded(Option<String>),
     /// A viewer lost frames of this sharer and needs a keyframe.
     KeyReq(u32),
+    /// Desktop audio capture failed: show why and turn the toggle back off.
+    ShareAudioFailed(String),
 }
 
 pub type Notify = Arc<dyn Fn(Notice) + Send + Sync>;

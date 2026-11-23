@@ -7,6 +7,7 @@ use std::sync::atomic::Ordering::Relaxed;
 use super::audio::audio;
 use super::share::{Sender, viewer_loop};
 use super::shared::Shared;
+use super::sysaudio::Sender as SysAudioSender;
 use super::worker::worker;
 use super::{MEDIA_PORT, Notify, OUT_RING, RATE};
 use crate::capture::Source;
@@ -20,6 +21,8 @@ pub struct Engine {
     ssrc: u32,
     notify: Notify,
     sender: Option<Sender>,
+    /// Desktop-audio sender: only present while `Share audio` is on.
+    sysaudio: Option<SysAudioSender>,
 }
 
 impl Engine {
@@ -65,6 +68,7 @@ impl Engine {
             ssrc,
             notify,
             sender: None,
+            sysaudio: None,
         })
     }
 
@@ -82,7 +86,29 @@ impl Engine {
         Ok(())
     }
 
+    /// Turns desktop audio on/off, independently of video sharing.
+    pub fn set_share_audio(&mut self, on: bool) -> Result<(), String> {
+        if on {
+            if self.sysaudio.is_some() {
+                return Ok(());
+            }
+            let sock = self.sock.try_clone().map_err(|e| e.to_string())?;
+            self.sysaudio = Some(SysAudioSender::start(
+                self.shared.clone(),
+                sock,
+                self.ssrc,
+                self.notify.clone(),
+            ));
+        } else {
+            self.sysaudio = None;
+        }
+        Ok(())
+    }
+
     pub fn stop_share(&mut self) {
+        // Drop the audio sender first, while the worker socket is still alive,
+        // so its terminator reaches watchers.
+        self.sysaudio = None;
         self.sender = None;
         self.shared.sharing.store(false, Relaxed);
         // The preview is published under a reserved SSRC and has no viewer
@@ -108,6 +134,7 @@ impl Engine {
 
 impl Drop for Engine {
     fn drop(&mut self) {
+        self.sysaudio = None;
         self.sender = None;
         self.shared.stop.store(true, Relaxed);
         for t in self.threads.drain(..) {
