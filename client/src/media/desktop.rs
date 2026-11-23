@@ -16,6 +16,8 @@ use std::sync::Mutex;
 
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
 use cpal::traits::DeviceTrait;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use cpal::traits::HostTrait;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
 use cpal::traits::StreamTrait;
 
