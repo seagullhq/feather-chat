@@ -1,24 +1,14 @@
 //! Windows capture: Windows.Graphics.Capture with our own gpui source picker.
 //! `windows-capture` owns the capture thread (COM/MTA, DispatcherQueue and the
-//! message loop); this module enumerates sources, makes WGC thumbnails (GDI
-//! fallback), and forwards BGRA frames.
+//! message loop); this module enumerates sources, makes WGC thumbnails, and
+//! forwards BGRA frames.
 
 use super::{Event, Frame, Source};
 use std::ffi::c_void;
-use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
-
-use windows::Win32::Foundation::{HWND, RECT};
-use windows::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS,
-    DeleteDC, DeleteObject, GetDC, GetDIBits, GetMonitorInfoW, GetWindowDC, HBITMAP, HDC, HGDIOBJ,
-    HMONITOR, MONITORINFO, ReleaseDC, SRCCOPY, SelectObject, StretchBlt,
-};
-use windows::Win32::Storage::Xps::{PRINT_WINDOW_FLAGS, PrintWindow};
-use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, PW_RENDERFULLCONTENT};
 
 use windows_capture::capture::{Context, GraphicsCaptureApiHandler};
 use windows_capture::graphics_capture_api::InternalCaptureControl;
@@ -95,10 +85,9 @@ const CAPTURE_BORDERS: [DrawBorderSettings; 2] = [
     DrawBorderSettings::Default,
 ];
 
-/// Small BGRA still for the picker. WGC gives the exact composited colours;
-/// GDI is kept as a fallback for windows WGC refuses to capture.
+/// Small BGRA still for the picker, using the same WGC path as a live stream.
 pub fn thumbnail(source: &Source) -> Option<Frame> {
-    wgc_thumbnail(source).or_else(|| gdi_thumbnail(source))
+    wgc_thumbnail(source)
 }
 
 /// Captures one WGC frame and shrinks it to the picker's thumbnail size.
@@ -225,341 +214,22 @@ fn shrink_bgra(frame: Frame, max_w: u32, max_h: u32) -> Option<Frame> {
     })
 }
 
-fn gdi_thumbnail(source: &Source) -> Option<Frame> {
-    let (rect, dc, src_origin) = match source {
-        Source::Display { handle, .. } => {
-            let mut info = MONITORINFO {
-                cbSize: size_of::<MONITORINFO>() as u32,
-                ..Default::default()
-            };
-            if !unsafe { GetMonitorInfoW(HMONITOR(*handle as *mut c_void), &mut info) }.as_bool() {
-                return None;
-            }
-            let hdc = unsafe { GetDC(None) };
-            if hdc.is_invalid() {
-                return None;
-            }
-            (
-                info.rcMonitor,
-                BorrowedDc { hdc, hwnd: None },
-                (info.rcMonitor.left, info.rcMonitor.top),
-            )
-        }
-        Source::Window { handle, .. } => {
-            let hwnd = HWND(*handle as *mut c_void);
-            let mut rect = RECT::default();
-            if unsafe { GetWindowRect(hwnd, &mut rect) }.is_err() {
-                return None;
-            }
-            if rect.left < -10_000 || rect.top < -10_000 {
-                return None; // minimized window
-            }
-            let hdc = unsafe { GetWindowDC(Some(hwnd)) };
-            if hdc.is_invalid() {
-                return None;
-            }
-            (
-                rect,
-                BorrowedDc {
-                    hdc,
-                    hwnd: Some(hwnd),
-                },
-                (0, 0),
-            )
-        }
-        Source::Native => return None,
-    };
-
-    let sw = rect.right - rect.left;
-    let sh = rect.bottom - rect.top;
-    if sw <= 0 || sh <= 0 {
-        return None;
-    }
-    let scale = (THUMB_MAX_W as f32 / sw as f32).min(THUMB_MAX_H as f32 / sh as f32);
-    let dw = ((sw as f32 * scale).round() as i32).clamp(1, THUMB_MAX_W);
-    let dh = ((sh as f32 * scale).round() as i32).clamp(1, THUMB_MAX_H);
-
-    // For windows, ask the window to paint itself first: BitBlt from its DC
-    // would capture whatever is covering it, not the window we want to pick.
-    // Apps differ on which flag set they honour, so try both.
-    if let Some(hwnd) = dc.hwnd {
-        for flags in [
-            PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT),
-            PRINT_WINDOW_FLAGS(0),
-        ] {
-            if let Some(frame) = print_frame(hwnd, sw, sh, dw, dh, flags) {
-                if !is_blank(&frame) {
-                    return Some(frame);
-                }
-            }
-        }
-    }
-
-    let frame = blt_frame(dc.hdc, src_origin, sw, sh, dw, dh)?;
-    if !is_blank(&frame) || dc.hwnd.is_none() {
-        // A dark display is still a valid preview; a dark window has already
-        // exhausted its print options.
-        return Some(frame);
-    }
-    None // let the picker show its icon instead of a black card
-}
-
-/// 32bpp BI_RGB, top-down. GDI's compatible bitmaps inherit the DC depth, which
-/// can be 16bpp in a remote session; an explicit DIB section keeps full colour.
-fn bmi32(w: i32, h: i32) -> BITMAPINFO {
-    let mut bmi = BITMAPINFO::default();
-    let hdr: &mut BITMAPINFOHEADER = &mut bmi.bmiHeader;
-    hdr.biSize = size_of::<BITMAPINFOHEADER>() as u32;
-    hdr.biWidth = w;
-    hdr.biHeight = -h; // top-down rows, like our capture frames
-    hdr.biPlanes = 1;
-    hdr.biBitCount = 32;
-    hdr.biCompression = BI_RGB.0;
-    bmi
-}
-
-/// A 32bpp offscreen surface, independent of the source DC's colour depth.
-fn dib32(dc: HDC, w: i32, h: i32) -> Option<HBITMAP> {
-    let bmi = bmi32(w, h);
-    let bmp = unsafe {
-        CreateDIBSection(
-            Some(dc),
-            &bmi,
-            DIB_RGB_COLORS,
-            std::ptr::null_mut(),
-            None,
-            0,
-        )
-    }
-    .ok()?;
-    (!bmp.is_invalid()).then_some(bmp)
-}
-
-/// Copies a source DC into a small top-down BGRA DIB.
-fn blt_frame(src: HDC, origin: (i32, i32), sw: i32, sh: i32, dw: i32, dh: i32) -> Option<Frame> {
-    let mem = CompatDc(unsafe { CreateCompatibleDC(Some(src)) });
-    if mem.0.is_invalid() {
-        return None;
-    }
-    let bmp = Bitmap(dib32(src, dw, dh)?);
-    if bmp.0.is_invalid() {
-        return None;
-    }
-    let old = Selected(unsafe { SelectObject(mem.0, bmp.0.into()) }, mem.0);
-    if old.0.is_invalid() {
-        return None;
-    }
-
-    let ok = unsafe {
-        StretchBlt(
-            mem.0,
-            0,
-            0,
-            dw,
-            dh,
-            Some(src),
-            origin.0,
-            origin.1,
-            sw,
-            sh,
-            SRCCOPY,
-        )
-    };
-    if !ok.as_bool() {
-        return None;
-    }
-    read_bits(mem.0, bmp.0, dw, dh)
-}
-
-/// Fallback for windows whose DC BitBlt produces an all-black frame.
-fn print_frame(
-    hwnd: HWND,
-    sw: i32,
-    sh: i32,
-    dw: i32,
-    dh: i32,
-    flags: PRINT_WINDOW_FLAGS,
-) -> Option<Frame> {
-    let screen_hdc = unsafe { GetDC(None) };
-    if screen_hdc.is_invalid() {
-        return None;
-    }
-    let screen = BorrowedDc {
-        hdc: screen_hdc,
-        hwnd: None,
-    };
-
-    let full_dc = CompatDc(unsafe { CreateCompatibleDC(Some(screen.hdc)) });
-    if full_dc.0.is_invalid() {
-        return None;
-    }
-    let full_bmp = Bitmap(dib32(screen.hdc, sw, sh)?);
-    if full_bmp.0.is_invalid() {
-        return None;
-    }
-    let full_old = Selected(
-        unsafe { SelectObject(full_dc.0, full_bmp.0.into()) },
-        full_dc.0,
-    );
-    if full_old.0.is_invalid() {
-        return None;
-    }
-
-    let printed = unsafe { PrintWindow(hwnd, full_dc.0, flags) };
-    if !printed.as_bool() {
-        return None;
-    }
-
-    let thumb_dc = CompatDc(unsafe { CreateCompatibleDC(Some(screen.hdc)) });
-    if thumb_dc.0.is_invalid() {
-        return None;
-    }
-    let thumb_bmp = Bitmap(dib32(screen.hdc, dw, dh)?);
-    if thumb_bmp.0.is_invalid() {
-        return None;
-    }
-    let thumb_old = Selected(
-        unsafe { SelectObject(thumb_dc.0, thumb_bmp.0.into()) },
-        thumb_dc.0,
-    );
-    if thumb_old.0.is_invalid() {
-        return None;
-    }
-
-    let ok = unsafe {
-        StretchBlt(
-            thumb_dc.0,
-            0,
-            0,
-            dw,
-            dh,
-            Some(full_dc.0),
-            0,
-            0,
-            sw,
-            sh,
-            SRCCOPY,
-        )
-    };
-    if !ok.as_bool() {
-        return None;
-    }
-    read_bits(thumb_dc.0, thumb_bmp.0, dw, dh)
-}
-
-fn read_bits(hdc: HDC, bmp: HBITMAP, w: i32, h: i32) -> Option<Frame> {
-    let mut bmi = bmi32(w, h);
-    let mut data = vec![0u8; (w as usize) * (h as usize) * 4];
-    let lines = unsafe {
-        GetDIBits(
-            hdc,
-            bmp,
-            0,
-            h as u32,
-            Some(data.as_mut_ptr().cast::<c_void>()),
-            &mut bmi,
-            DIB_RGB_COLORS,
-        )
-    };
-    if lines != h {
-        return None;
-    }
-    // GDI leaves the 4th byte undefined (often 0), but gpui uses it as real
-    // alpha. Without this, previews render transparent or with wrong colours.
-    make_opaque(&mut data);
-    Some(Frame {
-        width: w as u32,
-        height: h as u32,
-        data,
-        ts_ms: 0,
-    })
-}
-
+/// gpui treats the 4th byte as real alpha; WGC can report transparent pixels.
 fn make_opaque(data: &mut [u8]) {
     for px in data.chunks_exact_mut(4) {
         px[3] = 255;
     }
 }
 
-/// A fully black window frame is almost always a failed GDI read, not content.
-fn is_blank(frame: &Frame) -> bool {
-    frame
-        .data
-        .chunks_exact(4)
-        .all(|px| px[0] == 0 && px[1] == 0 && px[2] == 0)
-}
-
 #[cfg(test)]
 mod thumbnail_tests {
-    use super::*;
-
-    fn frame(data: Vec<u8>) -> Frame {
-        Frame {
-            width: 1,
-            height: 1,
-            data,
-            ts_ms: 0,
-        }
-    }
+    use super::make_opaque;
 
     #[test]
-    fn black_window_is_blank() {
-        assert!(is_blank(&frame(vec![0, 0, 0, 255])));
-    }
-
-    #[test]
-    fn coloured_window_is_not_blank() {
-        assert!(!is_blank(&frame(vec![10, 20, 30, 255])));
-    }
-
-    #[test]
-    fn gdi_alpha_is_forced_opaque() {
+    fn alpha_is_forced_opaque() {
         let mut data = vec![10, 20, 30, 0, 40, 50, 60, 17];
         make_opaque(&mut data);
         assert_eq!(data, vec![10, 20, 30, 255, 40, 50, 60, 255]);
-    }
-}
-
-struct BorrowedDc {
-    hdc: HDC,
-    hwnd: Option<HWND>,
-}
-
-impl Drop for BorrowedDc {
-    fn drop(&mut self) {
-        unsafe {
-            ReleaseDC(self.hwnd, self.hdc);
-        }
-    }
-}
-
-struct CompatDc(HDC);
-
-impl Drop for CompatDc {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = DeleteDC(self.0);
-        }
-    }
-}
-
-struct Bitmap(HBITMAP);
-
-impl Drop for Bitmap {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = DeleteObject(self.0.into());
-        }
-    }
-}
-
-struct Selected(HGDIOBJ, HDC);
-
-impl Drop for Selected {
-    fn drop(&mut self) {
-        unsafe {
-            SelectObject(self.1, self.0);
-        }
     }
 }
 

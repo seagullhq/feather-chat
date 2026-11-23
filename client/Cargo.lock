@@ -1760,7 +1760,6 @@ dependencies = [
  "screencapturekit",
  "serde_json",
  "unicode-segmentation",
- "windows 0.62.2",
  "windows-capture 2.0.1",
  "yuv",
 ]
