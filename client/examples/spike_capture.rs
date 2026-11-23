@@ -1,5 +1,7 @@
 //! Spike fase 2: Linux Wayland capture via portal+PipeWire. Pick a source in the
 //! compositor dialog; prints size and fps for 10 s.
+// The spike compiles capture standalone; the app is the other user of these items.
+#[allow(dead_code)]
 #[path = "../src/capture/mod.rs"]
 mod capture;
 
