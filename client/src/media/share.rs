@@ -17,7 +17,7 @@ use super::shared::Shared;
 use super::wire::{KIND_VIDEO, header};
 use super::{Notice, Notify};
 use crate::capture::{
-    self, Event,
+    self, Event, Source,
     codec::{Decoder, Encoder},
     packet::{self, Reassembler},
 };
@@ -44,10 +44,16 @@ pub(super) struct Sender {
 }
 
 impl Sender {
-    pub(super) fn start(shared: Arc<Shared>, sock: UdpSocket, ssrc: u32, notify: Notify) -> Self {
+    pub(super) fn start(
+        source: Source,
+        shared: Arc<Shared>,
+        sock: UdpSocket,
+        ssrc: u32,
+        notify: Notify,
+    ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let s = stop.clone();
-        let thread = std::thread::spawn(move || send_loop(shared, sock, ssrc, notify, s));
+        let thread = std::thread::spawn(move || send_loop(source, shared, sock, ssrc, notify, s));
         Self {
             stop,
             thread: Some(thread),
@@ -65,6 +71,7 @@ impl Drop for Sender {
 }
 
 fn send_loop(
+    source: Source,
     shared: Arc<Shared>,
     sock: UdpSocket,
     ssrc: u32,
@@ -72,7 +79,7 @@ fn send_loop(
     stop: Arc<AtomicBool>,
 ) {
     let (tx, rx) = mpsc::sync_channel(2);
-    let _cap = capture::start(move |e| {
+    let _cap = capture::start_with(source, move |e| {
         // Frames may be dropped when we are behind; the end of capture must not be.
         if matches!(e, Event::Ended(_)) {
             let _ = tx.send(e);

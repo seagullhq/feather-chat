@@ -1,5 +1,7 @@
 //! Commands the UI sends, and the cloneable handle to their queue.
 
+use crate::capture::Source;
+
 pub(super) enum Command {
     Join {
         channel_id: i64,
@@ -85,7 +87,9 @@ pub(super) enum Command {
         server_id: i64,
         user_id: i64,
     },
-    ScreenStart,
+    ScreenStart {
+        source: Source,
+    },
     ScreenStop,
     ScreenWatch {
         ssrc: u32,
@@ -291,9 +295,9 @@ impl Control {
             .is_ok()
     }
 
-    /// Starts sharing; the OS shows its source picker first.
-    pub fn screen_start(&self) -> bool {
-        self.tx.try_send(Command::ScreenStart).is_ok()
+    /// Starts sharing a source already chosen by the UI.
+    pub fn screen_start(&self, source: Source) -> bool {
+        self.tx.try_send(Command::ScreenStart { source }).is_ok()
     }
 
     pub fn screen_stop(&self) -> bool {

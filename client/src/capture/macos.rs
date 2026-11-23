@@ -2,7 +2,7 @@
 //! as fallback). Frames arrive on the crate's GCD queue and are copied into
 //! tight BGRA before reaching the encoder.
 
-use super::{Event, Frame};
+use super::{Event, Frame, PICKER_CANCELLED};
 use screencapturekit::cm::SCFrameStatus;
 use screencapturekit::content_sharing_picker::{
     SCContentSharingPicker, SCContentSharingPickerConfiguration, SCPickerOutcome,
@@ -69,7 +69,7 @@ fn pick() -> Result<Option<(SCContentFilter, u32, u32)>, String> {
                 let (w, h) = result.pixel_size();
                 Ok((result.filter(), w, h))
             }
-            SCPickerOutcome::Cancelled => Err("cancelled".to_string()),
+            SCPickerOutcome::Cancelled => Err(PICKER_CANCELLED.to_string()),
             SCPickerOutcome::Error(e) => Err(e),
         };
         let _ = tx.send(value);

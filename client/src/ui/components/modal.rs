@@ -11,6 +11,7 @@ use std::rc::Rc;
 pub struct Modal {
     focus: FocusHandle,
     on_dismiss: Callback,
+    width: Pixels,
     children: Vec<AnyElement>,
 }
 
@@ -19,8 +20,15 @@ impl Modal {
         Self {
             focus: focus.clone(),
             on_dismiss: Rc::new(on_dismiss),
+            width: px(400.),
             children: vec![],
         }
+    }
+
+    /// Wider card for content that needs a grid, e.g. the source picker.
+    pub fn width(mut self, width: Pixels) -> Self {
+        self.width = width;
+        self
     }
 }
 
@@ -33,6 +41,7 @@ impl ParentElement for Modal {
 impl RenderOnce for Modal {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = cx.theme();
+        let width = self.width;
         let (on_esc, on_backdrop) = (self.on_dismiss.clone(), self.on_dismiss);
 
         deferred(
@@ -52,7 +61,7 @@ impl RenderOnce for Modal {
                 .on_mouse_down(MouseButton::Left, move |_, w, cx| on_backdrop(w, cx))
                 .child(
                     div()
-                        .w(px(400.))
+                        .w(width)
                         .p(px(24.))
                         .flex()
                         .flex_col()

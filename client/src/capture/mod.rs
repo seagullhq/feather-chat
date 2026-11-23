@@ -5,6 +5,34 @@
 pub mod codec;
 pub mod packet;
 
+/// A capture target chosen before the pipeline starts.
+///
+/// Windows picks from our own gpui dialog, so the selected native handle travels
+/// through the command queue to the capture thread. Other platforms keep their
+/// system picker and use `Native`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Source {
+    #[cfg_attr(target_os = "windows", allow(dead_code))] // unused once gpui picker is present
+    Native,
+    /// A display, identified by its `HMONITOR`.
+    #[cfg(target_os = "windows")]
+    Display { handle: usize, name: String },
+    /// An application window, identified by its `HWND`.
+    #[cfg(target_os = "windows")]
+    Window { handle: usize, name: String },
+}
+
+impl Source {
+    /// Text shown in the source picker.
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Native => "System picker",
+            #[cfg(target_os = "windows")]
+            Self::Display { name, .. } | Self::Window { name, .. } => name,
+        }
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod linux;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -14,8 +42,7 @@ pub use linux::{Capture, start};
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
-#[allow(unused_imports)] // Capture is only named by callers
-pub use windows::{Capture, start};
+pub use windows::{Capture, sources};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -47,6 +74,42 @@ mod unsupported {
 )))]
 #[allow(unused_imports)]
 pub use unsupported::{Capture, start};
+
+/// Sources offered by the custom picker. Empty where the system picker is used.
+#[cfg(not(target_os = "windows"))]
+pub fn sources() -> Result<Vec<Source>, String> {
+    Ok(Vec::new())
+}
+
+/// Starts capture with a target already chosen by the UI.
+pub fn start_with(source: Source, on_event: impl FnMut(Event) + Send + 'static) -> Capture {
+    #[cfg(target_os = "windows")]
+    {
+        windows::start_with(source, on_event)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = source;
+        start(on_event)
+    }
+}
+
+/// Small still image for the source picker. `None` where the system picker is used.
+pub fn thumbnail(source: &Source) -> Option<Frame> {
+    #[cfg(target_os = "windows")]
+    {
+        windows::thumbnail(source)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = source;
+        None
+    }
+}
+
+/// Reason reported by a native source picker when the user dismisses it.
+/// The UI treats this as a normal cancellation, not a failure.
+pub const PICKER_CANCELLED: &str = "cancelled";
 
 /// One captured frame: BGRA, row-major, `stride == width * 4`.
 pub struct Frame {

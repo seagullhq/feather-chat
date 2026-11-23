@@ -1,7 +1,7 @@
 //! Linux capture: XDG ScreenCast portal (the compositor shows its own source
 //! picker and hands back a PipeWire fd), then a PipeWire video stream.
 
-use super::{Event, Frame};
+use super::{Event, Frame, PICKER_CANCELLED};
 use ashpd::desktop::{
     PersistMode,
     screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType},
@@ -71,7 +71,7 @@ async fn portal() -> Result<(OwnedFd, u32, impl AsyncFnOnce()), String> {
         .await
         .map_err(e)?
         .response()
-        .map_err(|_| "cancelled".to_string())?; // picker dismissed
+        .map_err(|_| PICKER_CANCELLED.to_string())?; // picker dismissed
     let node = resp
         .streams()
         .first()

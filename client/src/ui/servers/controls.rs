@@ -49,14 +49,14 @@ impl super::ServersView {
         if joined {
             let (label, color) = match self.share {
                 ShareState::Off => ("Share", t.text),
-                ShareState::Picking => ("Cancel", t.muted),
+                ShareState::Picking => ("Annulla", t.muted),
                 ShareState::Live => ("Stop", t.danger),
             };
             bar = bar.lead(
                 ToolButton::new("share", label, "monitor")
                     .reserve(5)
                     .color(color)
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_share(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_share(window, cx))),
             );
         }
         bar

@@ -1,4 +1,4 @@
-use super::super::components::{Avatar, Button};
+use super::super::components::{Avatar, Button, icon};
 use super::super::voice_check::compact;
 use super::members::ShareState;
 use super::sidebar::server_face;
@@ -270,16 +270,49 @@ impl super::ServersView {
                             .child("Tu \u{2014} anteprima"),
                     )
                     .into_any_element(),
+                // Linux/macOS use their native picker; Windows uses our gpui
+                // dialog. Keep the in-app state explicit: what is happening,
+                // and a way to back out without hunting for the toolbar button.
+                None if self.share == ShareState::Picking => {
+                    card.flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap_3()
+                        .border_color(t.accent)
+                        .bg(t.accent.opacity(0.06))
+                        .child(icon("monitor", 26., t.accent))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .font_weight(FontWeight::BOLD)
+                                        .text_color(t.text)
+                                        .child("Scegli una sorgente"),
+                                )
+                                .child(
+                                    div()
+                                        .text_center()
+                                        .text_size(t.font_size * 0.9)
+                                        .text_color(t.muted)
+                                        .child("Seleziona un display o una finestra per iniziare"),
+                                ),
+                        )
+                        .child(Button::new("cancel-share", "Annulla").icon("x").on_click(
+                            cx.listener(|this, _, window, cx| this.toggle_share(window, cx)),
+                        ))
+                        .into_any_element()
+                }
                 None => card
                     .flex()
                     .items_center()
                     .justify_center()
                     .text_color(t.muted)
-                    .child(if self.share == ShareState::Picking {
-                        "Scegli una sorgente\u{2026}"
-                    } else {
-                        "Anteprima non disponibile"
-                    })
+                    .child("Anteprima non disponibile")
                     .into_any_element(),
             });
         }

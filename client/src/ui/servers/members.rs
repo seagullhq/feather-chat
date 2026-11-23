@@ -4,6 +4,7 @@ use super::{CallState, ServersView};
 use crate::api::RosterMember;
 use crate::media;
 use crate::model::{self, Member};
+use gpui::Window;
 use gpui::prelude::*;
 use std::sync::Arc;
 
@@ -17,6 +18,12 @@ pub(super) enum ShareState {
 
 /// Smallest level change worth a repaint (levels are 0..=1).
 const LEVEL_STEP: f32 = 0.01;
+
+/// Dismissing a system picker is not a failure. macOS/Linux report the shared
+/// cancellation reason, so neither shows a red banner for a plain cancellation.
+fn share_end_error(reason: Option<String>) -> Option<String> {
+    reason.filter(|r| r != crate::capture::PICKER_CANCELLED)
+}
 
 impl ServersView {
     /// Copies levels and new screen frames from the voice engine into the model.
@@ -85,20 +92,35 @@ impl ServersView {
     }
 
     /// Starts or stops our screen share.
-    pub(super) fn toggle_share(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn toggle_share(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(not(target_os = "windows"))]
+        let _ = window;
         self.clear_error(cx);
         let Some(control) = self.control.clone() else {
             return;
         };
         if self.share == ShareState::Off {
-            if control.screen_start() {
-                self.share = ShareState::Picking;
+            #[cfg(target_os = "windows")]
+            {
+                self.open_picker(window, cx);
+                return;
             }
-        } else {
-            control.screen_stop();
-            self.share = ShareState::Off;
-            self.forget_screen(media::LOCAL_SCREEN, cx);
+            #[cfg(not(target_os = "windows"))]
+            {
+                if control.screen_start(crate::capture::Source::Native) {
+                    self.share = ShareState::Picking;
+                }
+            }
+        } else if self.share == ShareState::Picking {
+            #[cfg(target_os = "windows")]
+            if self.picker_open {
+                self.close_picker(window, cx);
+                return;
+            }
         }
+        control.screen_stop();
+        self.share = ShareState::Off;
+        self.forget_screen(media::LOCAL_SCREEN, cx);
         cx.notify();
     }
 
@@ -109,7 +131,8 @@ impl ServersView {
     }
 
     pub fn on_share_ended(&mut self, reason: Option<String>, cx: &mut Context<Self>) {
-        if let Some(r) = reason {
+        self.picker_open = false;
+        if let Some(r) = share_end_error(reason) {
             self.on_error(r, cx);
         }
         self.share = ShareState::Off;
@@ -146,6 +169,7 @@ impl ServersView {
     /// Drops every share state: we left the room or moved to another.
     fn reset_shares(&mut self, cx: &mut Context<Self>) {
         self.share = ShareState::Off;
+        self.picker_open = false;
         self.watching.clear();
         self.clear_error(cx);
         for (_, (_, old)) in std::mem::take(&mut self.screens) {
@@ -280,5 +304,23 @@ impl ServersView {
         self.me.deafened = !self.me.deafened;
         self.sync_state();
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::share_end_error;
+
+    #[test]
+    fn picker_dismissal_is_not_an_error() {
+        assert_eq!(share_end_error(None), None);
+        assert_eq!(
+            share_end_error(Some(crate::capture::PICKER_CANCELLED.into())),
+            None
+        );
+        assert_eq!(
+            share_end_error(Some("device lost".into())).as_deref(),
+            Some("device lost")
+        );
     }
 }

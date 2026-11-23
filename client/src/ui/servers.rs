@@ -3,7 +3,7 @@
 //! This file holds the entity, its constructors and the render tree; the
 //! behaviour is grouped by concern in the private submodules:
 //! `state` (control-plane state), `members` (voice roster and levels) and
-//! `modals` (open/close state of the add dialogs).
+//! `modals` (open/close state of the dialogs, including the source picker).
 
 use super::voice_check::VoiceCheck;
 use super::{ToggleDeafen, ToggleMute, tab_nav};
@@ -27,12 +27,14 @@ mod members_panel;
 mod modals;
 mod server_sheet;
 mod sidebar;
+mod source_picker;
 mod stage;
 mod state;
 mod thread;
 
 use add_channel::AddChannelModal;
 use add_server::{AddServerModal, ModalEvent};
+use source_picker::SourcePicker;
 
 /// Tells the shell about things other screens care about.
 pub enum ServersEvent {
@@ -65,6 +67,9 @@ pub struct ServersView {
     focused_once: bool,
     add: Entity<AddServerModal>,
     add_channel: Entity<AddChannelModal>,
+    source_picker: Entity<SourcePicker>,
+    /// The gpui picker is open (distinct from capture starting without it).
+    picker_open: bool,
     channel_types: Vec<ChannelTypeSummary>,
     control: Option<Control>,
     server_menu: bool,
@@ -155,6 +160,19 @@ impl ServersView {
         )
         .detach();
 
+        let source_picker = cx.new(SourcePicker::new);
+        cx.subscribe_in(
+            &source_picker,
+            window,
+            |this, _, event: &source_picker::ModalEvent, window, cx| match event {
+                source_picker::ModalEvent::Close => this.close_picker(window, cx),
+                source_picker::ModalEvent::Pick { source } => {
+                    this.on_source_picked(source.clone(), window, cx)
+                }
+            },
+        )
+        .detach();
+
         // Copies levels and new screen frames from the voice engine into the model.
         // Screens need ~30 fps; levels only repaint on a visible change, so a
         // silent call without a share still lets macOS pause its display link.
@@ -181,6 +199,8 @@ impl ServersView {
             focused_once: false,
             add,
             add_channel,
+            source_picker,
+            picker_open: false,
             channel_types: Vec::new(),
             control: None,
             server_menu: false,
@@ -310,6 +330,7 @@ impl Render for ServersView {
         let t = cx.theme();
         let server_modal = self.adding.then(|| self.add.clone());
         let channel_modal = self.adding_channel.then(|| self.add_channel.clone());
+        let picker_modal = self.picker_open.then(|| self.source_picker.clone());
         tab_nav(div())
             .key_context("Stage")
             .track_focus(&self.focus)
@@ -342,5 +363,6 @@ impl Render for ServersView {
             )
             .children(server_modal)
             .children(channel_modal)
+            .children(picker_modal)
     }
 }

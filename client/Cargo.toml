@@ -71,8 +71,15 @@ pipewire = "0.10"
 async-io = "2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-# screen capture: Windows.Graphics.Capture (native picker, BGRA frames)
+# screen capture: Windows.Graphics.Capture (gpui picker, BGRA frames)
 windows-capture = "=2.0.1"
+# WGC thumbnails with a GDI/PrintWindow fallback for the gpui picker
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_Xps",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

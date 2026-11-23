@@ -109,9 +109,9 @@ fn commands(
                 drop(engine.take());
                 let _ = session.conn.write(&json!({"type":"LEAVE"}));
             }
-            Command::ScreenStart => {
+            Command::ScreenStart { source } => {
                 let started = match engine.as_mut() {
-                    Some(e) if !e.is_sharing() => e.start_share(),
+                    Some(e) if !e.is_sharing() => e.start_share(source),
                     Some(_) => Ok(()), // already sharing
                     None => Err("join a voice channel first".to_string()),
                 };
