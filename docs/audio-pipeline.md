@@ -21,7 +21,9 @@ UDP ──► per-speaker jitter buffer ──► Opus ──► mixer ──►
   Video and audio can be started/stopped independently; stopping the share
   always stops audio. It uses the presenter's SSRC and a separate Opus sequence.
   - **Windows**: cpal loopback input stream on the selected output (render)
-    device; cpal sets `AUDCLNT_STREAMFLAGS_LOOPBACK`.
+    device; cpal sets `AUDCLNT_STREAMFLAGS_LOOPBACK`. WASAPI's
+    `DATA_DISCONTINUITY` when playback resumes after silence is a benign
+    `Xrun` and is ignored; real device/stream errors still reset the toggle.
   - **macOS**: a second, audio-only ScreenCaptureKit stream
     (`with_captures_audio(true)`, `SCStreamOutputType::Audio`), downmixed to mono;
     the video stream captures video only.

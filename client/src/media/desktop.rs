@@ -54,6 +54,13 @@ impl Drop for Capture {
 
 // ---- cpal loopback: Windows render device and Linux PulseAudio monitor ----
 
+/// WASAPI reports `DATA_DISCONTINUITY` when loopback playback resumes after a
+/// silent period; cpal calls that `Xrun`. It is normal, not a capture failure.
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+fn fatal_capture_error(e: &cpal::Error) -> bool {
+    !(cfg!(target_os = "windows") && e.kind() == cpal::ErrorKind::Xrun)
+}
+
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
 fn build_input(
     dev: &cpal::Device,
@@ -65,7 +72,9 @@ fn build_input(
     let mut cfg = sup.config();
     cfg.buffer_size = super::audio::small_buffer(&sup);
     let err = move |e: cpal::Error| {
-        let _ = err_tx.send(e.to_string());
+        if fatal_capture_error(&e) {
+            let _ = err_tx.send(e.to_string());
+        }
     };
     let stream = match fmt {
         cpal::SampleFormat::F32 => input::<f32>(dev, &cfg, tx, err)?,
@@ -303,4 +312,21 @@ fn run(tx: rtrb::Producer<i16>, err_tx: Sender<String>, stop: Arc<AtomicBool>) {
 )))]
 fn run(_: rtrb::Producer<i16>, err_tx: Sender<String>, _: Arc<AtomicBool>) {
     let _ = err_tx.send("desktop audio is not available on this platform".into());
+}
+
+#[cfg(all(
+    test,
+    any(target_os = "windows", target_os = "linux", target_os = "freebsd")
+))]
+mod tests {
+    use super::fatal_capture_error;
+
+    #[test]
+    fn wasapi_loopback_xrun_is_not_fatal() {
+        let xrun = cpal::Error::new(cpal::ErrorKind::Xrun);
+        assert_eq!(fatal_capture_error(&xrun), !cfg!(target_os = "windows"));
+
+        let lost = cpal::Error::new(cpal::ErrorKind::DeviceNotAvailable);
+        assert!(fatal_capture_error(&lost));
+    }
 }
