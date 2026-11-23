@@ -94,6 +94,8 @@ pub struct ServersView {
     share: members::ShareState,
     /// System audio is on for our share (independent of video).
     pub(super) share_audio: bool,
+    /// Captured desktop-audio level, shown as the Share audio meter.
+    pub(super) share_audio_level: f32,
     /// Sharers (by SSRC) whose screen we asked the server for.
     watching: std::collections::HashSet<u32>,
     /// Latest frame per watched sharer, with its version.
@@ -219,6 +221,7 @@ impl ServersView {
             media: None,
             share: members::ShareState::Off,
             share_audio: false,
+            share_audio_level: 0.,
             watching: Default::default(),
             screens: Default::default(),
             error: None,

@@ -48,6 +48,12 @@ impl ServersView {
             m.mic_level()
         };
         set(&mut self.me.level, mine);
+        let audio = if self.share_audio {
+            m.share_audio_level()
+        } else {
+            0.
+        };
+        set(&mut self.share_audio_level, audio);
         let levels = m.peer_levels();
         if let Some(channel) = self.servers.get_mut(s).and_then(|s| s.channels.get_mut(c)) {
             for member in &mut channel.members {
@@ -121,6 +127,7 @@ impl ServersView {
         control.screen_stop();
         self.share = ShareState::Off;
         self.share_audio = false;
+        self.share_audio_level = 0.;
         self.forget_screen(media::LOCAL_SCREEN, cx);
         cx.notify();
     }
@@ -140,6 +147,7 @@ impl ServersView {
     /// Capture failed in the media thread: reset the toggle and explain why.
     pub fn on_share_audio_failed(&mut self, reason: String, cx: &mut Context<Self>) {
         self.share_audio = false;
+        self.share_audio_level = 0.;
         self.on_error(reason, cx);
     }
 
@@ -156,6 +164,7 @@ impl ServersView {
         }
         self.share = ShareState::Off;
         self.share_audio = false;
+        self.share_audio_level = 0.;
         self.forget_screen(media::LOCAL_SCREEN, cx);
         cx.notify();
     }
@@ -190,6 +199,7 @@ impl ServersView {
     fn reset_shares(&mut self, cx: &mut Context<Self>) {
         self.share = ShareState::Off;
         self.share_audio = false;
+        self.share_audio_level = 0.;
         self.picker_open = false;
         self.watching.clear();
         self.clear_error(cx);

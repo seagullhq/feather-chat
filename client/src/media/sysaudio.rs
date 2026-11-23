@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use super::desktop::Capture;
 use super::shared::Shared;
-use super::wire::sysaudio_packet;
+use super::wire::{rms, smooth_level, sysaudio_packet};
 use super::{FRAME, Notice, Notify, RATE};
 
 /// Slightly higher than voice: screen audio is often music or video.
@@ -72,6 +72,7 @@ fn send_loop(
 
     let (mut pcm, mut have) = ([0i16; FRAME], 0usize);
     let (mut seq, mut sending) = (0u32, false);
+    let mut level = 0f32;
     let mut coded = [0u8; 400];
     let mut failed = None;
     while !stop.load(Relaxed) && !shared.stop.load(Relaxed) {
@@ -88,8 +89,12 @@ fn send_loop(
             have = 0;
             // Until SCREEN_START is acknowledged the server drops these.
             if !shared.sharing.load(Relaxed) {
+                level = 0.;
+                shared.set_share_audio_level(level);
                 continue;
             }
+            level = smooth_level(level, rms(pcm.iter().map(|&s| s as f32 / 32768.), FRAME));
+            shared.set_share_audio_level(level);
             if let Ok(len) = enc.encode_i16(&pcm, FRAME, &mut coded) {
                 let p = sysaudio_packet(ssrc, seq, false, &coded[..len]);
                 let _ = sock.send(&p);
@@ -122,5 +127,6 @@ fn send_loop(
     if let Some(e) = failed {
         notify(Notice::ShareAudioFailed(e));
     }
+    shared.set_share_audio_level(0.);
     drop(capture);
 }

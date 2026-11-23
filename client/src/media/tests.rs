@@ -1,5 +1,6 @@
 //! Wire format and resampling tests. The jitter buffer test lives in `peer`.
 
+use super::Shared;
 use super::audio::{mono, mono_average};
 use super::resample::{Pull, Push};
 use super::wire::{audio_packet, rms, smooth_level, sysaudio_packet};
@@ -34,6 +35,16 @@ fn stereo_downmix_prefers_the_stronger_channel() {
     // System audio keeps both sides of a stereo mix.
     assert_eq!(mono_average(&[1.0f32, 0.0]), 0.5);
     assert_eq!(mono_average::<f32>(&[]), 0.);
+}
+
+#[test]
+fn share_audio_level_is_clamped_for_the_meter() {
+    let shared = Shared::default();
+    assert_eq!(shared.share_audio_level(), 0.);
+    shared.set_share_audio_level(0.42);
+    assert_eq!(shared.share_audio_level(), 0.42);
+    shared.set_share_audio_level(2.);
+    assert_eq!(shared.share_audio_level(), 1.);
 }
 
 #[test]

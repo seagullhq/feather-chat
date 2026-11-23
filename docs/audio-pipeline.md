@@ -33,7 +33,9 @@ UDP ──► per-speaker jitter buffer ──► Opus ──► mixer ──►
   (kind 3) for desktop audio. The server forwards SYSAUDIO only to sessions
   subscribed with `SCREEN_WATCH`. Turning audio off sends one terminator frame.
 - Capture setup or runtime failures are reported to the UI and reset the
-  toggle; they never silently leave a live-looking control.
+  toggle; they never silently leave a live-looking control. While the toggle
+  is on, the call bar shows an underline meter of the level actually reaching
+  the Opus encoder, so silence and capture failure look different.
 
 ## Playback
 

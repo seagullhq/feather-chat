@@ -13,6 +13,8 @@ pub struct Shared {
     pub muted: AtomicBool,
     pub deafened: AtomicBool,
     pub(super) mic: AtomicU32,
+    /// Smoothed level of our desktop-audio capture, while Share audio is on.
+    pub(super) sysaudio: AtomicU32,
     /// Last round trip to the server in microseconds; 0 = no echo yet.
     pub(super) rtt_us: AtomicU32,
     pub(super) peers: Mutex<HashMap<u32, f32>>,
@@ -31,6 +33,15 @@ pub struct Shared {
 impl Shared {
     pub fn mic_level(&self) -> f32 {
         f32::from_bits(self.mic.load(Relaxed))
+    }
+
+    /// Smoothed desktop-audio level 0..1 for the Share audio meter.
+    pub fn share_audio_level(&self) -> f32 {
+        f32::from_bits(self.sysaudio.load(Relaxed))
+    }
+
+    pub(super) fn set_share_audio_level(&self, level: f32) {
+        self.sysaudio.store(level.clamp(0., 1.).to_bits(), Relaxed);
     }
 
     /// Round trip to the media server (PING echo), in ms.

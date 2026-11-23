@@ -1,7 +1,7 @@
 use super::super::components::{CallBar, ToolButton};
 use super::members::ShareState;
 use crate::theme::ThemeExt;
-use gpui::prelude::*;
+use gpui::{prelude::*, *};
 
 impl super::ServersView {
     /// Call bar under the stage, always shown: join / move buttons for the
@@ -65,12 +65,29 @@ impl super::ServersView {
                 } else {
                     ("Share audio", t.text)
                 };
-                bar = bar.lead(
-                    ToolButton::new("share-audio", label, "speaker-high")
-                        .reserve(11)
-                        .color(color)
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_share_audio(cx))),
-                );
+                let button = ToolButton::new("share-audio", label, "speaker-high")
+                    .reserve(11)
+                    .color(color)
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_share_audio(cx)));
+                // Same underline as the mic: the track means audio is on, the
+                // fill follows the level actually reaching the Opus encoder.
+                bar = bar.lead(div().relative().child(button).when(self.share_audio, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .bottom(px(1.))
+                            .left(px(6.))
+                            .right(px(6.))
+                            .h(px(2.))
+                            .bg(t.fill)
+                            .child(
+                                div()
+                                    .h_full()
+                                    .w(relative(self.share_audio_level.clamp(0., 1.)))
+                                    .bg(t.success),
+                            ),
+                    )
+                }));
             }
         }
         bar
