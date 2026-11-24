@@ -60,10 +60,7 @@ func (s *Server) handleState(c *client, msg protocol.Control) {
 	me := s.rooms.SetState(c.sess, msg.Muted, msg.Deafened)
 	if strings.HasPrefix(c.sess.Room, "dm:") {
 		// DM calls have no server to fan out to: tell the room-mates directly.
-		notify(s.rooms.Others(c.sess), protocol.Control{
-			Type: "DM_CALL_STATE", Room: c.sess.Room, UserID: c.sess.UserID,
-			Muted: msg.Muted, Deafened: msg.Deafened,
-		})
+		s.notifyDmCallState(c, me)
 		return
 	}
 	s.notifyServer(c.sess.ServerID, c.sess, protocol.Control{Type: "MEMBER_STATE", ChannelID: c.sess.ChannelID, Member: &me})

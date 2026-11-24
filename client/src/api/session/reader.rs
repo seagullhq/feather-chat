@@ -75,6 +75,8 @@ fn push(frame: &Value) -> Option<Event> {
                 peer: frame["userId"].as_i64()?,
                 muted: frame["muted"].as_bool().unwrap_or(false),
                 deafened: frame["deafened"].as_bool().unwrap_or(false),
+                sharing: frame["sharing"].as_bool().unwrap_or(false),
+                ssrc: frame["ssrc"].as_u64().map(|v| v as u32),
             });
         }
         _ => {}

@@ -33,7 +33,7 @@ impl Root {
         let (events, rx) = async_channel::unbounded();
         let auth = cx.new(AuthView::new);
         let servers = cx.new(|cx| ServersView::new(window, cx));
-        let friends = cx.new(|cx| FriendsView::new(servers.clone(), cx));
+        let friends = cx.new(|cx| FriendsView::new(window, servers.clone(), cx));
         servers.update(cx, |view, cx| view.set_friends(friends.clone(), cx));
         let status_bar = cx.new(StatusBar::new);
         // Reopen on the screen used last time.
@@ -298,16 +298,25 @@ impl Root {
                     .update(cx, |view, cx| view.on_server_call_started(cx));
             }
             Event::JoinFailed(m) => eprintln!("could not join channel: {m}"),
-            Event::ShareStarted => self
-                .servers
-                .update(cx, |view, cx| view.on_share_started(cx)),
-            Event::ShareEnded(reason) => self
-                .servers
-                .update(cx, |view, cx| view.on_share_ended(reason, cx)),
+            Event::ShareStarted => {
+                self.servers
+                    .update(cx, |view, cx| view.on_share_started(cx));
+                self.friends
+                    .update(cx, |view, cx| view.on_dm_share_started(cx));
+            }
+            Event::ShareEnded(reason) => {
+                self.servers
+                    .update(cx, |view, cx| view.on_share_ended(reason, cx));
+                self.friends
+                    .update(cx, |view, cx| view.on_dm_share_ended(cx));
+            }
             Event::ShareAudioFailed(reason) => self
                 .servers
                 .update(cx, |view, cx| view.on_share_audio_failed(reason, cx)),
-            Event::ScreenKeyReq => self.servers.update(cx, |view, _| view.on_key_req()),
+            Event::ScreenKeyReq => {
+                self.servers.update(cx, |view, _| view.on_key_req());
+                self.friends.update(cx, |view, _| view.on_dm_key_req());
+            }
             Event::Error(m) => self.servers.update(cx, |view, cx| view.on_error(m, cx)),
             Event::MemberJoined { channel_id, member } => self
                 .servers
@@ -338,8 +347,10 @@ impl Root {
                 peer,
                 muted,
                 deafened,
+                sharing,
+                ssrc,
             } => self.friends.update(cx, |view, cx| {
-                view.on_dm_call_peer_state(peer, muted, deafened, cx)
+                view.on_dm_call_peer_state(peer, muted, deafened, sharing, ssrc, cx)
             }),
             Event::DmCallEnded { peer, reason } => self
                 .friends

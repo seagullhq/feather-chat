@@ -46,7 +46,7 @@ impl ServersView {
                         .cursor_pointer()
                         .px_1()
                         .on_click(cx.listener(|this, _, _, cx| this.clear_error(cx)))
-                        .child("Chiudi"),
+                        .child("Close"),
                 ),
         )
     }

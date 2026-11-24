@@ -88,7 +88,7 @@ impl ServersView {
             self.share = ShareState::Picking;
         } else {
             self.share = ShareState::Off;
-            self.on_error("Impossibile avviare la condivisione.".into(), cx);
+            self.on_error("Could not start sharing.".into(), cx);
         }
         cx.notify();
     }

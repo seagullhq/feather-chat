@@ -28,7 +28,7 @@ type Session struct {
 	wmu        sync.Mutex // guards tcp writes
 	name       string     // display name, guarded by Manager.mu
 	lastSeen   time.Time
-	pinged     bool // Prima ping ricevuta?
+	pinged     bool // First ping received?
 	muted      bool // guarded by Manager.mu
 	deafened   bool // guarded by Manager.mu
 	shareState      // screen-share state, guarded by Manager.mu

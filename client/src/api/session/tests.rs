@@ -111,13 +111,13 @@ fn create_server_flow() {
         write_frame(&mut s, &json!({"type":"ACK","friends":[]})).unwrap();
         let m = read_frame(&mut s).unwrap();
         assert_eq!(m["type"], "CREATE_SERVER");
-        assert_eq!(m["serverName"], "Nuovo");
+        assert_eq!(m["serverName"], "New");
         write_frame(
             &mut s,
             &json!({
                 "type":"ACK",
                 "serverId":7,
-                "name":"Nuovo",
+                "name":"New",
                 "inviteCode":"abc1234"
             }),
         )
@@ -138,7 +138,7 @@ fn create_server_flow() {
         rx.recv_blocking().unwrap(),
         Event::ServersListed(servers) if servers.is_empty()
     ));
-    assert!(control.create_server("Nuovo".into()));
+    assert!(control.create_server("New".into()));
     loop {
         match rx.recv_blocking().unwrap() {
             Event::ServerCreated {
@@ -147,7 +147,7 @@ fn create_server_flow() {
                 invite_code,
             } => {
                 assert_eq!(id, 7);
-                assert_eq!(name, "Nuovo");
+                assert_eq!(name, "New");
                 assert_eq!(invite_code, "abc1234");
                 break;
             }

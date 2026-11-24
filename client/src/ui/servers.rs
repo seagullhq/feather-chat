@@ -26,8 +26,9 @@ mod members;
 mod members_panel;
 mod modals;
 mod server_sheet;
+mod share_card;
 mod sidebar;
-mod source_picker;
+pub(crate) mod source_picker;
 mod stage;
 mod state;
 mod thread;
@@ -100,6 +101,13 @@ pub struct ServersView {
     watching: std::collections::HashSet<u32>,
     /// Latest frame per watched sharer, with its version.
     screens: std::collections::HashMap<u32, (u64, std::sync::Arc<RenderImage>)>,
+    /// Share shown in the floating card (SSRC, or LOCAL_SCREEN); None = closed.
+    share_open: Option<u32>,
+    /// Card that was open when the text chat took its slot; back when the chat leaves.
+    share_resume: Option<u32>,
+    /// Size the user gave the share card; None = auto. Drag state: (mouse, size).
+    share_size: Option<(f32, f32)>,
+    share_drag: Option<((f32, f32), (f32, f32))>,
     /// Last background failure, shown over the stage until dismissed.
     error: Option<String>,
     /// Mic check on the server home pages, shared with the friends stage.
@@ -124,7 +132,7 @@ pub struct ServersView {
     /// Friends view, for the 1:1 call bar: it is drawn here too while a call runs.
     friends: Option<Entity<super::FriendsView>>,
     /// Last 1:1 call bar state seen, to repaint only on a change.
-    dm_key: Option<(i64, u8, bool, bool, u8)>,
+    dm_key: Option<(i64, u8, bool, bool, u8, u8)>,
     /// Measured while painting: the area the chat card floats in.
     thread_area: Rc<Cell<(f32, f32)>>,
     /// Composer of the open text channel.
@@ -196,7 +204,7 @@ impl ServersView {
             servers_loaded: false,
             server: 0,
             joined: None,
-            me: Member::new("Tu"),
+            me: Member::new("You"),
             adding: false,
             adding_channel: false,
             focus: cx.focus_handle(),
@@ -224,6 +232,10 @@ impl ServersView {
             share_audio_level: 0.,
             watching: Default::default(),
             screens: Default::default(),
+            share_open: None,
+            share_resume: None,
+            share_size: None,
+            share_drag: None,
             error: None,
             voice_check,
             last: last_view::LastView::load(),
@@ -238,7 +250,7 @@ impl ServersView {
             dm_key: None,
             thread_area: Rc::default(),
             thread_input: cx.new(|cx| {
-                TextInput::multiline("Scrivi un messaggio (Shift+Invio per andare a capo)", cx)
+                TextInput::multiline("Message (Shift+Enter for a new line)", cx)
                     .with_right_inset(30.)
             }),
             thread_scroll: ScrollHandle::new(),

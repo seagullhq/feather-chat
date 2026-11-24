@@ -135,6 +135,9 @@ pub enum Event {
         peer: i64,
         muted: bool,
         deafened: bool,
+        /// The peer's screen share is on; `ssrc` is the screen to watch.
+        sharing: bool,
+        ssrc: Option<u32>,
     },
     /// Rejected, cancelled, timed out, the peer left, or they went offline.
     DmCallEnded {

@@ -120,7 +120,7 @@ func TestMigrationsRoundTrip(t *testing.T) {
 		t.Fatalf("seed legacy message: %v", err)
 	}
 	err = migrateTo(db, 11)
-	if err == nil || !strings.Contains(err.Error(), "server_messages non vuota") {
+	if err == nil || !strings.Contains(err.Error(), "server_messages is not empty") {
 		t.Fatalf("guarded up 000011 error = %v, want explicit non-empty guard", err)
 	}
 	// A failed golang-migrate up leaves version 11 marked dirty even though

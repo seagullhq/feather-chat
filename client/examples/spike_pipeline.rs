@@ -1,4 +1,4 @@
-//! Spike fase 2: capture -> H.264 -> fragments -> reassemble -> decode, loopback.
+//! Spike phase 2: capture -> H.264 -> fragments -> reassemble -> decode, loopback.
 //! Pick a source; move/scroll/play video on it. Prints CPU, encode/decode times, size.
 // The spike compiles capture standalone; the app is the other user of these items.
 #[allow(dead_code)]

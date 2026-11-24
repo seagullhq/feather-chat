@@ -1,4 +1,4 @@
-//! Spike fase 0: openh264 encode+decode 1080p loopback, CPU/latency/size.
+//! Spike phase 0: openh264 encode+decode 1080p loopback, CPU/latency/size.
 use openh264::decoder::Decoder;
 use openh264::encoder::{Encoder, EncoderConfig};
 use openh264::formats::{RgbSliceU8, YUVBuffer, YUVSource};

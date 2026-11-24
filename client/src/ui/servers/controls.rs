@@ -10,7 +10,9 @@ impl super::ServersView {
     pub(super) fn controls(&self, cx: &mut Context<Self>) -> CallBar {
         // A 1:1 friend call takes the bar: a server call and a DM never run together.
         if let Some(friends) = &self.friends
-            && let Some(bar) = friends.read(cx).dm_bar(friends.clone())
+            && let Some(bar) = friends
+                .read(cx)
+                .dm_bar(friends.clone(), cfg!(not(target_os = "windows")))
         {
             return bar;
         }
@@ -49,7 +51,7 @@ impl super::ServersView {
         if joined {
             let (label, color) = match self.share {
                 ShareState::Off => ("Share", t.text),
-                ShareState::Picking => ("Annulla", t.muted),
+                ShareState::Picking => ("Cancel", t.muted),
                 ShareState::Live => ("Stop", t.danger),
             };
             bar = bar.lead(

@@ -48,10 +48,15 @@ impl ToolButton {
     }
 }
 
+/// Below this window width the buttons drop their words and keep only icons,
+/// so the call bar always fits.
+const ICON_ONLY_BELOW: f32 = 800.;
+
 impl RenderOnce for ToolButton {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = cx.theme();
         let color = self.color.unwrap_or(t.text);
+        let icon_only = f32::from(window.viewport_size().width) < ICON_ONLY_BELOW;
         div()
             .id(self.id)
             .focusable()
@@ -63,7 +68,7 @@ impl RenderOnce for ToolButton {
             .gap_1()
             .flex_none()
             // icon + gap + padding + border, plus room for the reserved characters
-            .when(self.reserve > 0, |d| {
+            .when(self.reserve > 0 && !icon_only, |d| {
                 d.w(px(38. + self.reserve as f32 * f32::from(t.font_size) * 0.75))
             })
             .px_2()
@@ -76,7 +81,7 @@ impl RenderOnce for ToolButton {
             .focus_visible(|s| s.border_color(t.focus))
             .when_some(self.on_click, |d, f| d.on_click(f))
             .child(icon(self.icon, 16., color))
-            .when(!self.label.is_empty(), |d| {
+            .when(!self.label.is_empty() && !icon_only, |d| {
                 // Icon stays put on the left; the word is centered in the rest.
                 d.child(
                     div()

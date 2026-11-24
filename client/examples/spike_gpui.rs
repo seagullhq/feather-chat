@@ -1,4 +1,4 @@
-//! Spike fase 0: 1080p BGRA frames at 30 fps through RenderImage + img().
+//! Spike phase 0: 1080p BGRA frames at 30 fps through RenderImage + img().
 //! Prints process CPU% after 10 s, then quits.
 use gpui::{prelude::*, *};
 use image::{Frame, RgbaImage};

@@ -42,21 +42,21 @@ impl ChatMessage {
     }
 }
 
-/// "Chiamata terminata · 3:21", "Chiamata persa", ... `caller` is the viewer
+/// "Call ended · 3:21", "Missed call", ... `caller` is the viewer
 /// when they placed the call, so a missed call reads differently on each side.
 fn call_line(call: &CallLog, caller: bool) -> String {
     match (call.outcome.as_str(), caller) {
         ("ended", _) if call.seconds > 0 => {
-            format!("Chiamata terminata · {}", clock(call.seconds))
+            format!("Call ended · {}", clock(call.seconds))
         }
-        ("ended", _) => "Chiamata terminata".into(),
-        ("rejected", _) => "Chiamata rifiutata".into(),
-        ("cancelled", true) => "Chiamata annullata".into(),
-        ("missed", true) => "Nessuna risposta".into(),
-        ("offline", true) => "Amico offline".into(),
+        ("ended", _) => "Call ended".into(),
+        ("rejected", _) => "Call declined".into(),
+        ("cancelled", true) => "Call cancelled".into(),
+        ("missed", true) => "No answer".into(),
+        ("offline", true) => "Friend offline".into(),
         // The callee never picked up: a missed call.
-        ("cancelled" | "missed" | "offline", false) => "Chiamata persa".into(),
-        _ => "Chiamata non riuscita".into(),
+        ("cancelled" | "missed" | "offline", false) => "Missed call".into(),
+        _ => "Call failed".into(),
     }
 }
 
@@ -231,18 +231,15 @@ mod tests {
 
     #[test]
     fn call_lines_read_per_side() {
-        assert_eq!(
-            call_line(&log("ended", 201), true),
-            "Chiamata terminata · 3:21"
-        );
+        assert_eq!(call_line(&log("ended", 201), true), "Call ended · 3:21");
         assert_eq!(
             call_line(&log("ended", 3725), false),
-            "Chiamata terminata · 1:02:05"
+            "Call ended · 1:02:05"
         );
-        assert_eq!(call_line(&log("ended", 0), true), "Chiamata terminata");
-        assert_eq!(call_line(&log("missed", 0), true), "Nessuna risposta");
-        assert_eq!(call_line(&log("missed", 0), false), "Chiamata persa");
-        assert_eq!(call_line(&log("cancelled", 0), false), "Chiamata persa");
-        assert_eq!(call_line(&log("rejected", 0), false), "Chiamata rifiutata");
+        assert_eq!(call_line(&log("ended", 0), true), "Call ended");
+        assert_eq!(call_line(&log("missed", 0), true), "No answer");
+        assert_eq!(call_line(&log("missed", 0), false), "Missed call");
+        assert_eq!(call_line(&log("cancelled", 0), false), "Missed call");
+        assert_eq!(call_line(&log("rejected", 0), false), "Call declined");
     }
 }

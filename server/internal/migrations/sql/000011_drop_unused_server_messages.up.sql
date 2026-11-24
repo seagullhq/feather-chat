@@ -3,7 +3,7 @@
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM server_messages) THEN
-        RAISE EXCEPTION 'server_messages non vuota: migrare i dati prima di droppare';
+        RAISE EXCEPTION 'server_messages is not empty: migrate the data before dropping';
     END IF;
 END $$;
 

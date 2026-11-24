@@ -107,22 +107,19 @@ impl ServersView {
         };
         if self.share == ShareState::Off {
             #[cfg(target_os = "windows")]
-            {
-                self.open_picker(window, cx);
-                return;
-            }
+            self.open_picker(window, cx);
             #[cfg(not(target_os = "windows"))]
-            {
-                if control.screen_start(crate::capture::Source::Native) {
-                    self.share = ShareState::Picking;
-                }
+            if control.screen_start(crate::capture::Source::Native) {
+                self.share = ShareState::Picking;
             }
-        } else if self.share == ShareState::Picking {
-            #[cfg(target_os = "windows")]
-            if self.picker_open {
-                self.close_picker(window, cx);
-                return;
-            }
+            cx.notify();
+            return;
+        }
+        // Cancelling the picker closes it; the engine never started.
+        #[cfg(target_os = "windows")]
+        if self.share == ShareState::Picking && self.picker_open {
+            self.close_picker(window, cx);
+            return;
         }
         control.screen_stop();
         self.share = ShareState::Off;

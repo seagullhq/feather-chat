@@ -88,7 +88,7 @@ pub(super) fn read_frame(s: &mut TcpStream) -> Result<Value, String> {
 fn io_err(e: io::Error) -> String {
     use std::io::ErrorKind::*;
     match e.kind() {
-        WouldBlock | TimedOut => "il server non risponde".into(),
+        WouldBlock | TimedOut => "the server is not responding".into(),
         UnexpectedEof => "connection lost".into(),
         _ => e.to_string(),
     }

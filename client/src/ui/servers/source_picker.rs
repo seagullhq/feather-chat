@@ -8,7 +8,7 @@ use gpui::{RenderImage, prelude::*, *};
 use image::{Frame as ImgFrame, RgbaImage};
 use std::sync::Arc;
 
-pub(super) enum ModalEvent {
+pub(crate) enum ModalEvent {
     Close,
     Pick { source: Source },
 }
@@ -21,7 +21,7 @@ struct PickerItem {
 }
 
 /// Shows displays and windows currently available for capture.
-pub(super) struct SourcePicker {
+pub(crate) struct SourcePicker {
     focus: FocusHandle,
     items: Vec<PickerItem>,
     selected: Option<usize>,
@@ -33,7 +33,7 @@ pub(super) struct SourcePicker {
 impl EventEmitter<ModalEvent> for SourcePicker {}
 
 impl SourcePicker {
-    pub(super) fn new(cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(cx: &mut Context<Self>) -> Self {
         Self {
             focus: cx.focus_handle(),
             items: Vec::new(),
@@ -43,7 +43,7 @@ impl SourcePicker {
         }
     }
 
-    pub(super) fn reset(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn reset(&mut self, cx: &mut Context<Self>) {
         self.generation = self.generation.wrapping_add(1);
         for item in &self.items {
             if let Some(image) = &item.thumbnail {
@@ -109,7 +109,7 @@ impl SourcePicker {
         let _ = cx;
     }
 
-    pub(super) fn focus_handle(&self) -> FocusHandle {
+    pub(crate) fn focus_handle(&self) -> FocusHandle {
         self.focus.clone()
     }
 
@@ -150,8 +150,8 @@ impl Render for SourcePicker {
         let mut modal = Modal::new(&self.focus, close.clone())
             .width(px(820.))
             .child(ModalHeader::new(
-                "Condividi schermo",
-                "Scegli il display o la finestra da mostrare.",
+                "Share screen",
+                "Choose the display or window to show.",
             ));
 
         if let Some(error) = &self.error {
@@ -168,7 +168,7 @@ impl Render for SourcePicker {
             div()
                 .py_4()
                 .text_color(t.muted)
-                .child("Nessuna sorgente disponibile.")
+                .child("No sources available.")
                 .into_any_element()
         } else {
             div()
@@ -184,10 +184,10 @@ impl Render for SourcePicker {
                     #[cfg(target_os = "windows")]
                     let (glyph, kind) = match source {
                         Source::Display { .. } => ("monitor", "Display"),
-                        _ => ("square", "Finestra"),
+                        _ => ("square", "Window"),
                     };
                     #[cfg(not(target_os = "windows"))]
-                    let (glyph, kind) = ("monitor", "Sorgente");
+                    let (glyph, kind) = ("monitor", "Source");
 
                     let preview = match &item.thumbnail {
                         Some(image) => div()
@@ -264,12 +264,12 @@ impl Render for SourcePicker {
             .justify_end()
             .gap_2()
             .pt_1()
-            .child(Button::new("source-picker-cancel", "Annulla").on_click({
+            .child(Button::new("source-picker-cancel", "Cancel").on_click({
                 let close = close.clone();
                 move |_, window, cx| close(window, cx)
             }))
             .child(
-                Button::new("source-picker-confirm", "Condividi")
+                Button::new("source-picker-confirm", "Share")
                     .primary()
                     .disabled(self.selected.is_none())
                     .on_click(cx.listener(|this, _, _, cx| this.confirm(cx))),

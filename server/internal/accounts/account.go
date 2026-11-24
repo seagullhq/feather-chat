@@ -53,7 +53,7 @@ func (s *Store) Register(ctx context.Context, username, email, password string) 
 	_, err = s.db.ExecContext(ctx, query, strings.TrimSpace(username), strings.TrimSpace(email), string(hash), now, now)
 
 	if err != nil {
-		// Controllo errore di chiave duplicata (codice Postgres 23505)
+		// Check for a duplicate key error (Postgres code 23505)
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return ErrTaken

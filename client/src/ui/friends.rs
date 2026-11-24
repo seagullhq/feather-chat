@@ -10,9 +10,11 @@ mod stage;
 
 use super::ServersView;
 use crate::api::{Control, DM_PAGE, DirectMessage, Friend, Relation};
+use crate::capture::Source;
 use crate::input::TextInput;
 use crate::media;
 use crate::theme::ThemeExt;
+use crate::ui::servers::source_picker::{ModalEvent as PickerEvent, SourcePicker};
 use gpui::{prelude::*, *};
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -35,6 +37,14 @@ pub(super) enum DmPhase {
     Active,
 }
 
+/// Our screen share in a 1:1 call, mirroring the server call's states.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum DmShare {
+    Off,
+    Picking,
+    Live,
+}
+
 pub(super) struct DmCall {
     pub peer: i64,
     pub name: SharedString,
@@ -46,6 +56,14 @@ pub(super) struct DmCall {
     pub peer_muted: bool,
     pub peer_deafened: bool,
     pub media: Option<Arc<media::Shared>>,
+    /// Our own share, and the peer's SSRC while they share.
+    pub share: DmShare,
+    pub peer_share: Option<u32>,
+    /// Latest frames of our preview and the peer's screen.
+    pub own_frame: Option<Arc<RenderImage>>,
+    pub peer_frame: Option<Arc<RenderImage>>,
+    own_frame_ver: u64,
+    peer_frame_ver: u64,
 }
 
 pub struct FriendsView {
@@ -53,6 +71,9 @@ pub struct FriendsView {
     servers: Entity<ServersView>,
     /// The 1:1 call with a friend: ringing, connecting, or live.
     dm_call: Option<DmCall>,
+    /// Source picker for a Windows share (the system dialog handles the rest).
+    source_picker: Entity<SourcePicker>,
+    picker_open: bool,
     /// Search box: filters your friends and is the name to send a request to.
     search: Entity<TextInput>,
     control: Option<Control>,
@@ -95,7 +116,7 @@ pub struct FriendsView {
 }
 
 impl FriendsView {
-    pub fn new(servers: Entity<ServersView>, cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, servers: Entity<ServersView>, cx: &mut Context<Self>) -> Self {
         // Repaint with the call (mic level, joined / left).
         cx.observe(&servers, |_, _, cx| cx.notify()).detach();
         let check = servers.read(cx).voice_check();
@@ -120,6 +141,16 @@ impl FriendsView {
             cx.notify();
         })
         .detach();
+        let source_picker = cx.new(SourcePicker::new);
+        cx.subscribe_in(
+            &source_picker,
+            window,
+            |this, _, event: &PickerEvent, _window, cx| match event {
+                PickerEvent::Close => this.close_dm_picker(cx),
+                PickerEvent::Pick { source } => this.on_dm_source_picked(source.clone(), cx),
+            },
+        )
+        .detach();
         // Reopen on the friend and chat left open last time.
         let (selected_friend, chat_open) = match super::userfiles::read_user_file("last_friend") {
             Ok(Some(s)) => match s.trim().split_once(',') {
@@ -131,6 +162,8 @@ impl FriendsView {
         Self {
             servers,
             dm_call: None,
+            source_picker,
+            picker_open: false,
             search,
             control: None,
             friends: Vec::new(),
@@ -209,7 +242,7 @@ impl FriendsView {
         let Some(call) = self.dm_call.as_mut() else {
             return;
         };
-        let Some(media) = &call.media else {
+        let Some(media) = call.media.clone() else {
             return;
         };
         let level = if call.muted || call.deafened {
@@ -224,9 +257,29 @@ impl FriendsView {
             media.peer_levels().values().copied().fold(0., f32::max)
         };
         let moved = |old: f32, new: f32| (old - new).abs() > 0.01 || (new == 0.) != (old == 0.);
-        if moved(call.level, level) || moved(call.peer_level, peer_level) {
+        let mut changed = moved(call.level, level) || moved(call.peer_level, peer_level);
+        if changed {
             call.level = level;
             call.peer_level = peer_level;
+        }
+        // Screen frames change on their own schedule; a new version repaints.
+        if call.share == DmShare::Live
+            && let Some((ver, image)) = media.screen(media::LOCAL_SCREEN)
+            && ver != call.own_frame_ver
+        {
+            call.own_frame_ver = ver;
+            call.own_frame = Some(image);
+            changed = true;
+        }
+        if let Some(ssrc) = call.peer_share
+            && let Some((ver, image)) = media.screen(ssrc)
+            && ver != call.peer_frame_ver
+        {
+            call.peer_frame_ver = ver;
+            call.peer_frame = Some(image);
+            changed = true;
+        }
+        if changed {
             cx.notify();
         }
     }
@@ -288,6 +341,12 @@ impl FriendsView {
                 peer_muted: false,
                 peer_deafened: false,
                 media: None,
+                share: DmShare::Off,
+                peer_share: None,
+                own_frame: None,
+                peer_frame: None,
+                own_frame_ver: 0,
+                peer_frame_ver: 0,
             });
         }
         cx.notify();
@@ -326,6 +385,12 @@ impl FriendsView {
             peer_muted: false,
             peer_deafened: false,
             media: None,
+            share: DmShare::Off,
+            peer_share: None,
+            own_frame: None,
+            peer_frame: None,
+            own_frame_ver: 0,
+            peer_frame_ver: 0,
         });
         self.stop_mic_check(cx);
         cx.notify();
@@ -372,15 +437,159 @@ impl FriendsView {
         peer: i64,
         muted: bool,
         deafened: bool,
+        sharing: bool,
+        ssrc: Option<u32>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(call) = &mut self.dm_call
+        let mut watch = None;
+        let mut unwatch = None;
+        if let Some(call) = self.dm_call.as_mut()
             && call.peer == peer
         {
             call.peer_muted = muted;
             call.peer_deafened = deafened;
+            if sharing {
+                let ssrc = ssrc.filter(|s| *s != 0);
+                if call.peer_share != ssrc {
+                    unwatch = call.peer_share.take();
+                    call.peer_frame = None;
+                    call.peer_frame_ver = 0;
+                    call.peer_share = ssrc;
+                    watch = ssrc;
+                }
+            } else if let Some(old) = call.peer_share.take() {
+                call.peer_frame = None;
+                call.peer_frame_ver = 0;
+                unwatch = Some(old);
+            }
+        }
+        if let Some(control) = &self.control {
+            if let Some(ssrc) = unwatch {
+                control.screen_unwatch(ssrc);
+            }
+            if let Some(ssrc) = watch {
+                control.screen_watch(ssrc);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Our share became live on the server (first frame captured).
+    pub fn on_dm_share_started(&mut self, cx: &mut Context<Self>) {
+        if let Some(call) = self.dm_call.as_mut() {
+            call.share = DmShare::Live;
             cx.notify();
         }
+    }
+
+    /// Our share ended: we stopped it, or the capture failed.
+    pub fn on_dm_share_ended(&mut self, cx: &mut Context<Self>) {
+        if let Some(call) = self.dm_call.as_mut() {
+            call.share = DmShare::Off;
+            call.own_frame = None;
+            call.own_frame_ver = 0;
+            cx.notify();
+        }
+    }
+
+    /// The server asked our share for a keyframe.
+    pub fn on_dm_key_req(&self) {
+        if let Some(media) = self.dm_call.as_ref().and_then(|call| call.media.as_ref()) {
+            media.request_key();
+        }
+    }
+
+    /// Share button of a live 1:1 call: start, or cancel/stop.
+    pub(super) fn toggle_dm_share(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(not(target_os = "windows"))]
+        let _ = window;
+        let Some(call) = self.dm_call.as_ref() else {
+            return;
+        };
+        if call.phase != DmPhase::Active {
+            return;
+        }
+        match call.share {
+            DmShare::Off => {
+                #[cfg(target_os = "windows")]
+                {
+                    self.open_dm_picker(window, cx);
+                    return;
+                }
+                #[cfg(not(target_os = "windows"))]
+                if let Some(control) = &self.control
+                    && control.screen_start(Source::Native)
+                    && let Some(call) = self.dm_call.as_mut()
+                {
+                    call.share = DmShare::Picking;
+                }
+            }
+            DmShare::Picking => {
+                #[cfg(target_os = "windows")]
+                if self.picker_open {
+                    self.close_dm_picker(cx);
+                    return;
+                }
+                self.stop_dm_share(cx);
+            }
+            DmShare::Live => self.stop_dm_share(cx),
+        }
+        cx.notify();
+    }
+
+    fn stop_dm_share(&mut self, cx: &mut Context<Self>) {
+        if let Some(control) = &self.control {
+            control.screen_stop();
+        }
+        if let Some(call) = self.dm_call.as_mut() {
+            call.share = DmShare::Off;
+            call.own_frame = None;
+            call.own_frame_ver = 0;
+        }
+        cx.notify();
+    }
+
+    /// Windows: the gpui picker replaces the native source dialog.
+    #[cfg(target_os = "windows")]
+    fn open_dm_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.picker_open = true;
+        if let Some(call) = self.dm_call.as_mut() {
+            call.share = DmShare::Picking;
+        }
+        self.source_picker.update(cx, |picker, cx| picker.reset(cx));
+        let focus = self.source_picker.read(cx).focus_handle();
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    fn close_dm_picker(&mut self, cx: &mut Context<Self>) {
+        if !self.picker_open {
+            return;
+        }
+        self.picker_open = false;
+        if let Some(call) = self.dm_call.as_mut() {
+            call.share = DmShare::Off;
+        }
+        cx.notify();
+    }
+
+    fn on_dm_source_picked(&mut self, source: Source, cx: &mut Context<Self>) {
+        self.picker_open = false;
+        let started = self
+            .control
+            .as_ref()
+            .is_some_and(|control| control.screen_start(source));
+        if let Some(call) = self.dm_call.as_mut() {
+            call.share = if started {
+                DmShare::Picking
+            } else {
+                DmShare::Off
+            };
+        }
+        if !started {
+            self.error = Some("Could not start sharing.".into());
+        }
+        cx.notify();
     }
 
     pub fn on_dm_call_ended(&mut self, peer: i64, _reason: String, cx: &mut Context<Self>) {
@@ -397,6 +606,7 @@ impl FriendsView {
                 control.leave();
             }
         }
+        self.picker_open = false;
         self.dm_call = None;
         // The ring may have ended unanswered: close the mic that showed your voice.
         self.stop_mic_check(cx);
@@ -411,7 +621,7 @@ impl FriendsView {
             .map(|call| call.peer)
         {
             self.dm_call = None;
-            self.log_call(peer, format!("Chiamata non riuscita: {message}"));
+            self.log_call(peer, format!("Call failed: {message}"));
         }
         cx.notify();
     }
@@ -420,6 +630,7 @@ impl FriendsView {
     /// An active call is closed server-side by JOIN; a still-ringing invitation
     /// has to be declined here, or the caller keeps waiting for the timeout.
     pub fn on_server_call_started(&mut self, cx: &mut Context<Self>) {
+        self.picker_open = false;
         let Some(call) = self.dm_call.take() else {
             return;
         };
@@ -481,6 +692,7 @@ impl FriendsView {
             call.media = None;
             call.level = 0.;
         }
+        self.picker_open = false;
         self.dm_call = None;
         cx.notify();
     }
@@ -694,6 +906,7 @@ impl FriendsView {
 
     pub fn on_disconnected(&mut self, cx: &mut Context<Self>) {
         self.control = None;
+        self.picker_open = false;
         self.dm_call = None;
         self.friends.clear();
         self.chat_log.clear();
@@ -829,6 +1042,7 @@ impl Render for FriendsView {
             .child(self.sidebar(cx))
             .child(self.stage(window, cx))
             .children(self.dm_call_banner(cx))
+            .children(self.picker_open.then(|| self.source_picker.clone()))
     }
 }
 

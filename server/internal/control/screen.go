@@ -1,6 +1,7 @@
 package control
 
 import (
+	"strings"
 	"time"
 
 	"github.com/seagullhq/feather-chat/server/internal/protocol"
@@ -35,6 +36,10 @@ func (s *Server) handleScreenStart(c *client, _ protocol.Control) {
 		return
 	}
 	c.send(protocol.Control{Type: "ACK", SSRC: c.sess.SSRC})
+	if strings.HasPrefix(c.sess.Room, "dm:") {
+		s.notifyDmCallState(c, me)
+		return
+	}
 	s.notifyServer(c.sess.ServerID, c.sess, protocol.Control{Type: "MEMBER_STATE", ChannelID: c.sess.ChannelID, Member: &me})
 }
 
@@ -44,6 +49,10 @@ func (s *Server) handleScreenStop(c *client, _ protocol.Control) {
 		return
 	}
 	me := s.rooms.StopShare(c.sess)
+	if strings.HasPrefix(c.sess.Room, "dm:") {
+		s.notifyDmCallState(c, me)
+		return
+	}
 	s.notifyServer(c.sess.ServerID, c.sess, protocol.Control{Type: "MEMBER_STATE", ChannelID: c.sess.ChannelID, Member: &me})
 }
 

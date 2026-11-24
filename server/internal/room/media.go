@@ -86,7 +86,7 @@ func (m *Manager) forward(pc *net.UDPConn, session *Session, buf []byte) {
 
 	if !session.pinged {
 		log.Printf("[ROOM] received a packet before first ping! from %s", m.displayName(session))
-		return // AUDIO prima del primo echo: drop, pacchetto da non inoltrare
+		return // AUDIO before the first echo: drop, do not forward the packet
 	}
 
 	peers := m.Peers(session)

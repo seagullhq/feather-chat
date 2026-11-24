@@ -168,9 +168,8 @@ fn commands(
             }
             Command::ScreenWatch { ssrc } => {
                 if let Err(e) = session.call(json!({"type":"SCREEN_WATCH","ssrc":ssrc})) {
-                    let _ = events.send_blocking(Event::Error(format!(
-                        "Impossibile guardare lo schermo: {e}"
-                    )));
+                    let _ = events
+                        .send_blocking(Event::Error(format!("Could not watch the screen: {e}")));
                 }
             }
             Command::ScreenUnwatch { ssrc } => {

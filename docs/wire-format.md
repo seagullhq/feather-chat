@@ -193,7 +193,10 @@ most 4 simultaneous sharers.
 | `SCREEN_KEYREQ` | S→C push | none: the receiving presenter MUST send a keyframe soon. Sent automatically on every `SCREEN_WATCH` |
 
 Sharing starts/stops are announced to the server's members as `MEMBER_STATE`
-whose `member` carries `sharing: true` (omitted when false).
+whose `member` carries `sharing: true` (omitted when false). A 1:1 DM call
+has no server roster: there the other side gets `DM_CALL_STATE` with the
+sharer's `ssrc` and `sharing`, and watches it with the same `SCREEN_WATCH`
+flow.
 
 A server MUST throttle viewer-sent `SCREEN_KEYREQ` to at most one per 500 ms
 for each `(viewer, presenter SSRC)` pair. Requests outside that gap MAY be

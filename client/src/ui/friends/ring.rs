@@ -22,7 +22,7 @@ impl FriendsView {
         let t = cx.theme();
         let peer = call.peer;
         let name = call.name.clone();
-        let detail = "Chiamata in arrivo";
+        let detail = "Incoming call";
 
         let header = div()
             .flex()
