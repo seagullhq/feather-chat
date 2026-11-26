@@ -53,8 +53,8 @@ jobs:
         with:
           subject-path: dist/feather-chat-*
 
+      # Runs from the repo root: gh calls git to verify the tag, which fails in dist/.
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        working-directory: dist
-        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes feather-chat-* SHA256SUMS
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes dist/feather-chat-* dist/SHA256SUMS
