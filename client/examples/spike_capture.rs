@@ -12,10 +12,8 @@ use std::{
 
 fn main() {
     let (tx, rx) = mpsc::channel();
-    let source = capture::sources()
-        .ok()
-        .and_then(|sources| sources.into_iter().next())
-        .unwrap_or(capture::Source::Native);
+    // ponytail: system picker only; Windows gpui picker not wired into spikes.
+    let source = capture::Source::Native;
     let cap = capture::start_with(source, move |e| {
         let _ = tx.send(e);
     });
