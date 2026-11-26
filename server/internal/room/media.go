@@ -23,8 +23,8 @@ func (m *Manager) ServeUDP(pc *net.UDPConn) {
 			return
 		}
 
-		if n > 1024 {
-			log.Printf("[CONTROL] received a datagram greater than 1024 (size: %d), skipping...", n)
+		if n > protocol.MaxVideoDatagram {
+			log.Printf("[CONTROL] received a datagram greater than %d (size: %d), skipping...", protocol.MaxVideoDatagram, n)
 			continue
 		}
 
@@ -33,21 +33,26 @@ func (m *Manager) ServeUDP(pc *net.UDPConn) {
 			continue
 		}
 
+		if n > protocol.MaxDatagram && h.Kind != protocol.KindVideo {
+			log.Printf("[CONTROL] received a datagram greater than %d (size: %d), skipping...", protocol.MaxDatagram, n)
+			continue
+		}
+
 		if n <= protocol.HeaderLen {
 			log.Printf("[CONTROL] received a packet with the wrong header! %d instead of %d", n, protocol.HeaderLen)
 			continue
 		}
 
-		if h.Kind != protocol.KindAudio && h.Kind != protocol.KindPing {
+		if h.Kind != protocol.KindAudio && h.Kind != protocol.KindPing && !protocol.IsShareKind(h.Kind) {
 			log.Printf("[CONTROL] received a packet with kind not handled by the server! skipping...")
 			continue
 		}
 
-		if h.Terminator && h.Kind != protocol.KindAudio {
+		if h.Terminator && h.Kind != protocol.KindAudio && h.Kind != protocol.KindSysAudio {
 			continue
 		}
 
-		if h.Kind == protocol.KindAudio && h.SSRC == 0 {
+		if h.Kind != protocol.KindPing && h.SSRC == 0 {
 			continue
 		}
 
@@ -81,10 +86,14 @@ func (m *Manager) forward(pc *net.UDPConn, session *Session, buf []byte) {
 
 	if !session.pinged {
 		log.Printf("[ROOM] received a packet before first ping! from %s", m.displayName(session))
-		return // AUDIO prima del primo echo: drop, pacchetto da non inoltrare
+		return // AUDIO before the first echo: drop, do not forward the packet
 	}
 
-	for _, p := range m.Peers(session) {
+	peers := m.Peers(session)
+	if protocol.IsShareKind(header.Kind) {
+		peers = m.Watchers(session) // share media goes to subscribed viewers only
+	}
+	for _, p := range peers {
 		pc.WriteToUDP(buf, p.UDPAddr)
 	}
 }

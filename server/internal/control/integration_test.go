@@ -135,12 +135,29 @@ func awaitControl(t *testing.T, c net.Conn, what string, want func(protocol.Cont
 		if json.Unmarshal(payload, &m) != nil {
 			continue
 		}
-		if m.Type == "ERROR" && what != "ERROR" {
-			t.Fatalf("awaiting %s: server returned ERROR %q", what, m.Error)
-		}
 		if want(m) {
 			return m
 		}
+		if m.Type == "ERROR" && what != "ERROR" {
+			t.Fatalf("awaiting %s: server returned ERROR %q", what, m.Error)
+		}
+	}
+}
+
+func TestAwaitControlAcceptsWaitedError(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	b, err := json.Marshal(protocol.Control{Type: "ERROR", Error: "direct message not found"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = protocol.WriteFrame(server, b) }()
+
+	got := awaitControl(t, client, "edit refused", func(m protocol.Control) bool { return m.Type == "ERROR" })
+	if got.Error != "direct message not found" {
+		t.Fatalf("error = %q", got.Error)
 	}
 }
 

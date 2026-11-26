@@ -189,7 +189,7 @@ impl super::ServersView {
                                 }),
                             )
                             .entry("sign-out", "Exit", |_, _, _| {
-                                // TODO: esci dal server
+                                // TODO: leave the server
                             }),
                         ),
                 )

@@ -131,7 +131,7 @@ func (m *Manager) Members(room string, except *Session) []protocol.Member {
 }
 
 func memberOf(s *Session) protocol.Member {
-	return protocol.Member{SSRC: s.SSRC, Name: s.name, Muted: s.muted, Deafened: s.deafened}
+	return protocol.Member{SSRC: s.SSRC, Name: s.name, Muted: s.muted, Deafened: s.deafened, Sharing: s.sharing}
 }
 
 // MemberOf snapshots s as a Member.
@@ -161,6 +161,7 @@ func (m *Manager) dropLocked(s *Session) {
 		return
 	}
 	delete(r, s.SSRC)
+	m.dropShareLocked(s, r)
 	if len(r) == 0 {
 		delete(m.rooms, s.Room)
 	}

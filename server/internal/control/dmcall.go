@@ -155,6 +155,16 @@ func (s *Server) dmNotify(user int, except *room.Session, msg protocol.Control) 
 	}
 }
 
+// notifyDmCallState tells the other side of a DM call how this session is now:
+// mute/deafen and, on a share change, the SSRC of the sharing screen.
+func (s *Server) notifyDmCallState(c *client, me protocol.Member) {
+	muted, deafened := me.Muted, me.Deafened
+	notify(s.rooms.Others(c.sess), protocol.Control{
+		Type: "DM_CALL_STATE", Room: c.sess.Room, UserID: c.sess.UserID, SSRC: c.sess.SSRC,
+		Muted: &muted, Deafened: &deafened, Sharing: me.Sharing,
+	})
+}
+
 // dmNotifyBoth tells both sides the call ended. Each recipient gets the OTHER
 // party's id: the client matches it against the peer of its own call state.
 // except keeps the session that caused the event from seeing its own echo.

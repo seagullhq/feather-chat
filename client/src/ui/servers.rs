@@ -3,7 +3,7 @@
 //! This file holds the entity, its constructors and the render tree; the
 //! behaviour is grouped by concern in the private submodules:
 //! `state` (control-plane state), `members` (voice roster and levels) and
-//! `modals` (open/close state of the add dialogs).
+//! `modals` (open/close state of the dialogs, including the source picker).
 
 use super::voice_check::VoiceCheck;
 use super::{ToggleDeafen, ToggleMute, tab_nav};
@@ -20,18 +20,22 @@ use std::time::Duration;
 mod add_channel;
 mod add_server;
 mod controls;
+mod errors;
 mod last_view;
 mod members;
 mod members_panel;
 mod modals;
 mod server_sheet;
+mod share_card;
 mod sidebar;
+pub(crate) mod source_picker;
 mod stage;
 mod state;
 mod thread;
 
 use add_channel::AddChannelModal;
 use add_server::{AddServerModal, ModalEvent};
+use source_picker::SourcePicker;
 
 /// Tells the shell about things other screens care about.
 pub enum ServersEvent {
@@ -64,6 +68,9 @@ pub struct ServersView {
     focused_once: bool,
     add: Entity<AddServerModal>,
     add_channel: Entity<AddChannelModal>,
+    source_picker: Entity<SourcePicker>,
+    /// The gpui picker is open (distinct from capture starting without it).
+    picker_open: bool,
     channel_types: Vec<ChannelTypeSummary>,
     control: Option<Control>,
     server_menu: bool,
@@ -84,6 +91,25 @@ pub struct ServersView {
     sheet_focus: FocusHandle,
     /// Levels and mute flags of the running voice session, while joined.
     media: Option<std::sync::Arc<media::Shared>>,
+    /// Our own screen share.
+    share: members::ShareState,
+    /// System audio is on for our share (independent of video).
+    pub(super) share_audio: bool,
+    /// Captured desktop-audio level, shown as the Share audio meter.
+    pub(super) share_audio_level: f32,
+    /// Sharers (by SSRC) whose screen we asked the server for.
+    watching: std::collections::HashSet<u32>,
+    /// Latest frame per watched sharer, with its version.
+    screens: std::collections::HashMap<u32, (u64, std::sync::Arc<RenderImage>)>,
+    /// Share shown in the floating card (SSRC, or LOCAL_SCREEN); None = closed.
+    share_open: Option<u32>,
+    /// Card that was open when the text chat took its slot; back when the chat leaves.
+    share_resume: Option<u32>,
+    /// Size the user gave the share card; None = auto. Drag state: (mouse, size).
+    share_size: Option<(f32, f32)>,
+    share_drag: Option<((f32, f32), (f32, f32))>,
+    /// Last background failure, shown over the stage until dismissed.
+    error: Option<String>,
     /// Mic check on the server home pages, shared with the friends stage.
     voice_check: Entity<VoiceCheck>,
     /// Open server and last channels, saved for the next start.
@@ -106,7 +132,7 @@ pub struct ServersView {
     /// Friends view, for the 1:1 call bar: it is drawn here too while a call runs.
     friends: Option<Entity<super::FriendsView>>,
     /// Last 1:1 call bar state seen, to repaint only on a change.
-    dm_key: Option<(i64, u8, bool, bool, u8)>,
+    dm_key: Option<(i64, u8, bool, bool, u8, u8)>,
     /// Measured while painting: the area the chat card floats in.
     thread_area: Rc<Cell<(f32, f32)>>,
     /// Composer of the open text channel.
@@ -146,11 +172,26 @@ impl ServersView {
         )
         .detach();
 
-        // Copies mic and speaker levels from the voice engine into the model.
+        let source_picker = cx.new(SourcePicker::new);
+        cx.subscribe_in(
+            &source_picker,
+            window,
+            |this, _, event: &source_picker::ModalEvent, window, cx| match event {
+                source_picker::ModalEvent::Close => this.close_picker(window, cx),
+                source_picker::ModalEvent::Pick { source } => {
+                    this.on_source_picked(source.clone(), window, cx)
+                }
+            },
+        )
+        .detach();
+
+        // Copies levels and new screen frames from the voice engine into the model.
+        // Screens need ~30 fps; levels only repaint on a visible change, so a
+        // silent call without a share still lets macOS pause its display link.
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
-                    .timer(Duration::from_millis(80))
+                    .timer(Duration::from_millis(33))
                     .await;
                 if this.update(cx, |t, cx| t.poll_media(cx)).is_err() {
                     break;
@@ -163,13 +204,15 @@ impl ServersView {
             servers_loaded: false,
             server: 0,
             joined: None,
-            me: Member::new("Tu"),
+            me: Member::new("You"),
             adding: false,
             adding_channel: false,
             focus: cx.focus_handle(),
             focused_once: false,
             add,
             add_channel,
+            source_picker,
+            picker_open: false,
             channel_types: Vec::new(),
             control: None,
             server_menu: false,
@@ -184,6 +227,16 @@ impl ServersView {
             row_top: Rc::default(),
             sheet_focus: cx.focus_handle(),
             media: None,
+            share: members::ShareState::Off,
+            share_audio: false,
+            share_audio_level: 0.,
+            watching: Default::default(),
+            screens: Default::default(),
+            share_open: None,
+            share_resume: None,
+            share_size: None,
+            share_drag: None,
+            error: None,
             voice_check,
             last: last_view::LastView::load(),
             thread_open: None,
@@ -197,7 +250,7 @@ impl ServersView {
             dm_key: None,
             thread_area: Rc::default(),
             thread_input: cx.new(|cx| {
-                TextInput::multiline("Scrivi un messaggio (Shift+Invio per andare a capo)", cx)
+                TextInput::multiline("Message (Shift+Enter for a new line)", cx)
                     .with_right_inset(30.)
             }),
             thread_scroll: ScrollHandle::new(),
@@ -295,6 +348,7 @@ impl Render for ServersView {
         let t = cx.theme();
         let server_modal = self.adding.then(|| self.add.clone());
         let channel_modal = self.adding_channel.then(|| self.add_channel.clone());
+        let picker_modal = self.picker_open.then(|| self.source_picker.clone());
         tab_nav(div())
             .key_context("Stage")
             .track_focus(&self.focus)
@@ -327,5 +381,6 @@ impl Render for ServersView {
             )
             .children(server_modal)
             .children(channel_modal)
+            .children(picker_modal)
     }
 }

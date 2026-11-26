@@ -10,7 +10,10 @@ use std::time::{Duration, Instant};
 use super::peer::Peer;
 use super::prefs::PREFS;
 use super::shared::Shared;
-use super::wire::{KIND_AUDIO, KIND_PING, TERMINATOR, audio_packet, header, rms, smooth_level};
+use super::wire::{
+    KIND_AUDIO, KIND_PING, KIND_SYSAUDIO, KIND_VIDEO, TERMINATOR, audio_packet, header, rms,
+    smooth_level,
+};
 use super::{FRAME, OUT_RING, PEER_TIMEOUT, RATE};
 
 pub(super) fn worker(
@@ -19,6 +22,7 @@ pub(super) fn worker(
     ssrc: u32,
     mut cap: rtrb::Consumer<i16>,
     mut out: rtrb::Producer<f32>,
+    video: std::sync::mpsc::SyncSender<(u32, Vec<u8>)>,
 ) {
     let mut enc = match OpusEncoder::new(RATE as i32, 1, Application::Voip) {
         Ok(e) => e,
@@ -26,6 +30,9 @@ pub(super) fn worker(
     };
     enc.bitrate_bps = 32_000;
     let mut peers: HashMap<u32, Peer> = HashMap::new();
+    // System audio shares the presenter's SSRC with VIDEO and, for a DM call,
+    // with AUDIO. Its own sequence stream needs its own jitter buffer.
+    let mut sys_peers: HashMap<u32, Peer> = HashMap::new();
     let (mut seq, mut was_sending, mut echoed) = (0u32, false, false);
     let (mut pcm, mut have) = ([0i16; FRAME], 0usize);
     let (mut coded, mut rx) = ([0u8; 400], [0u8; 2048]);
@@ -70,6 +77,19 @@ pub(super) fn worker(
                         rx[0] & TERMINATOR != 0,
                     );
                 }
+                // Same payload as AUDIO, but only watchers of a share get it.
+                KIND_SYSAUDIO if n > 9 && from != ssrc => {
+                    let seq = u32::from_be_bytes([rx[5], rx[6], rx[7], rx[8]]);
+                    sys_peers.entry(from).or_insert_with(Peer::new).insert(
+                        seq,
+                        rx[9..n].to_vec(),
+                        rx[0] & TERMINATOR != 0,
+                    );
+                }
+                // Screen-share video goes to its own thread: decoding takes tens of ms.
+                KIND_VIDEO if n > 5 + crate::capture::packet::HEADER && from != ssrc => {
+                    let _ = video.try_send((from, rx[5..n].to_vec()));
+                }
                 _ => {}
             }
         }
@@ -112,20 +132,30 @@ pub(super) fn worker(
             if next_mix < now {
                 next_mix = now + Duration::from_millis(20); // fell behind: don't burst
             }
-            mix(&shared, &mut peers, &mut out);
+            mix(&shared, &mut peers, &mut sys_peers, &mut out);
         }
         // Poll fast: every ms of sleep is added to packet latency both ways.
         std::thread::sleep(Duration::from_millis(1));
     }
 }
 
-fn mix(shared: &Shared, peers: &mut HashMap<u32, Peer>, out: &mut rtrb::Producer<f32>) {
+fn mix(
+    shared: &Shared,
+    peers: &mut HashMap<u32, Peer>,
+    sys_peers: &mut HashMap<u32, Peer>,
+    out: &mut rtrb::Producer<f32>,
+) {
     peers.retain(|_, p| p.last.elapsed() < PEER_TIMEOUT);
+    sys_peers.retain(|_, p| p.last.elapsed() < PEER_TIMEOUT);
     let mut acc = [0f32; FRAME];
     let mut levels = HashMap::new();
     for (ssrc, p) in peers.iter_mut() {
         p.step(&mut acc);
         levels.insert(*ssrc, p.level);
+    }
+    // Desktop audio does not move the speaking ring: only the mic does.
+    for p in sys_peers.values_mut() {
+        p.step(&mut acc);
     }
     if let Ok(mut l) = shared.peers.lock() {
         *l = levels;

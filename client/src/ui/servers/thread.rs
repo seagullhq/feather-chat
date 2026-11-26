@@ -88,7 +88,7 @@ impl super::ServersView {
 
     fn author_name(&self, id: i64, me: Option<i64>) -> String {
         if Some(id) == me {
-            return "Tu".to_string();
+            return "You".to_string();
         }
         self.servers
             .get(self.server)
@@ -108,6 +108,8 @@ impl super::ServersView {
         }
         self.thread_open = Some((server_id, channel_id));
         self.thread_expanded = true;
+        // The chat and a share card share one slot: the chat takes it.
+        self.park_share();
         // Open at the target size, not easing up to it from a smaller one.
         self.thread_shown.set(None);
         self.thread_snap.set(3);
@@ -133,6 +135,9 @@ impl super::ServersView {
         self.thread_expanded = !self.thread_expanded;
         if self.thread_expanded {
             self.thread_scroll.scroll_to_bottom();
+            self.park_share();
+        } else {
+            self.unpark_share();
         }
         cx.notify();
     }
@@ -141,6 +146,7 @@ impl super::ServersView {
     pub(super) fn close_thread(&mut self, cx: &mut Context<Self>) {
         self.thread_open = None;
         self.thread_expanded = false;
+        self.unpark_share();
         cx.notify();
     }
 
@@ -307,9 +313,9 @@ impl super::ServersView {
                 .text_color(t.muted)
                 .text_center()
                 .child(if log.loaded {
-                    "Nessun messaggio ancora. Scrivi il primo."
+                    "No messages yet. Write the first one."
                 } else {
-                    "Caricamento…"
+                    "Loading…"
                 })
         } else {
             list.children(log.messages.iter().enumerate().map(|(i, m)| {
@@ -341,7 +347,7 @@ impl super::ServersView {
                     .child(
                         tonal(
                             ("thread-send", c.id as u64),
-                            "Invia",
+                            "Send",
                             "paper-plane-right",
                             t.accent,
                             &t,
@@ -391,7 +397,7 @@ impl super::ServersView {
                 self.author_name(m.author, me),
                 m.content.lines().next().unwrap_or("")
             ),
-            None => "Nessun messaggio ancora".to_string(),
+            None => "No messages yet".to_string(),
         };
         let strip = strip_row(c, &preview, expanded, cx, &t);
 
@@ -441,14 +447,16 @@ impl super::ServersView {
         if !self.thread_floating() || !self.thread_expanded {
             // In a call with the chat unfolded: remember the tray's height, so
             // leaving the call eases the card up from it to its full size.
-            let in_tray = self.joined.is_some() && self.thread_expanded && self.thread_view().is_some();
+            let in_tray =
+                self.joined.is_some() && self.thread_expanded && self.thread_view().is_some();
             // The open-snap is for the card only: spent here, or it would skip the leave-call ease.
             self.thread_snap.set(0);
             if in_tray {
                 let vp = window.viewport_size();
                 let (w, _) = self.thread_area_for(vp);
                 let h = self.tray_body_h(vp) + TRAY_STRIP_H;
-                self.thread_shown.set(Some(((w, h), std::time::Instant::now())));
+                self.thread_shown
+                    .set(Some(((w, h), std::time::Instant::now())));
             } else {
                 // Folded: forget the size drawn last, so the next opening starts
                 // at its target instead of easing down from an old, larger size.
@@ -514,11 +522,11 @@ impl super::ServersView {
                             .flex()
                             .gap_1()
                             .child(
-                                ghost(("thread-fold", c.id as u64), "Riduci", "caret-down", &t)
+                                ghost(("thread-fold", c.id as u64), "Collapse", "caret-down", &t)
                                     .on_click(cx.listener(|this, _, _, cx| this.toggle_tray(cx))),
                             )
                             .child(
-                                ghost(("thread-close", c.id as u64), "Chiudi", "x", &t)
+                                ghost(("thread-close", c.id as u64), "Close", "x", &t)
                                     .on_click(cx.listener(|this, _, _, cx| this.close_thread(cx))),
                             ),
                     ),
@@ -779,7 +787,7 @@ fn strip_row(
         .child(
             ghost(
                 ("thread-fold", c.id as u64),
-                if expanded { "Riduci" } else { "Espandi" },
+                if expanded { "Collapse" } else { "Expand" },
                 // Unfolds upward, folds downward.
                 if expanded { "caret-down" } else { "caret-up" },
                 t,
@@ -787,7 +795,7 @@ fn strip_row(
             .on_click(cx.listener(|this, _, _, cx| this.toggle_tray(cx))),
         )
         .child(
-            ghost(("thread-close", c.id as u64), "Chiudi", "x", t)
+            ghost(("thread-close", c.id as u64), "Close", "x", t)
                 .on_click(cx.listener(|this, _, _, cx| this.close_thread(cx))),
         )
 }

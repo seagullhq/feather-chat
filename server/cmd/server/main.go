@@ -22,7 +22,7 @@ import (
 	"github.com/seagullhq/feather-chat/server/internal/room"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
 
-	// Driver PostgreSQL tramite pgx compatibile con database/sql
+	// PostgreSQL driver via pgx, compatible with database/sql
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -43,34 +43,34 @@ func main() {
 	udpAddr := flag.String("udp", ":7701", "UDP media address")
 	flag.Parse()
 
-	// 1. Connessione a PostgreSQL usando il driver pgx
+	// 1. Connect to PostgreSQL using the pgx driver
 	db, err := sql.Open("pgx", *pgURI)
 	if err != nil {
-		log.Fatalf("Errore apertura connessione DB: %v", err)
+		log.Fatalf("failed to open DB connection: %v", err)
 	}
 	defer db.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Verifica la connessione
+	// Check the connection
 	if err := db.PingContext(ctx); err != nil {
-		log.Fatalf("postgres ping fallito: %v", err)
+		log.Fatalf("postgres ping failed: %v", err)
 	}
-	log.Println("Connesso a PostgreSQL con successo")
+	log.Println("Connected to PostgreSQL")
 
-	// 2. Esegui le migrazioni
+	// 2. Run the migrations
 	applied, err := migrations.Up(db)
 	if err != nil {
-		log.Fatalf("Errore esecuzione migrazioni: %v", err)
+		log.Fatalf("failed to run migrations: %v", err)
 	}
 	if applied {
-		log.Println("Migrazioni applicate con successo!")
+		log.Println("Migrations applied")
 	} else {
-		log.Println("Nessuna nuova migrazione da applicare.")
+		log.Println("No new migrations to apply.")
 	}
 
-	// 3. Inizializza gli store passandogli l'istanza *sql.DB
+	// 3. Initialize the stores with the *sql.DB instance
 	users := accounts.NewStore(db)
 	serverStore := servers.NewStore(db)
 	friendStore := friends.NewStore(db)

@@ -372,7 +372,7 @@ func (s *ServerStore) CreateServer(ctx context.Context, ownerID int, serverName 
 
 	now := time.Now().UTC()
 
-	// Usiamo una transazione per inserire sia il server che l'associazione del membro
+	// Use a transaction to insert both the server and the member association
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -395,7 +395,7 @@ func (s *ServerStore) CreateServer(ctx context.Context, ownerID int, serverName 
 		return nil, err
 	}
 
-	// Inserimento del proprietario nella tabella dei membri del server
+	// Insert the owner into the server members table
 	memberQuery := `
 		INSERT INTO server_members (server_id, user_id, joined_at)
 		VALUES ($1, $2, $3)

@@ -2,10 +2,10 @@
 //! call, full size, and the text chat as a card over its corner (never
 //! resizing the call). In a call: your live mic.
 
-use super::{DmPhase, FriendsView};
+use super::{DmPhase, DmShare, FriendsView};
 use crate::api::Friend;
 use crate::theme::{Theme, ThemeExt};
-use crate::ui::components::{Avatar, Button, Dropdown, ghost, icon};
+use crate::ui::components::{Avatar, Button, Dropdown, fitted, ghost, icon};
 use gpui::{prelude::*, *};
 
 impl FriendsView {
@@ -90,7 +90,6 @@ impl FriendsView {
         let id = friend.id;
         let body = div()
             .w_full()
-            .max_w(px(400.))
             .flex()
             .flex_col()
             .items_center()
@@ -107,25 +106,95 @@ impl FriendsView {
             } else {
                 theirs.disabled(true)
             };
-            return body.child(
-                div()
-                    .flex()
-                    .items_start()
-                    .justify_center()
-                    .gap_6()
+            let avatars = div()
+                .flex()
+                .items_start()
+                .justify_center()
+                .gap_6()
+                .child(
+                    Avatar::new(&mine, 96.)
+                        .state(call.level, call.muted, call.deafened)
+                        .labeled(),
+                )
+                .child(theirs);
+            // A 1:1 call: the peer's screen wins; otherwise our own preview.
+            let (image, label) = if let Some(image) = call.peer_frame.clone() {
+                (Some(image), format!("{}\u{2019}s screen", friend.name))
+            } else if let Some(image) = call.own_frame.clone() {
+                (Some(image), "Your screen".to_string())
+            } else {
+                (None, String::new())
+            };
+            if let Some(image) = image {
+                let t = cx.theme();
+                let (w, h) = self.screen_box();
+                return body
                     .child(
-                        Avatar::new(&mine, 96.)
-                            .state(call.level, call.muted, call.deafened)
-                            .labeled(),
+                        div()
+                            .w(px(w))
+                            .h(px(h))
+                            .rounded(t.radius)
+                            .border_1()
+                            .border_color(t.line)
+                            .bg(t.panel)
+                            .overflow_hidden()
+                            .relative()
+                            .child(fitted(image, w - 2., h - 2.))
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left_2()
+                                    .bottom_2()
+                                    .max_w(px(w - 16.))
+                                    .truncate()
+                                    .rounded(t.radius)
+                                    .border_1()
+                                    .border_color(t.line)
+                                    .bg(t.panel)
+                                    .px_2()
+                                    .text_color(t.text)
+                                    .text_size(t.font_size * 0.85)
+                                    .child(label),
+                            ),
                     )
-                    .child(theirs),
-            );
+                    .child(avatars);
+            }
+            // A share was asked for but no frame arrived yet.
+            let waiting = if call.peer_share.is_some() {
+                Some(format!("Connecting to {}'s screen…", friend.name))
+            } else if call.share != DmShare::Off {
+                Some("Starting your screen share…".to_string())
+            } else {
+                None
+            };
+            if let Some(text) = waiting {
+                let t = cx.theme();
+                let (w, h) = self.screen_box();
+                return body
+                    .child(
+                        div()
+                            .w(px(w))
+                            .h(px(h))
+                            .rounded(t.radius)
+                            .border_1()
+                            .border_color(t.accent)
+                            .bg(t.accent.opacity(0.06))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(t.muted)
+                            .child(text),
+                    )
+                    .child(avatars);
+            }
+            return body.child(avatars);
         }
         let call = Button::new(("dm-call", id as u64), "Call")
             .icon("phone")
             .primary()
             .on_click(cx.listener(move |this, _, _, cx| this.call_friend(id, cx)));
-        body.child(Avatar::new(&friend.name, 96.))
+        body.max_w(px(400.))
+            .child(Avatar::new(&friend.name, 96.))
             .child(
                 div()
                     .font_weight(FontWeight::BOLD)
@@ -133,6 +202,22 @@ impl FriendsView {
                     .child(friend.name.clone()),
             )
             .child(div().mt_2().child(call))
+    }
+
+    /// Box for the shared screen in a 1:1 call: as wide as the stage allows,
+    /// never taller than it, keeping 16:9.
+    fn screen_box(&self) -> (f32, f32) {
+        let (aw, ah) = self.stage_size.get();
+        let aw = if aw > 0. { aw } else { 800. };
+        let ah = if ah > 0. { ah } else { 600. };
+        let mut w = (aw - 64.).clamp(240., 1000.);
+        let mut h = w * 9. / 16.;
+        let max_h = (ah - 140.).max(160.);
+        if h > max_h {
+            h = max_h;
+            w = h * 16. / 9.;
+        }
+        (w, h)
     }
 
     /// Friend's name, close button and "..." menu (Block, Unfriend) for the
@@ -189,14 +274,14 @@ impl FriendsView {
     }
 
     /// Chat closed: a compact strip in the corner, as the text channel tray in
-    /// the server view. Last message as a one-line preview; Espandi opens the card.
+    /// the server view. Last message as a one-line preview; Expand opens the card.
     fn chat_strip(&self, friend: &Friend, width: f32, t: &Theme, cx: &mut Context<Self>) -> Div {
         let preview = match self.chat_log.get(&friend.id).and_then(|log| log.last()) {
             Some(m) => {
-                let who = if m.mine { "Tu" } else { friend.name.as_str() };
+                let who = if m.mine { "You" } else { friend.name.as_str() };
                 format!("{who}: {}", m.text.lines().next().unwrap_or(""))
             }
-            None => "Nessun messaggio ancora".to_string(),
+            None => "No messages yet".to_string(),
         };
         div()
             .w(px(width))
@@ -229,8 +314,13 @@ impl FriendsView {
                     .child(preview),
             )
             .child(
-                ghost(("dm-chat-expand", friend.id as u64), "Espandi", "caret-up", t)
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_chat(cx))),
+                ghost(
+                    ("dm-chat-expand", friend.id as u64),
+                    "Expand",
+                    "caret-up",
+                    t,
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_chat(cx))),
             )
     }
 

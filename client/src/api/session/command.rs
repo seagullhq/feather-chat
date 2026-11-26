@@ -1,5 +1,7 @@
 //! Commands the UI sends, and the cloneable handle to their queue.
 
+use crate::capture::Source;
+
 pub(super) enum Command {
     Join {
         channel_id: i64,
@@ -84,6 +86,28 @@ pub(super) enum Command {
     MakeMember {
         server_id: i64,
         user_id: i64,
+    },
+    ScreenStart {
+        source: Source,
+    },
+    ScreenStop,
+    /// Opt-in system audio for our screen share, independent of video.
+    ScreenAudio(bool),
+    /// From the desktop-audio pipeline: capture failed.
+    ScreenAudioFailed(String),
+    ScreenWatch {
+        ssrc: u32,
+    },
+    ScreenUnwatch {
+        ssrc: u32,
+    },
+    /// From the capture pipeline: first frame is ready, tell the server.
+    ScreenAnnounce,
+    /// From the capture pipeline: capture ended by itself.
+    ScreenEnded(Option<String>),
+    /// From the viewer pipeline: frames of this sharer were lost.
+    ScreenKeyReq {
+        ssrc: u32,
     },
     ListFriends,
     SearchUsers {
@@ -275,6 +299,29 @@ impl Control {
             .is_ok()
     }
 
+    /// Starts sharing a source already chosen by the UI.
+    pub fn screen_start(&self, source: Source) -> bool {
+        self.tx.try_send(Command::ScreenStart { source }).is_ok()
+    }
+
+    pub fn screen_stop(&self) -> bool {
+        self.tx.try_send(Command::ScreenStop).is_ok()
+    }
+
+    /// Turns system-audio sharing on or off while a screen share is live.
+    pub fn screen_audio(&self, on: bool) -> bool {
+        self.tx.try_send(Command::ScreenAudio(on)).is_ok()
+    }
+
+    /// Subscribes to a room-mate's share (the server sends it only to watchers).
+    pub fn screen_watch(&self, ssrc: u32) -> bool {
+        self.tx.try_send(Command::ScreenWatch { ssrc }).is_ok()
+    }
+
+    pub fn screen_unwatch(&self, ssrc: u32) -> bool {
+        self.tx.try_send(Command::ScreenUnwatch { ssrc }).is_ok()
+    }
+
     pub fn ban_user(&self, server_id: i64, user_id: i64) -> bool {
         self.tx
             .try_send(Command::BanUser { server_id, user_id })
@@ -318,13 +365,18 @@ impl Control {
     }
 
     pub fn load_dm(&self, peer: i64) -> bool {
-        self.tx.try_send(Command::LoadDm { peer, before: None }).is_ok()
+        self.tx
+            .try_send(Command::LoadDm { peer, before: None })
+            .is_ok()
     }
 
     /// The page just older than message `before`.
     pub fn load_older_dm(&self, peer: i64, before: i64) -> bool {
         self.tx
-            .try_send(Command::LoadDm { peer, before: Some(before) })
+            .try_send(Command::LoadDm {
+                peer,
+                before: Some(before),
+            })
             .is_ok()
     }
 

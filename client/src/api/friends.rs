@@ -166,7 +166,11 @@ pub(super) fn dm_from(m: &serde_json::Value) -> Option<DirectMessage> {
     })
 }
 
-pub(super) fn send_dm(session: &mut Session, peer: i64, text: &str) -> Result<DirectMessage, String> {
+pub(super) fn send_dm(
+    session: &mut Session,
+    peer: i64,
+    text: &str,
+) -> Result<DirectMessage, String> {
     let ack = session.call(json!({
         "type":"SEND_DIRECT_MESSAGE",
         "directRecipientID":peer.to_string(),

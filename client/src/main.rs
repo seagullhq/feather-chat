@@ -1,8 +1,12 @@
-#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 
 mod api;
 mod app;
 mod assets;
+mod capture;
 mod input;
 mod media;
 mod model;

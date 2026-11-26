@@ -23,8 +23,9 @@ Two channels (the rationale is spread out in [protocol.md](protocol.md)):
 
 - **TCP control** (server's single listen port): HELLO, JOIN, LEAVE, ACK,
   roster, and eventually the X25519 handshake. Framed per §7.
-- **UDP media**: AUDIO and PING only, forwarded per room by the server.
-  Payloads MUST NOT exceed 1024 bytes.
+- **UDP media**: AUDIO, PING, VIDEO and SYSAUDIO, forwarded per room by the
+  server. Datagrams MUST NOT exceed 1024 bytes, except VIDEO (kind 2) which
+  MAY use up to 1200 bytes.
 
 ## 3. UDP media packet
 
@@ -46,9 +47,9 @@ The flag/kind byte (`FL`):
 |  V  | T |  K  |
 +-----+---+-----+
 V    2 bits  protocol version (0 in v1)
-T    1 bit   terminator, only defined for kind 0 (AUDIO), MUST be 0 on other kinds
-K    5 bits  kind: 0 = AUDIO, 1 = PING. 2..31 reserved; receivers MUST drop
-             unknown kinds without reporting.
+T    1 bit   terminator, only defined for kinds 0 (AUDIO) and 3 (SYSAUDIO), MUST be 0 on other kinds
+K    5 bits  kind: 0 = AUDIO, 1 = PING, 2 = VIDEO, 3 = SYSAUDIO. 4..31 reserved;
+             receivers MUST drop unknown kinds without reporting.
 ```
 
 SSRC: random per session (MUST NOT be 0x00000000), random per session, and
@@ -86,6 +87,35 @@ Semantics:
   This is the equivalent of RTP's marker bit (RFC 3551 §4.1) and Mumble's
   terminator bit in a single bit.
 
+## 4b. Screen-share packets (kinds 2 and 3)
+
+A session that shares its screen sends VIDEO (and optionally SYSAUDIO)
+under its own SSRC. The server forwards these kinds **only to the sessions
+that subscribed with `SCREEN_WATCH`** (§7.2), never to every room-mate.
+A packet from a session that is not sharing MUST be dropped by the server.
+
+**SYSAUDIO (kind 3)**: payload identical to AUDIO (§4).
+
+**VIDEO (kind 2)**: one fragment of one H.264 access unit (Annex B).
+The server MUST NOT parse the payload.
+
+```
+   0       4        8     9       11      13
++--------+--------+-----+-------+-------+----------------+
+| frame  |  ts    |flags| idx   | count |  H.264 bytes   |
+| u32    | u32 ms | u8  | u16   | u16   |                |
++--------+--------+-----+-------+-------+----------------+
+```
+
+- `frame`: increments by 1 per access unit (wraps).
+- `ts`: capture time in milliseconds, sender clock, wraps.
+- `flags`: bit 0 = keyframe (IDR); other bits MUST be 0.
+- `idx`/`count`: fragment index (from 0) and total fragments of the frame.
+- Each fragment carries at most 1200 − 5 − 13 = 1182 bytes of H.264.
+
+A receiver MUST drop a frame whose fragments are not all received before a
+newer frame completes, and then request a keyframe (`SCREEN_KEYREQ`, §7.2).
+
 ## 5. PING packet (kind 1)
 
 ```
@@ -110,6 +140,8 @@ For every received UDP packet the server and the client MUST in order:
 2. Reject unknown protocol version bits != 0.
 3. Reject kind unknown (drop silently).
 4. For AUDIO: reject zero SSRC and zero-len frames, then forward verbatim.
+   For VIDEO/SYSAUDIO: reject zero SSRC, then forward verbatim to the
+   sender's watchers only (§4b).
 5. For PING: echo the timestamp back to the source.
 
 Square brackets of checks are normative because UDP under NAT is inherently
@@ -140,11 +172,37 @@ ACK omits `ssrc` if it is taken, so pick another) before `JOIN`.
 | `ACK` to JOIN | S→C | `room`, `channelId`, `serverId`, `members` (everyone already there) |
 | `STATE` | C→S | `muted`, `deafened` (no ACK) |
 | `LEAVE` | C→S | none (no ACK; closing TCP does the same) |
-| `MEMBER_JOINED` / `MEMBER_STATE` | S→C push | `channelId`, `member` = `{ssrc,name,muted,deafened}` |
+| `MEMBER_JOINED` / `MEMBER_STATE` | S→C push | `channelId`, `member` = `{ssrc,name,muted,deafened,sharing}` |
 | `MEMBER_LEFT` | S→C push | `channelId`, `ssrc` |
 
 `LIST_CHANNELS` also returns `members` per channel. Pushes never use the
 `ACK`/`ERROR` types, so they can't be mistaken for a reply to a request.
+
+### 7.2 Screen-share messages
+
+A session MUST be in a room (`JOIN`ed) to share or watch. A room holds at
+most 4 simultaneous sharers.
+
+| Message | Direction | Fields |
+|---|---|---|
+| `SCREEN_START` | C→S | none. ACK on success, `ERROR` ("cannot share") when not in a room or the room is full |
+| `SCREEN_STOP` | C→S | none (no ACK). Leaving the room or closing TCP does the same |
+| `SCREEN_WATCH` | C→S | `ssrc` of a sharing room-mate. ACK, or `ERROR` ("not sharing") |
+| `SCREEN_UNWATCH` | C→S | `ssrc` (no ACK) |
+| `SCREEN_KEYREQ` | C→S | `ssrc` of the presenter: viewer asks for a keyframe |
+| `SCREEN_KEYREQ` | S→C push | none: the receiving presenter MUST send a keyframe soon. Sent automatically on every `SCREEN_WATCH` |
+
+Sharing starts/stops are announced to the server's members as `MEMBER_STATE`
+whose `member` carries `sharing: true` (omitted when false). A 1:1 DM call
+has no server roster: there the other side gets `DM_CALL_STATE` with the
+sharer's `ssrc` and `sharing`, and watches it with the same `SCREEN_WATCH`
+flow.
+
+A server MUST throttle viewer-sent `SCREEN_KEYREQ` to at most one per 500 ms
+for each `(viewer, presenter SSRC)` pair. Requests outside that gap MAY be
+dropped without a reply; the automatic key request sent on `SCREEN_WATCH` does
+not consume that budget. Clients use the same 500 ms gap when asking, and
+pace VIDEO fragments instead of sending a keyframe as one burst.
 
 ## 8. Worked examples
 
@@ -172,7 +230,7 @@ ACK omits `ssrc` if it is taken, so pick another) before `JOIN`.
 | SSRC != 0 | §3 | M |
 | Continuous transmission (no DTX) | §4 | M |
 | T flag set on final talkspurt packet | §4 | M |
-| Packet length ≤ 1024 | §2 | M |
+| Packet length ≤ 1024 (VIDEO ≤ 1200) | §2 | M |
 | PING-echo before AUDIO | §5 | S |
 | seq increases by ≥1 per packet | §4 | M |
 | Tolerates unknown TCP message types | §7 | M |
@@ -190,6 +248,9 @@ trusted networks.
 
 ## 11. Revision history
 
+- **v1 + screen share** (2026-11-20): kinds 2 (VIDEO) and 3 (SYSAUDIO),
+  VIDEO datagrams up to 1200 bytes, watcher-only forwarding, `SCREEN_*`
+  control messages (§7.2), `sharing` on members, 500 ms `SCREEN_KEYREQ` limit.
 - **v0 → v1** (2026-09-17): JOIN/LEAVE moved from UDP to TCP; terminator
   flag added; PING now carries an echoed timestamp; explicit max datagram
   1024 bytes; continuous transmission documented; compliance summary added.

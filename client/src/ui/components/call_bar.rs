@@ -104,7 +104,9 @@ impl RenderOnce for CallBar {
 
         // Mic and audio are always there, so the bar is never empty; leave only in a call.
         // Mic and audio first, then the join/move button, then leave.
+        // Never squeezed: the label on the left truncates instead.
         let right = div()
+            .flex_none()
             .flex()
             .items_center()
             .gap_1()
@@ -124,7 +126,11 @@ impl RenderOnce for CallBar {
             )
             .child(audio)
             .children(self.lead);
-        let right = if self.joined { right.child(leave) } else { right };
+        let right = if self.joined {
+            right.child(leave)
+        } else {
+            right
+        };
 
         div()
             .flex_none()

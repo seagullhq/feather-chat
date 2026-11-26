@@ -22,9 +22,10 @@ fn start_voice(
     deafened: bool,
     session: &mut Session,
     engine: &mut Option<media::Engine>,
+    notify: media::Notify,
 ) -> Option<Arc<media::Shared>> {
     drop(engine.take());
-    let media = match media::Engine::start(host, ssrc, muted, deafened) {
+    let media = match media::Engine::start(host, ssrc, muted, deafened, notify) {
         Ok(e) => {
             let shared = e.shared();
             let _ = engine.replace(e);
@@ -47,6 +48,7 @@ fn commands(
     events: async_channel::Sender<Event>,
     host: String,
     ssrc: u32,
+    self_tx: async_channel::Sender<Command>,
 ) {
     // The voice engine lives exactly as long as the JOIN it belongs to.
     let mut engine: Option<media::Engine> = None;
@@ -82,8 +84,15 @@ fn commands(
                     Ok(j) => {
                         // A failed JOIN leaves the old room/engine alone; only
                         // a successful one replaces it.
-                        let media =
-                            start_voice(&host, ssrc, muted, deafened, &mut session, &mut engine);
+                        let media = start_voice(
+                            &host,
+                            ssrc,
+                            muted,
+                            deafened,
+                            &mut session,
+                            &mut engine,
+                            notify(&self_tx),
+                        );
                         let _ = events.send_blocking(Event::Joined {
                             server_id: j.server_id,
                             channel_id: j.channel_id,
@@ -99,6 +108,79 @@ fn commands(
             Command::Leave => {
                 drop(engine.take());
                 let _ = session.conn.write(&json!({"type":"LEAVE"}));
+            }
+            Command::ScreenStart { source } => {
+                let started = match engine.as_mut() {
+                    Some(e) if !e.is_sharing() => e.start_share(source),
+                    Some(_) => Ok(()), // already sharing
+                    None => Err("join a voice channel first".to_string()),
+                };
+                if let Err(e) = started {
+                    let _ = events.send_blocking(Event::ShareEnded(Some(e)));
+                }
+            }
+            Command::ScreenAnnounce => {
+                // Ignore a late notice from a share that was already stopped.
+                if let Some(e) = engine.as_mut().filter(|e| e.is_sharing()) {
+                    match session.call(json!({"type":"SCREEN_START"})) {
+                        Ok(_) => {
+                            e.set_announced();
+                            let _ = events.send_blocking(Event::ShareStarted);
+                        }
+                        Err(err) => {
+                            e.stop_share();
+                            let _ = events.send_blocking(Event::ShareEnded(Some(err)));
+                        }
+                    }
+                }
+            }
+            Command::ScreenStop | Command::ScreenEnded(_) => {
+                let reason = match &command {
+                    Command::ScreenEnded(r) => r.clone(),
+                    _ => None,
+                };
+                if let Some(e) = engine.as_mut().filter(|e| e.is_sharing()) {
+                    e.stop_share();
+                    let _ = session.conn.write(&json!({"type":"SCREEN_STOP"}));
+                    let _ = events.send_blocking(Event::ShareEnded(reason));
+                }
+            }
+            Command::ScreenAudio(on) => {
+                let started = match (on, engine.as_mut()) {
+                    (false, Some(e)) => {
+                        let _ = e.set_share_audio(false);
+                        Ok(())
+                    }
+                    (true, Some(e)) if e.is_sharing() => e.set_share_audio(true),
+                    (true, _) => Err("start sharing before turning audio on".to_string()),
+                    (false, None) => Ok(()),
+                };
+                if let Err(e) = started {
+                    let _ = events.send_blocking(Event::ShareAudioFailed(e));
+                }
+            }
+            Command::ScreenAudioFailed(reason) => {
+                // The capture thread is gone; drop its sender and reset the UI.
+                if let Some(e) = engine.as_mut() {
+                    let _ = e.set_share_audio(false);
+                }
+                let _ = events.send_blocking(Event::ShareAudioFailed(reason));
+            }
+            Command::ScreenWatch { ssrc } => {
+                if let Err(e) = session.call(json!({"type":"SCREEN_WATCH","ssrc":ssrc})) {
+                    let _ = events
+                        .send_blocking(Event::Error(format!("Could not watch the screen: {e}")));
+                }
+            }
+            Command::ScreenUnwatch { ssrc } => {
+                let _ = session
+                    .conn
+                    .write(&json!({"type":"SCREEN_UNWATCH","ssrc":ssrc}));
+            }
+            Command::ScreenKeyReq { ssrc } => {
+                let _ = session
+                    .conn
+                    .write(&json!({"type":"SCREEN_KEYREQ","ssrc":ssrc}));
             }
             Command::State { muted, deafened } => {
                 let _ = session
@@ -117,8 +199,15 @@ fn commands(
                 deafened,
             } => match friends::accept_call(&mut session, peer) {
                 Ok(()) => {
-                    let media =
-                        start_voice(&host, ssrc, muted, deafened, &mut session, &mut engine);
+                    let media = start_voice(
+                        &host,
+                        ssrc,
+                        muted,
+                        deafened,
+                        &mut session,
+                        &mut engine,
+                        notify(&self_tx),
+                    );
                     let _ = events.send_blocking(Event::DmCallActive { peer, media });
                 }
                 Err(e) => {
@@ -131,7 +220,15 @@ fn commands(
                 deafened,
             } => {
                 // The server already joined both sessions on accept.
-                let media = start_voice(&host, ssrc, muted, deafened, &mut session, &mut engine);
+                let media = start_voice(
+                    &host,
+                    ssrc,
+                    muted,
+                    deafened,
+                    &mut session,
+                    &mut engine,
+                    notify(&self_tx),
+                );
                 let _ = events.send_blocking(Event::DmCallActive { peer, media });
             }
             Command::DmCallReject { peer } => {
@@ -274,14 +371,16 @@ fn commands(
                     let _ = events.send_blocking(Event::FriendFailed(e));
                 }
             },
-            Command::LoadDm { peer, before } => match friends::dm_history(&mut session, peer, before) {
-                Ok(msgs) => {
-                    let _ = events.send_blocking(Event::DmHistory { peer, msgs, before });
+            Command::LoadDm { peer, before } => {
+                match friends::dm_history(&mut session, peer, before) {
+                    Ok(msgs) => {
+                        let _ = events.send_blocking(Event::DmHistory { peer, msgs, before });
+                    }
+                    Err(e) => {
+                        let _ = events.send_blocking(Event::FriendFailed(e));
+                    }
                 }
-                Err(e) => {
-                    let _ = events.send_blocking(Event::FriendFailed(e));
-                }
-            },
+            }
             Command::SendThread {
                 server_id,
                 channel_id,
@@ -384,6 +483,20 @@ fn commands(
     session.shutdown();
 }
 
+/// Bridges the media pipelines back into the command queue (the session is
+/// owned by the command thread, so they cannot talk to the server directly).
+fn notify(tx: &async_channel::Sender<Command>) -> media::Notify {
+    let tx = tx.clone();
+    std::sync::Arc::new(move |n| {
+        let _ = tx.send_blocking(match n {
+            media::Notice::ShareStarted => Command::ScreenAnnounce,
+            media::Notice::ShareEnded(r) => Command::ScreenEnded(r),
+            media::Notice::KeyReq(ssrc) => Command::ScreenKeyReq { ssrc },
+            media::Notice::ShareAudioFailed(r) => Command::ScreenAudioFailed(r),
+        });
+    })
+}
+
 /// Pushes the fresh friend list to the UI. ponytail: a failed refresh keeps the old list.
 fn send_friends(session: &mut Session, events: &async_channel::Sender<Event>) {
     if let Ok(list) = friends::list_friends(session) {
@@ -395,6 +508,7 @@ fn send_friends(session: &mut Session, events: &async_channel::Sender<Event>) {
 /// becomes usable after `Event::AuthOk`.
 pub fn spawn(host: String, req: Request, tx: async_channel::Sender<Event>) -> Control {
     let (cmd_tx, cmd_rx) = async_channel::unbounded();
+    let cmd_tx_thread = cmd_tx.clone();
     std::thread::spawn(move || {
         let conn = match &req {
             Request::Login {
@@ -421,6 +535,7 @@ pub fn spawn(host: String, req: Request, tx: async_channel::Sender<Event>) -> Co
                 return;
             }
         };
+        let self_tx = cmd_tx_thread;
         let (frames_tx, frames_rx) = async_channel::unbounded();
         let reader_events = tx.clone();
         std::thread::spawn(move || reader(read_stream, frames_tx, reader_events));
@@ -433,6 +548,7 @@ pub fn spawn(host: String, req: Request, tx: async_channel::Sender<Event>) -> Co
             tx,
             host,
             ssrc,
+            self_tx,
         );
     });
     Control { tx: cmd_tx }

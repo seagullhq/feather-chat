@@ -101,6 +101,16 @@ pub enum Event {
         channel_id: i64,
         member: RosterMember,
     },
+    /// Our screen share is live on the server.
+    ShareStarted,
+    /// Our screen share ended (None = we stopped it; Some = why it failed).
+    ShareEnded(Option<String>),
+    /// Desktop-audio capture failed: the toggle is back off.
+    ShareAudioFailed(String),
+    /// The server wants a keyframe from our share (a viewer joined or lost frames).
+    ScreenKeyReq,
+    /// A background operation failed: show the reason in the stage.
+    Error(String),
     /// Your ring was registered; waiting for the friend to answer.
     DmCallOutgoing {
         peer: i64,
@@ -125,6 +135,9 @@ pub enum Event {
         peer: i64,
         muted: bool,
         deafened: bool,
+        /// The peer's screen share is on; `ssrc` is the screen to watch.
+        sharing: bool,
+        ssrc: Option<u32>,
     },
     /// Rejected, cancelled, timed out, the peer left, or they went offline.
     DmCallEnded {

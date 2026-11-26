@@ -15,11 +15,14 @@ const CARD_TOP: f32 = 72.;
 impl FriendsView {
     pub(super) fn dm_call_banner(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         // Only a ringing call gets the card; calling and connecting live in the call bar.
-        let call = self.dm_call.as_ref().filter(|c| c.phase == DmPhase::Incoming)?;
+        let call = self
+            .dm_call
+            .as_ref()
+            .filter(|c| c.phase == DmPhase::Incoming)?;
         let t = cx.theme();
         let peer = call.peer;
         let name = call.name.clone();
-        let detail = "Chiamata in arrivo";
+        let detail = "Incoming call";
 
         let header = div()
             .flex()

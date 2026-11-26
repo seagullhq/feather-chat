@@ -119,8 +119,37 @@ fn log_stream_error(prefix: &'static str) -> impl FnMut(cpal::Error) + Send + 's
     }
 }
 
+/// One device frame down to mono. Some stereo devices carry voice on one
+/// channel: prefer the stronger channel instead of halving its level by
+/// averaging.
+pub(super) fn mono<T: SizedSample>(frame: &[T]) -> f32
+where
+    f32: FromSample<T>,
+{
+    if frame.len() <= 1 {
+        return frame.first().map(|s| f32::from_sample(*s)).unwrap_or(0.);
+    }
+    frame
+        .iter()
+        .map(|s| f32::from_sample(*s))
+        .max_by(|a, b| a.abs().total_cmp(&b.abs()))
+        .unwrap_or(0.)
+}
+
+/// Downmix for system audio: average the channels, so hard-panned music keeps
+/// both sides instead of flipping between them.
+pub(super) fn mono_average<T: SizedSample>(frame: &[T]) -> f32
+where
+    f32: FromSample<T>,
+{
+    if frame.is_empty() {
+        return 0.;
+    }
+    frame.iter().map(|s| f32::from_sample(*s)).sum::<f32>() / frame.len() as f32
+}
+
 /// 48 kHz if the device offers it (no resampling), else the device default.
-fn pick(
+pub(super) fn pick(
     ranges: Option<Vec<cpal::SupportedStreamConfigRange>>,
     default: Result<SupportedStreamConfig, cpal::Error>,
 ) -> Result<SupportedStreamConfig, String> {
@@ -143,7 +172,7 @@ fn pick(
 
 /// ~10 ms device buffer instead of the backend default, which can be 100 ms
 /// or more (cpal docs). Falls back to the default if the device refuses it.
-fn small_buffer(sup: &SupportedStreamConfig) -> cpal::BufferSize {
+pub(super) fn small_buffer(sup: &SupportedStreamConfig) -> cpal::BufferSize {
     match sup.buffer_size() {
         cpal::SupportedBufferSize::Range { min, max } => {
             cpal::BufferSize::Fixed((sup.sample_rate() / 100).clamp(*min, *max))
@@ -205,18 +234,7 @@ where
         move |data: &[T], _| {
             let Ok(mut tx) = tx.lock() else { return };
             for frame in data.chunks(ch) {
-                // Some stereo devices carry voice on one channel: prefer the
-                // stronger channel instead of halving its level by averaging.
-                let m = if ch <= 1 {
-                    f32::from_sample(frame[0])
-                } else {
-                    frame
-                        .iter()
-                        .map(|s| f32::from_sample(*s))
-                        .max_by(|a, b| a.abs().total_cmp(&b.abs()))
-                        .unwrap_or(0.)
-                };
-                rs.push(m, |o| {
+                rs.push(mono(frame), |o| {
                     let _ = tx.push((o.clamp(-1., 1.) * 32767.) as i16);
                 });
             }

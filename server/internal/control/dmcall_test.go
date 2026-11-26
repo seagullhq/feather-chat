@@ -116,6 +116,48 @@ func TestIntegrationDmCallRingAcceptLeave(t *testing.T) {
 	}
 }
 
+// A 1:1 call joins both sides to a room, so the channel SCREEN_* flow works:
+// the peer learns the sharer's SSRC, watches it, and sees the share stop.
+func TestIntegrationDmCallScreenShare(t *testing.T) {
+	f := newDmCallFixture(t)
+	f.ring(t)
+	sendTest(t, f.b, protocol.Control{Type: "DM_ACCEPT_CALL", DirectRecipientID: strconv.Itoa(f.aID)})
+	awaitControl(t, f.b, "DM_ACCEPT_CALL ACK", func(m protocol.Control) bool { return m.Type == "ACK" })
+	awaitControl(t, f.a, "DM_CALL_ACCEPTED", func(m protocol.Control) bool {
+		return m.Type == "DM_CALL_ACCEPTED"
+	})
+
+	// Nobody shares yet: watching is refused like in a channel.
+	sendTest(t, f.b, protocol.Control{Type: "SCREEN_WATCH", SSRC: 0xa110})
+	if e := awaitControl(t, f.b, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != "not sharing" {
+		t.Fatalf("SCREEN_WATCH error = %q, want not sharing", e.Error)
+	}
+
+	sendTest(t, f.a, protocol.Control{Type: "SCREEN_START"})
+	awaitControl(t, f.a, "SCREEN_START ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.SSRC == 0xa110
+	})
+	state := awaitControl(t, f.b, "DM_CALL_STATE sharing", func(m protocol.Control) bool {
+		return m.Type == "DM_CALL_STATE" && m.Sharing && m.SSRC == 0xa110
+	})
+	if state.UserID != f.aID {
+		t.Fatalf("share state from %d, want %d", state.UserID, f.aID)
+	}
+
+	sendTest(t, f.b, protocol.Control{Type: "SCREEN_WATCH", SSRC: 0xa110})
+	awaitControl(t, f.b, "SCREEN_WATCH ACK", func(m protocol.Control) bool {
+		return m.Type == "ACK" && m.SSRC == 0xa110
+	})
+	awaitControl(t, f.a, "SCREEN_KEYREQ", func(m protocol.Control) bool {
+		return m.Type == "SCREEN_KEYREQ"
+	})
+
+	sendTest(t, f.a, protocol.Control{Type: "SCREEN_STOP"})
+	awaitControl(t, f.b, "DM_CALL_STATE share off", func(m protocol.Control) bool {
+		return m.Type == "DM_CALL_STATE" && !m.Sharing && m.SSRC == 0xa110
+	})
+}
+
 func TestIntegrationDmCallReject(t *testing.T) {
 	f := newDmCallFixture(t)
 	f.ring(t)

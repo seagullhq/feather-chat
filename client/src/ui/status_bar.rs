@@ -11,7 +11,14 @@ use gpui::{prelude::*, *};
 fn default_name(input: bool) -> SharedString {
     media::system_default_device_name(input)
         .map(SharedString::from)
-        .unwrap_or_else(|| if input { "No microphone" } else { "No audio device" }.into())
+        .unwrap_or_else(|| {
+            if input {
+                "No microphone"
+            } else {
+                "No audio device"
+            }
+            .into()
+        })
 }
 
 pub struct StatusBar {

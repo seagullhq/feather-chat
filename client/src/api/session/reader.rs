@@ -39,6 +39,7 @@ fn push(frame: &Value) -> Option<Event> {
         }
         "FRIENDS_CHANGED" => return Some(Event::FriendsChanged),
         "SERVER_DELETED" => return Some(Event::ServerDeleted { id: server_id }),
+        "SCREEN_KEYREQ" => return Some(Event::ScreenKeyReq),
         "SERVER_MEMBERS_CHANGED" => return Some(Event::MembersChanged { server_id }),
         // Sent directly to the user who was kicked or banned.
         "USER_KICKED" | "USER_BANNED" => {
@@ -74,6 +75,8 @@ fn push(frame: &Value) -> Option<Event> {
                 peer: frame["userId"].as_i64()?,
                 muted: frame["muted"].as_bool().unwrap_or(false),
                 deafened: frame["deafened"].as_bool().unwrap_or(false),
+                sharing: frame["sharing"].as_bool().unwrap_or(false),
+                ssrc: frame["ssrc"].as_u64().map(|v| v as u32),
             });
         }
         _ => {}

@@ -20,8 +20,8 @@ pub(crate) fn set_app_icon() {
 
     // In the .app the Dock already shows Info.plist's icon. Setting it again
     // decodes the whole .icns into an ~8 MB bitmap: only do it for `cargo run`.
-    let bundled = std::env::current_exe()
-        .is_ok_and(|p| p.to_string_lossy().contains(".app/Contents/MacOS/"));
+    let bundled =
+        std::env::current_exe().is_ok_and(|p| p.to_string_lossy().contains(".app/Contents/MacOS/"));
     if bundled {
         return;
     }

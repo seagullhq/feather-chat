@@ -62,6 +62,8 @@ type Control struct {
 	ServerHasMore       bool                        `json:"serverHasMore"`
 	ServerInfo          *ServerMessageSummary       `json:"serverInfo,omitempty"`
 	ServerMessages      []ServerMessageSummary      `json:"serverMessages"`
+	// Sharing mirrors Member.Sharing on DM_CALL_STATE, where there is no roster.
+	Sharing bool `json:"sharing,omitempty"`
 }
 
 // DirectConversationSummary is one DM channel in a user's sidebar.
@@ -148,4 +150,5 @@ type Member struct {
 	Name     string `json:"name"`
 	Muted    bool   `json:"muted"`
 	Deafened bool   `json:"deafened"`
+	Sharing  bool   `json:"sharing,omitempty"`
 }
