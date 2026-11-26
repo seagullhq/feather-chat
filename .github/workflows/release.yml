@@ -53,8 +53,10 @@ jobs:
         with:
           subject-path: dist/feather-chat-*
 
-      # Runs from the repo root: gh calls git to verify the tag, which fails in dist/.
+      # No checkout in this job, so no git repo: gh works through the API with GH_REPO.
+      # The tag exists already, since this run was started by pushing it.
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes dist/feather-chat-* dist/SHA256SUMS
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes dist/feather-chat-* dist/SHA256SUMS
