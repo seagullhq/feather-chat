@@ -1,0 +1,60 @@
+name: release
+
+# Runs only on version tags. The build, tests and image come from build.yml,
+# called in this same run so the release job can download its artifacts.
+on:
+  push:
+    tags: ["v*"]
+
+# Least privilege: read-only by default, jobs opt into write.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    # Signing secrets for the Windows build. The called workflow cannot raise
+    # permissions, so everything it requests is granted here.
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
+  release:
+    name: publish release
+    # Waits for the whole build workflow, tests and image included.
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      # Build provenance attestations (free for public repos), verified with
+      # `gh attestation verify <file> -R seagullhq/feather-chat`.
+      id-token: write
+      attestations: write
+    steps:
+      # v8 required: uploads use archive: false, v7 tries to unzip them and fails.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum feather-chat-* > SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/feather-chat-*
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: dist
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes feather-chat-* SHA256SUMS
