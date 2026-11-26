@@ -75,12 +75,6 @@ mod unsupported {
 #[allow(unused_imports)]
 pub use unsupported::{Capture, start};
 
-/// Sources offered by the custom picker. Empty where the system picker is used.
-#[cfg(not(target_os = "windows"))]
-pub fn sources() -> Result<Vec<Source>, String> {
-    Ok(Vec::new())
-}
-
 /// Starts capture with a target already chosen by the UI.
 pub fn start_with(source: Source, on_event: impl FnMut(Event) + Send + 'static) -> Capture {
     #[cfg(target_os = "windows")]
@@ -94,17 +88,10 @@ pub fn start_with(source: Source, on_event: impl FnMut(Event) + Send + 'static) 
     }
 }
 
-/// Small still image for the source picker. `None` where the system picker is used.
+/// Small still image for the source picker (Windows only; other platforms use the system picker).
+#[cfg(target_os = "windows")]
 pub fn thumbnail(source: &Source) -> Option<Frame> {
-    #[cfg(target_os = "windows")]
-    {
-        windows::thumbnail(source)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = source;
-        None
-    }
+    windows::thumbnail(source)
 }
 
 /// Reason reported by a native source picker when the user dismisses it.

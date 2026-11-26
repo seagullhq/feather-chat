@@ -2,9 +2,12 @@
 
 use super::super::Submit;
 use super::super::components::{Button, Modal, ModalHeader, icon};
-use crate::capture::{self, Source};
+#[cfg(target_os = "windows")]
+use crate::capture;
+use crate::capture::Source;
 use crate::theme::ThemeExt;
 use gpui::{RenderImage, prelude::*, *};
+#[cfg(target_os = "windows")]
 use image::{Frame as ImgFrame, RgbaImage};
 use std::sync::Arc;
 
@@ -27,6 +30,7 @@ pub(crate) struct SourcePicker {
     selected: Option<usize>,
     error: Option<String>,
     /// Stale thumbnail results from a previous open are discarded.
+    #[cfg(target_os = "windows")]
     generation: u64,
 }
 
@@ -39,10 +43,12 @@ impl SourcePicker {
             items: Vec::new(),
             selected: None,
             error: None,
+            #[cfg(target_os = "windows")]
             generation: 0,
         }
     }
 
+    #[cfg(target_os = "windows")]
     pub(crate) fn reset(&mut self, cx: &mut Context<Self>) {
         self.generation = self.generation.wrapping_add(1);
         for item in &self.items {
@@ -73,8 +79,8 @@ impl SourcePicker {
     }
 
     /// WGC thumbnails may take a few hundred ms, so keep them off the UI thread.
+    #[cfg(target_os = "windows")]
     fn load_thumbnails(&self, cx: &mut Context<Self>) {
-        #[cfg(target_os = "windows")]
         for (index, item) in self.items.iter().enumerate() {
             let source = item.source.clone();
             let expected = source.clone();
@@ -105,10 +111,9 @@ impl SourcePicker {
             })
             .detach();
         }
-        #[cfg(not(target_os = "windows"))]
-        let _ = cx;
     }
 
+    #[cfg(target_os = "windows")]
     pub(crate) fn focus_handle(&self) -> FocusHandle {
         self.focus.clone()
     }
@@ -131,6 +136,7 @@ impl SourcePicker {
 
 /// gpui expects BGRA bytes inside an image `Frame`; `RgbaImage` is just the
 /// container, exactly like the live screen frames in `media::share`.
+#[cfg(target_os = "windows")]
 fn render_image(frame: capture::Frame) -> Option<Arc<RenderImage>> {
     if frame.width == 0 || frame.height == 0 {
         return None;

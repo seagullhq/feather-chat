@@ -48,6 +48,7 @@ impl ServersView {
     }
 
     /// Opens our picker instead of the native source dialog.
+    #[cfg(target_os = "windows")]
     pub(super) fn open_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.picker_open = true;
         self.share = ShareState::Picking;
