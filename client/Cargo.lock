@@ -1733,7 +1733,7 @@ dependencies = [
 
 [[package]]
 name = "feather-chat"
-version = "0.20.0"
+version = "0.20.1"
 dependencies = [
  "ashpd 0.14.1",
  "async-channel",
