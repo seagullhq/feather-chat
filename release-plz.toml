@@ -1,0 +1,13 @@
+# release-plz: version bumps and tags for the client (client/Cargo.toml).
+# Read by release-plz/action on every push to main; see .github/workflows/release.yml.
+[workspace]
+# Pre-1.0: a new feature bumps the minor (0.20.1 -> 0.21.0), like a breaking change.
+features_always_increment_minor = true
+# An application, not a crate: nothing goes to crates.io.
+publish = false
+# Tag only. The GitHub release is created by the publish job, once the assets exist.
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+git_release_enable = false
+# cargo-semver-checks is for libraries; this package is a binary.
+semver_check = false

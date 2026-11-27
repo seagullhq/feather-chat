@@ -77,11 +77,15 @@ tasks:
     desc: Build a macOS .app bundle into dist/
     platforms: [darwin]
     deps: [build]
+    vars:
+      # client/Cargo.toml is the only place the version is written by hand.
+      APP_VERSION:
+        sh: sed -n 's/^version = "\(.*\)"/\1/p' client/Cargo.toml | head -n 1
     cmds:
       - rm -rf "dist/Feather Chat.app"
       - mkdir -p "dist/Feather Chat.app/Contents/MacOS" "dist/Feather Chat.app/Contents/Resources"
       - install -m 755 dist/client/release/feather-chat "dist/Feather Chat.app/Contents/MacOS/feather-chat"
-      - install -m 644 packaging/macos/Info.plist "dist/Feather Chat.app/Contents/Info.plist"
+      - sed 's/__VERSION__/{{.APP_VERSION}}/g' packaging/macos/Info.plist > "dist/Feather Chat.app/Contents/Info.plist"
       - install -m 644 client/assets/icon.icns "dist/Feather Chat.app/Contents/Resources/icon.icns"
       # Ad-hoc signature over the whole bundle, as Alacritty does. Without it
       # Gatekeeper calls the downloaded app "damaged", and TCC refuses the
