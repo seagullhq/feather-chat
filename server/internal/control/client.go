@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 	"syscall"
 	"time"
 
@@ -29,6 +30,16 @@ type client struct {
 	// keyReq throttles SCREEN_KEYREQ per presenter. Owned by this connection's
 	// read loop, so it needs no lock.
 	keyReq keyReqLimiter
+	// needKeys marks a session of an account without keys.
+	needKeys bool
+	// credential is what the account credUser logged in against: SET_KEYS fails
+	// and the session ends if that has changed since. credMu guards these and
+	// watching; done stops the recheck.
+	credMu     sync.Mutex
+	credUser   int
+	credential string
+	watching   bool
+	done       chan struct{}
 }
 
 // handleConn runs the per-client TCP control session (HELLO/JOIN/LEAVE)
@@ -47,7 +58,8 @@ func (s *Server) handleConn(conn *tls.Conn, slot *connSlot) {
 	}
 
 	c := &client{srv: s, sess: room.NewSession(conn), ip: slot.ip, slot: slot,
-		loginBy: time.Now().Add(preAuthTimeout)}
+		loginBy: time.Now().Add(preAuthTimeout), done: make(chan struct{})}
+	defer close(c.done)
 	// disconnect drops the media entry and tells the room-mates. It also
 	// runs when the TCP link dies, so nobody stays listed as a ghost.
 	defer s.disconnect(c)

@@ -315,6 +315,9 @@ func TestAuthRateLimit(t *testing.T) {
 		for _, msg := range []protocol.Control{
 			{Type: "LOGIN", Identifier: "someone", Password: "password123"},
 			{Type: "REGISTER", Username: "someone", Email: "a@example.test", Password: "password123"},
+			{Type: "PRELOGIN", Identifier: "someone"},
+			{Type: "RECOVER_BEGIN", Identifier: "someone"},
+			{Type: "RECOVER_FINISH", Identifier: "someone"},
 		} {
 			sendFrame(t, c, msg)
 			if m := recvFrame(t, c); m.Type != "ERROR" || m.Error != tooManyAttempts {

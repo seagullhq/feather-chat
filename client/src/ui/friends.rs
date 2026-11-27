@@ -9,7 +9,7 @@ mod sidebar;
 mod stage;
 
 use super::ServersView;
-use crate::api::{Control, DM_PAGE, DirectMessage, Friend, Relation};
+use crate::api::{Control, DirectMessage, Friend, Relation};
 use crate::capture::Source;
 use crate::input::TextInput;
 use crate::media;
@@ -298,6 +298,7 @@ impl FriendsView {
             mine: false,
             text: text.into(),
             system: true,
+            mark: crate::api::Mark::Encrypted,
         });
     }
 
@@ -756,6 +757,27 @@ impl FriendsView {
         cx.notify();
     }
 
+    /// A placeholder in the open chat can now be read.
+    pub fn on_dm_updated(&mut self, peer: i64, m: DirectMessage, cx: &mut Context<Self>) {
+        if let Some(line) = self
+            .chat_log
+            .get_mut(&peer)
+            .and_then(|l| l.iter_mut().find(|x| x.id == m.id))
+        {
+            let mine = line.mine;
+            *line = chat::ChatMessage::from_dm(m, mine);
+            cx.notify();
+        }
+    }
+
+    /// The name of a listed person.
+    pub fn name_of(&self, id: i64) -> Option<String> {
+        self.friends
+            .iter()
+            .find(|f| f.id == id)
+            .map(|f| f.name.clone())
+    }
+
     /// A history page arrived: the newest (replaces the log) or, with
     /// `before`, an older one that goes on top without moving the view.
     pub fn set_dm_history(
@@ -763,6 +785,7 @@ impl FriendsView {
         peer: i64,
         msgs: Vec<DirectMessage>,
         before: Option<i64>,
+        has_more: bool,
         cx: &mut Context<Self>,
     ) {
         // A late answer for a chat already left is dropped, and the chat left
@@ -772,8 +795,6 @@ impl FriendsView {
         if open != Some(peer) {
             return;
         }
-        // A full page means the server may have older ones.
-        let full = msgs.len() >= DM_PAGE;
         let page: Vec<_> = msgs
             .into_iter()
             .map(|m| {
@@ -801,7 +822,7 @@ impl FriendsView {
                 self.chat_scroll.scroll_to_top_of_item(top + added);
             }
         }
-        self.dm_more = full && self.chat_log.get(&peer).is_some_and(|l| l.len() < DM_MAX);
+        self.dm_more = has_more && self.chat_log.get(&peer).is_some_and(|l| l.len() < DM_MAX);
         cx.notify();
     }
 
@@ -903,6 +924,21 @@ impl FriendsView {
         self.dm_loading_older = false;
         self.error = Some(message);
         cx.notify();
+    }
+
+    /// Puts the unsent text back, unless something else was typed meanwhile.
+    pub fn on_send_failed(
+        &mut self,
+        peer: i64,
+        text: String,
+        error: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selected_friend == Some(peer) && self.chat_input.read(cx).text().is_empty() {
+            self.chat_input
+                .update(cx, |input, cx| input.set_text(&text, cx));
+        }
+        self.on_failed(error, cx);
     }
 
     pub fn on_disconnected(&mut self, cx: &mut Context<Self>) {

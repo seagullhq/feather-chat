@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/seagullhq/feather-chat/server/internal/e2ee"
 )
 
 // ServerStore persists servers and their content.
@@ -20,19 +22,15 @@ func NewStore(db *sql.DB) *ServerStore {
 	return &ServerStore{db: db}
 }
 
+// execQueryer is what *sql.DB and *sql.Tx share to open a conversation.
+type execQueryer interface {
+	queryer
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
 // queryer is the shared slice of *sql.DB / *sql.Tx used by the DM helpers.
 type queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
-}
-
-// otherMember returns the peer of a two-person DM channel.
-func otherMember(ctx context.Context, q queryer, channelID, userID int) (int, error) {
-	var peerID int
-	err := q.QueryRowContext(ctx, `
-		SELECT user_id FROM conversation_members
-		WHERE conversation_id = $1 AND user_id <> $2
-		ORDER BY user_id LIMIT 1`, channelID, userID).Scan(&peerID)
-	return peerID, err
 }
 
 var (
@@ -55,6 +53,8 @@ type DirectMessage struct {
 	// call event (ended, rejected, cancelled, missed, offline), empty on text.
 	CallOutcome string
 	CallSeconds int
+	// E2EE is set on encrypted messages, whose Content is empty.
+	E2EE *e2ee.Message
 }
 
 // DMConversation is one entry of a user's DM sidebar.
@@ -66,6 +66,7 @@ type DMConversation struct {
 	AuthorID      int
 	CreatedAt     time.Time
 	UnreadCount   int
+	E2EE          *e2ee.Message
 }
 
 // ReadState is the viewer's read pointer for a conversation after marking it.
@@ -81,11 +82,25 @@ func pair(a, b int) (low, high int) {
 	return min(a, b), max(a, b)
 }
 
-// SendDM stores a message from senderID to recipientID, creating the
-// conversation on first use. The sender has read their own message; the
-// recipient's read pointer is untouched.
+// SendDM stores a plaintext message. Clients cannot: only call events write
+// plaintext, and tests seeding rows older than encryption.
 func (s *ServerStore) SendDM(ctx context.Context, senderID, recipientID, replyToID int, content string) (*DirectMessage, error) {
-	return s.sendDM(ctx, senderID, recipientID, replyToID, content, "", false)
+	return sendDM(ctx, s.db, senderID, recipientID, replyToID, content, "", false, nil)
+}
+
+// SendEncryptedDM checks and stores an encrypted message.
+func (s *ServerStore) SendEncryptedDM(ctx context.Context, senderID, recipientID, replyToID int, m *e2ee.Message) (dm *DirectMessage, err error) {
+	err = s.withConversation(ctx, senderID, Address{PeerID: recipientID}, func(tx *sql.Tx, conv int64) error {
+		if err := checkNew(ctx, tx, conv, senderID, m); err != nil {
+			return err
+		}
+		dm, err = sendDM(ctx, tx, senderID, recipientID, replyToID, "", "", false, m)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return dm, nil
 }
 
 // RecordCall logs a finished 1:1 call in the pair's conversation, authored by
@@ -100,12 +115,12 @@ func (s *ServerStore) RecordCall(ctx context.Context, callerID, calleeID int, ou
 	if err != nil {
 		return nil, err
 	}
-	return s.sendDM(ctx, callerID, calleeID, 0, "Call "+outcome, string(call), readByCallee)
+	return sendDM(ctx, s.db, callerID, calleeID, 0, "Call "+outcome, string(call), readByCallee, nil)
 }
 
 // sendDM is the one insert behind SendDM and RecordCall. callJSON "" means a
 // text message; readByRecipient also moves the recipient's read pointer.
-func (s *ServerStore) sendDM(ctx context.Context, senderID, recipientID, replyToID int, content, callJSON string, readByRecipient bool) (*DirectMessage, error) {
+func sendDM(ctx context.Context, q queryer, senderID, recipientID, replyToID int, content, callJSON string, readByRecipient bool, enc *e2ee.Message) (*DirectMessage, error) {
 	if senderID == recipientID {
 		return nil, ErrSelfRequest
 	}
@@ -113,7 +128,7 @@ func (s *ServerStore) sendDM(ctx context.Context, senderID, recipientID, replyTo
 	low, high := pair(senderID, recipientID)
 	if replyToID != 0 {
 		var exists int
-		err := s.db.QueryRowContext(ctx, `
+		err := q.QueryRowContext(ctx, `
 			SELECT 1 FROM conversation_messages m
 			JOIN conversations c ON c.id = m.conversation_id
 			WHERE m.id = $1 AND c.user_low = $2 AND c.user_high = $3 AND m.deleted_at IS NULL`,
@@ -132,14 +147,22 @@ func (s *ServerStore) sendDM(ctx context.Context, senderID, recipientID, replyTo
 	// message created it, and it bumps the sidebar order. GREATEST ignores NULL:
 	// the recipient's read pointer stays as it was.
 	var m DirectMessage
-	err := s.db.QueryRowContext(ctx, `
+	args := []any{low, senderID, content, recipientID, replyToID, high, callJSON, readByRecipient,
+		nil, nil, nil, nil, nil, nil}
+	if enc != nil {
+		copy(args[8:], []any{int64(enc.Epoch), enc.MsgID, int64(enc.Revision), enc.SenderKeyID, enc.Box, enc.MsgSig})
+	}
+	err := q.QueryRowContext(ctx, `
 		WITH ch AS (
 			INSERT INTO conversations (kind, user_low, user_high) VALUES ('direct', $1, $6)
 			ON CONFLICT (user_low, user_high) DO UPDATE SET updated_at = now()
 			RETURNING id
 		), msg AS (
-			INSERT INTO conversation_messages (conversation_id, author_id, content, reply_to, call)
-			SELECT id, $2, $3, NULLIF($5, 0), NULLIF($7::text, '')::jsonb FROM ch
+			INSERT INTO conversation_messages (conversation_id, author_id, content, reply_to, call,
+				e2ee_epoch, e2ee_msg_id, e2ee_revision, e2ee_sender_key, e2ee_box, e2ee_sig, e2ee_sender)
+			SELECT id, $2, $3, NULLIF($5, 0), NULLIF($7::text, '')::jsonb,
+				$9::int, $10::bytea, $11::bigint, $12::bigint, $13::bytea, $14::bytea,
+				CASE WHEN $13::bytea IS NOT NULL THEN $2::bigint END FROM ch
 			RETURNING id, conversation_id, author_id, content, COALESCE(reply_to, 0), created_at,
 			          COALESCE(call->>'outcome', ''), COALESCE((call->>'seconds')::int, 0)
 		), sender AS (
@@ -157,19 +180,21 @@ func (s *ServerStore) sendDM(ctx context.Context, senderID, recipientID, replyTo
 			ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_message_id =
 				GREATEST(conversation_members.last_read_message_id, EXCLUDED.last_read_message_id)
 		)
-		SELECT * FROM msg`, low, senderID, content, recipientID, replyToID, high,
-		callJSON, readByRecipient).
+		SELECT * FROM msg`, args...).
 		Scan(&m.ID, &m.ChannelID, &m.Author, &m.Content, &m.ReplyTo, &m.CreatedAt,
 			&m.CallOutcome, &m.CallSeconds)
 	if err != nil {
 		return nil, mapPgError(err)
 	}
+	m.E2EE = enc
 	return &m, nil
 }
 
 const (
 	defaultDMPage = 50
-	maxDMPage     = 100
+	// ConversationPage bounds one page of the DM sidebar.
+	ConversationPage = 200
+	maxDMPage        = 100
 )
 
 // ListDM returns the conversation between viewerID and peerID, newest first.
@@ -184,15 +209,16 @@ func (s *ServerStore) ListDM(ctx context.Context, viewerID, peerID, limit, befor
 	}
 	low, high := pair(viewerID, peerID)
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT m.id, m.conversation_id, m.author_id, m.content, COALESCE(m.reply_to, 0),
+		SELECT m.id, m.conversation_id, COALESCE(m.author_id, m.e2ee_sender, 0), m.content, COALESCE(m.reply_to, 0),
 		       m.created_at, m.edited_at, m.deleted_at,
-		       COALESCE(m.call->>'outcome', ''), COALESCE((m.call->>'seconds')::int, 0)
+		       COALESCE(m.call->>'outcome', ''), COALESCE((m.call->>'seconds')::int, 0),
+		       `+e2eeColumns+`
 		FROM conversations c
 		JOIN conversation_members member ON member.conversation_id = c.id AND member.user_id = $1
 		JOIN conversation_messages m ON m.conversation_id = c.id
 		WHERE c.user_low = $2 AND c.user_high = $3 AND m.deleted_at IS NULL AND ($4 = 0 OR m.id < $4)
 		ORDER BY m.id DESC
-		LIMIT $5`, viewerID, low, high, beforeID, limit)
+		LIMIT $5`, viewerID, low, high, beforeID, limit+1) // one extra: has more
 	if err != nil {
 		return nil, err
 	}
@@ -202,10 +228,12 @@ func (s *ServerStore) ListDM(ctx context.Context, viewerID, peerID, limit, befor
 	for rows.Next() {
 		var m DirectMessage
 		var editedAt, deletedAt sql.NullTime
-		if err := rows.Scan(&m.ID, &m.ChannelID, &m.Author, &m.Content, &m.ReplyTo,
-			&m.CreatedAt, &editedAt, &deletedAt, &m.CallOutcome, &m.CallSeconds); err != nil {
+		var enc e2eeRow
+		if err := rows.Scan(append([]any{&m.ID, &m.ChannelID, &m.Author, &m.Content, &m.ReplyTo,
+			&m.CreatedAt, &editedAt, &deletedAt, &m.CallOutcome, &m.CallSeconds}, enc.dest()...)...); err != nil {
 			return nil, err
 		}
+		m.E2EE = enc.message()
 		if editedAt.Valid {
 			m.EditedAt = &editedAt.Time
 		}
@@ -220,36 +248,61 @@ func (s *ServerStore) ListDM(ctx context.Context, viewerID, peerID, limit, befor
 	return out, nil
 }
 
-// EditDM changes the content of an authored, non-deleted message. The second
-// return is the other member of the conversation, for push notification.
-func (s *ServerStore) EditDM(ctx context.Context, userID, messageID int, content string) (*DirectMessage, int, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+// EditDM replaces the ciphertext of an authored, non-deleted message. The
+// second return is the other member of the conversation, for push notification.
+func (s *ServerStore) EditDM(ctx context.Context, userID, messageID int, enc *e2ee.Message) (*DirectMessage, int, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return nil, 0, err
 	}
 	defer tx.Rollback()
 
-	var m DirectMessage
-	var editedAt sql.NullTime
+	// Lock the conversation, then read the message under that lock.
+	var conv int64
+	var peerID int
 	err = tx.QueryRowContext(ctx, `
-		UPDATE conversation_messages SET content = $3, edited_at = now()
-		WHERE id = $1 AND author_id = $2 AND deleted_at IS NULL AND call IS NULL
-		RETURNING id, conversation_id, author_id, content, COALESCE(reply_to, 0),
-		          created_at, edited_at, deleted_at`, messageID, userID, content).
-		Scan(&m.ID, &m.ChannelID, &m.Author, &m.Content, &m.ReplyTo,
-			&m.CreatedAt, &editedAt, &m.DeletedAt)
+		SELECT c.id, CASE WHEN c.user_low = $2 THEN c.user_high ELSE c.user_low END
+		FROM conversations c
+		JOIN conversation_messages m ON m.conversation_id = c.id
+		WHERE m.id = $1 AND m.author_id = $2 AND c.kind = 'direct'
+		FOR UPDATE OF c`, messageID, userID).Scan(&conv, &peerID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, 0, ErrMessageNotFound
 	}
 	if err != nil {
 		return nil, 0, err
 	}
-	m.EditedAt = &editedAt.Time
-
-	peerID, err := otherMember(ctx, tx, m.ChannelID, userID)
+	var old e2eeRow
+	err = tx.QueryRowContext(ctx, `
+		SELECT `+e2eeColumns+` FROM conversation_messages m
+		WHERE m.id = $1 AND m.deleted_at IS NULL AND m.call IS NULL`, messageID).Scan(old.dest()...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, 0, ErrMessageNotFound
+	}
 	if err != nil {
 		return nil, 0, err
 	}
+	if err := checkMessage(ctx, tx, conv, userID, enc); err != nil {
+		return nil, 0, err
+	}
+	if err := checkEdit(old, enc); err != nil {
+		return nil, 0, err
+	}
+
+	var m DirectMessage
+	var editedAt sql.NullTime
+	err = tx.QueryRowContext(ctx, `
+		UPDATE conversation_messages SET edited_at = now(), e2ee_epoch = $2, e2ee_revision = $3,
+			e2ee_sender_key = $4, e2ee_box = $5, e2ee_sig = $6
+		WHERE id = $1
+		RETURNING id, conversation_id, author_id, content, COALESCE(reply_to, 0), created_at, edited_at`,
+		messageID, int64(enc.Epoch), int64(enc.Revision), enc.SenderKeyID, enc.Box, enc.MsgSig).
+		Scan(&m.ID, &m.ChannelID, &m.Author, &m.Content, &m.ReplyTo, &m.CreatedAt, &editedAt)
+	if err != nil {
+		return nil, 0, err
+	}
+	m.EditedAt, m.E2EE = &editedAt.Time, enc
+
 	if _, err := tx.ExecContext(ctx, `UPDATE conversations SET updated_at = now() WHERE id = $1`, m.ChannelID); err != nil {
 		return nil, 0, err
 	}
@@ -262,17 +315,29 @@ func (s *ServerStore) EditDM(ctx context.Context, userID, messageID int, content
 // DeleteDM soft-deletes an authored message and returns its ID and the other
 // member of the conversation for push notification.
 func (s *ServerStore) DeleteDM(ctx context.Context, userID, messageID int) (int, int, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return 0, 0, err
 	}
 	defer tx.Rollback()
 
-	var id, channelID int
+	// Lock the conversation before the message, as EditDM does: the other order
+	// deadlocks.
+	if _, err := tx.ExecContext(ctx, `
+		SELECT c.id FROM conversations c
+		JOIN conversation_messages m ON m.conversation_id = c.id
+		WHERE m.id = $1 AND m.author_id = $2 AND c.kind = 'direct'
+		FOR UPDATE OF c`, messageID, userID); err != nil {
+		return 0, 0, err
+	}
+	var id, channelID, peerID int
 	err = tx.QueryRowContext(ctx, `
-		UPDATE conversation_messages SET deleted_at = now()
-		WHERE id = $1 AND author_id = $2 AND deleted_at IS NULL AND call IS NULL
-		RETURNING id, conversation_id`, messageID, userID).Scan(&id, &channelID)
+		UPDATE conversation_messages m SET deleted_at = now(), content = '', e2ee_box = NULL, e2ee_sig = NULL
+		FROM conversations c
+		WHERE m.id = $1 AND m.author_id = $2 AND m.deleted_at IS NULL AND m.call IS NULL
+		  AND c.id = m.conversation_id AND c.kind = 'direct'
+		RETURNING m.id, c.id, CASE WHEN c.user_low = $2 THEN c.user_high ELSE c.user_low END`,
+		messageID, userID).Scan(&id, &channelID, &peerID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, 0, ErrMessageNotFound
 	}
@@ -280,10 +345,6 @@ func (s *ServerStore) DeleteDM(ctx context.Context, userID, messageID int) (int,
 		return 0, 0, err
 	}
 
-	peerID, err := otherMember(ctx, tx, channelID, userID)
-	if err != nil {
-		return 0, 0, err
-	}
 	if _, err := tx.ExecContext(ctx, `UPDATE conversations SET updated_at = now() WHERE id = $1`, channelID); err != nil {
 		return 0, 0, err
 	}
@@ -324,7 +385,7 @@ func (s *ServerStore) MarkDMRead(ctx context.Context, viewerID, peerID, upToID i
 	}
 	err = s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM conversation_messages
-		WHERE conversation_id = $1 AND author_id <> $2 AND deleted_at IS NULL
+		WHERE conversation_id = $1 AND author_id IS DISTINCT FROM $2 AND deleted_at IS NULL
 		  AND id > $3`, channelID.Int64, viewerID, state.LastReadMessageID).
 		Scan(&state.UnreadCount)
 	return state, err
@@ -332,19 +393,22 @@ func (s *ServerStore) MarkDMRead(ctx context.Context, viewerID, peerID, upToID i
 
 // ListDMConversations returns the viewer's DM channels, most recently active
 // first, with the last message and unread count of each.
-func (s *ServerStore) ListDMConversations(ctx context.Context, viewerID int) ([]DMConversation, error) {
+// before (0 = newest) is the channelId of the last entry of the previous page.
+// At most ConversationPage+1 entries are returned.
+func (s *ServerStore) ListDMConversations(ctx context.Context, viewerID, before int) ([]DMConversation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT c.id, peer.user_id,
-		       COALESCE(last.id, 0), COALESCE(last.content, ''),
-		       COALESCE(last.author_id, 0), COALESCE(last.created_at, c.created_at),
+		       COALESCE(m.id, 0), COALESCE(m.content, ''),
+		       COALESCE(m.author_id, m.e2ee_sender, 0), COALESCE(m.created_at, c.created_at),
 		       (SELECT COUNT(*) FROM conversation_messages unread
-		        WHERE unread.conversation_id = c.id AND unread.author_id <> $1
+		        WHERE unread.conversation_id = c.id AND unread.author_id IS DISTINCT FROM $1
 		          AND unread.deleted_at IS NULL
-		          AND unread.id > COALESCE(member.last_read_message_id, 0))
+		          AND unread.id > COALESCE(member.last_read_message_id, 0)),
+		       `+e2eeColumns+`
 		FROM conversations c
 		JOIN conversation_members member ON member.conversation_id = c.id AND member.user_id = $1
 		JOIN conversation_members peer ON peer.conversation_id = c.id AND peer.user_id <> $1
-		LEFT JOIN conversation_messages last ON last.id = (
+		LEFT JOIN conversation_messages m ON m.id = (
 			SELECT id FROM conversation_messages
 			WHERE conversation_id = c.id AND deleted_at IS NULL
 			ORDER BY id DESC LIMIT 1
@@ -354,8 +418,11 @@ func (s *ServerStore) ListDMConversations(ctx context.Context, viewerID int) ([]
 			WHERE f.status = 'BLOCKED'
 			  AND ((f.requester_id = $1 AND f.addressee_id = peer.user_id)
 			    OR (f.requester_id = peer.user_id AND f.addressee_id = $1))
-		)
-		ORDER BY c.updated_at DESC, c.id DESC`, viewerID)
+		) AND ($2::bigint = 0 OR (c.updated_at, c.id) < (
+			SELECT b.updated_at, b.id FROM conversations b
+			WHERE b.id = $2::bigint AND (b.user_low = $1 OR b.user_high = $1)))
+		ORDER BY c.updated_at DESC, c.id DESC
+		LIMIT $3`, viewerID, before, ConversationPage+1)
 	if err != nil {
 		return nil, err
 	}
@@ -364,10 +431,12 @@ func (s *ServerStore) ListDMConversations(ctx context.Context, viewerID int) ([]
 	var out []DMConversation
 	for rows.Next() {
 		var conv DMConversation
-		if err := rows.Scan(&conv.ChannelID, &conv.PeerID, &conv.LastMessageID, &conv.Content,
-			&conv.AuthorID, &conv.CreatedAt, &conv.UnreadCount); err != nil {
+		var enc e2eeRow
+		if err := rows.Scan(append([]any{&conv.ChannelID, &conv.PeerID, &conv.LastMessageID, &conv.Content,
+			&conv.AuthorID, &conv.CreatedAt, &conv.UnreadCount}, enc.dest()...)...); err != nil {
 			return nil, err
 		}
+		conv.E2EE = enc.message()
 		out = append(out, conv)
 	}
 	if err := rows.Err(); err != nil {
@@ -381,6 +450,9 @@ func mapPgError(err error) error {
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
 		case "23505":
+			if pgErr.ConstraintName == "conversation_messages_msg_id_idx" {
+				return ErrDuplicateID
+			}
 			return ErrAlreadyExists
 		case "23514":
 			return ErrSelfRequest

@@ -102,7 +102,7 @@ impl super::SettingsView {
     }
 
     /// Opens `name` (closing any other row) or closes it if already open.
-    fn toggle(&mut self, name: &'static str) {
+    fn toggle(&mut self, name: &'static str, cx: &mut Context<Self>) {
         self.open_item = if self.open_item == Some(name) {
             None
         } else {
@@ -113,6 +113,8 @@ impl super::SettingsView {
         self.username_error = None;
         self.password_error = None;
         self.error = None;
+        // A typed password does not outlive its form.
+        self.edit_del_pw.update(cx, |i, cx| i.set_text("", cx));
         self.confirm_delete = name == "del" && self.open_item.is_some();
     }
 
@@ -125,7 +127,7 @@ impl super::SettingsView {
     ) -> Button {
         Button::new(id, if open { "Cancel" } else { label }).on_click(cx.listener(
             move |this, _, _, cx| {
-                this.toggle(name);
+                this.toggle(name, cx);
                 cx.notify();
             },
         ))
@@ -260,8 +262,15 @@ impl super::SettingsView {
                 .child(
                     div()
                         .flex_1()
-                        .text_color(t.danger)
-                        .child("This permanently deletes your account. Sure?"),
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_color(t.danger)
+                                .child("This permanently deletes your account. Sure?"),
+                        )
+                        .child(Field::new("Current password", &self.edit_del_pw)),
                 )
                 .child(
                     Button::new(
@@ -275,10 +284,15 @@ impl super::SettingsView {
                     .danger()
                     .disabled(deleting)
                     .on_click(cx.listener(|this, _, _, cx| {
+                        let password = this.edit_del_pw.read(cx).text().to_string();
+                        if password.is_empty() {
+                            this.error = Some("Enter your current password.".into());
+                            return cx.notify();
+                        }
                         let sent = cx
                             .try_global::<Session>()
                             .and_then(|s| s.control.as_ref())
-                            .is_some_and(|c| c.delete_user());
+                            .is_some_and(|c| c.delete_user(&password));
                         if sent {
                             this.deleting = true;
                             this.error = None;

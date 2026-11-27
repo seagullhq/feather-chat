@@ -8,6 +8,7 @@ mod servers;
 mod status_bar;
 
 mod markdown;
+mod security;
 mod settings;
 mod titlebar;
 pub(crate) mod userfiles;
@@ -16,6 +17,7 @@ mod window_frame;
 
 pub use auth::{AuthRequest, AuthView};
 pub use friends::FriendsView;
+pub use security::{SecurityNotice, security_dialog};
 pub use servers::{ServersEvent, ServersView};
 pub use settings::{
     Session, close_settings, on_password_update_failed, on_password_updated, on_user_delete_failed,

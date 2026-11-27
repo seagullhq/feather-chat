@@ -27,6 +27,8 @@ pub(super) enum ConnectError {
     Untrusted(Untrusted),
     /// Failed before anything was sent: the credentials were never judged.
     Unsent(String),
+    /// Account recovery took effect, but logging in afterwards failed.
+    Recovered(String),
     Other(String),
 }
 
@@ -216,9 +218,13 @@ impl Connection {
         read_frame(self.reader.as_mut().ok_or("connection lost")?)
     }
 
-    /// Applies to the reader too: both use the same socket.
+    /// Set on both handles: on Windows a cloned socket keeps its own timeout.
+    /// Call before `take_reader`.
     pub(super) fn set_read_timeout(&self, timeout: Option<Duration>) {
         lock(&self.tls.out).set_read_timeout(timeout).ok();
+        if let Some(reader) = &self.reader {
+            reader.sock.set_read_timeout(timeout).ok();
+        }
     }
 
     /// Hands the incoming stream to another thread; `call` no longer works.
@@ -398,6 +404,21 @@ pub(super) mod tests {
             conn.write(&json!({"n":i,"pad":pad})).unwrap();
         }
         reader.join().unwrap();
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn clearing_the_read_timeout_reaches_the_reader() {
+        let id = Identity::new();
+        let (l, addr) = listener();
+        let pin = id.fingerprint.clone();
+        // Reading drives the handshake and returns once the client hangs up.
+        let server = std::thread::spawn(move || drop(id.accept(&l).read(&mut [0; 1])));
+        let mut conn = Connection::connect_to(addr, "localhost", Some(pin)).unwrap();
+        conn.set_read_timeout(None);
+        let reader = conn.take_reader().unwrap();
+        assert_eq!(reader.sock.read_timeout().unwrap(), None);
+        drop((conn, reader));
         server.join().unwrap();
     }
 

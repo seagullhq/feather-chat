@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"io"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,14 +22,24 @@ type oneUser struct{ hash string }
 
 func (u oneUser) Connect(context.Context) (driver.Conn, error) { return u, nil }
 func (u oneUser) Driver() driver.Driver                        { return nil }
-func (u oneUser) Prepare(string) (driver.Stmt, error)          { return u, nil }
-func (u oneUser) Close() error                                 { return nil }
-func (u oneUser) Begin() (driver.Tx, error)                    { return nil, driver.ErrSkip }
-func (u oneUser) NumInput() int                                { return -1 }
-func (u oneUser) Exec([]driver.Value) (driver.Result, error)   { return nil, driver.ErrSkip }
+func (u oneUser) Prepare(query string) (driver.Stmt, error) {
+	if strings.Contains(query, "FROM user_keys") {
+		return noKeys{u}, nil
+	}
+	return u, nil
+}
+func (u oneUser) Close() error                               { return nil }
+func (u oneUser) Begin() (driver.Tx, error)                  { return nil, driver.ErrSkip }
+func (u oneUser) NumInput() int                              { return -1 }
+func (u oneUser) Exec([]driver.Value) (driver.Result, error) { return nil, driver.ErrSkip }
 func (u oneUser) Query([]driver.Value) (driver.Rows, error) {
 	return &userRows{hash: u.hash}, nil
 }
+
+// noKeys answers the key lookup: the account has none.
+type noKeys struct{ oneUser }
+
+func (noKeys) Query([]driver.Value) (driver.Rows, error) { return &userRows{read: true}, nil }
 
 type userRows struct {
 	hash string
@@ -36,7 +47,8 @@ type userRows struct {
 }
 
 func (r *userRows) Columns() []string {
-	return []string{"id", "username", "email", "password_hash", "created_at", "updated_at"}
+	return []string{"id", "username", "email", "password_hash", "created_at", "updated_at",
+		"auth_scheme", "auth_salt", "auth_verifier"}
 }
 func (r *userRows) Close() error { return nil }
 func (r *userRows) Next(dest []driver.Value) error {
@@ -44,7 +56,7 @@ func (r *userRows) Next(dest []driver.Value) error {
 		return io.EOF
 	}
 	r.read = true
-	copy(dest, []driver.Value{int64(7), "victim", "victim@example.test", r.hash, time.Time{}, time.Time{}})
+	copy(dest, []driver.Value{int64(7), "victim", "victim@example.test", r.hash, time.Time{}, time.Time{}, int64(0), nil, nil})
 	return nil
 }
 

@@ -263,9 +263,53 @@ impl super::ServersView {
         cx.notify();
     }
 
+    /// A placeholder in a loaded log can now be read.
+    pub fn on_thread_updated(
+        &mut self,
+        server_id: i64,
+        channel_id: i64,
+        msg: DirectMessage,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(line) = self
+            .thread_mut(server_id, channel_id)
+            .and_then(|c| c.thread.messages.iter_mut().find(|m| m.id == msg.id))
+        {
+            *line = msg;
+            cx.notify();
+        }
+    }
+
+    /// The name of a member of any server.
+    pub fn name_of(&self, id: i64) -> Option<String> {
+        self.servers
+            .iter()
+            .flat_map(|s| &s.members)
+            .find(|m| m.id == id)
+            .map(|m| m.name.clone())
+    }
+
     pub fn on_thread_failed(&mut self, message: String, cx: &mut Context<Self>) {
         self.thread_error = Some(message);
         cx.notify();
+    }
+
+    /// Puts the unsent text back, unless something else was typed meanwhile.
+    pub fn on_send_failed(
+        &mut self,
+        server_id: i64,
+        channel_id: i64,
+        text: String,
+        error: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.thread_open == Some((server_id, channel_id))
+            && self.thread_input.read(cx).text().is_empty()
+        {
+            self.thread_input
+                .update(cx, |input, cx| input.set_text(&text, cx));
+        }
+        self.on_thread_failed(error, cx);
     }
 
     fn send_thread(&mut self, cx: &mut Context<Self>) {
@@ -328,6 +372,7 @@ impl super::ServersView {
                     mine,
                     text: m.content.clone(),
                     system: false,
+                    mark: m.mark,
                 };
                 message(&chat, &name, first, &t)
             }))

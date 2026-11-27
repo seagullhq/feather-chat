@@ -53,6 +53,8 @@ struct SettingsView {
     edit_old_pw: Entity<TextInput>,
     edit_pw: Entity<TextInput>,
     conf_pass: Entity<TextInput>,
+    /// Current password, asked again to delete the account.
+    edit_del_pw: Entity<TextInput>,
     /// Account deletion: asking for confirmation / request in flight / last error.
     confirm_delete: bool,
     deleting: bool,
@@ -112,6 +114,7 @@ impl SettingsView {
         let edit_old_pw = account::input("Current password", true, cx);
         let edit_pw = account::input("New password", true, cx);
         let conf_pass: Entity<TextInput> = account::input("Confirm new password", true, cx);
+        let edit_del_pw = account::input("Current password", true, cx);
         let view = Self {
             focus: cx.focus_handle(),
             page: Page::Account,
@@ -129,6 +132,7 @@ impl SettingsView {
             edit_old_pw,
             edit_pw,
             conf_pass,
+            edit_del_pw,
             confirm_delete: false,
             deleting: false,
             saving_username: false,
@@ -202,6 +206,8 @@ pub fn on_user_delete_failed(message: String, cx: &mut App) {
         view.deleting = false;
         view.confirm_delete = false;
         view.error = Some(message);
+        let field = view.edit_del_pw.clone();
+        field.update(cx, |input, cx| input.set_text("", cx));
         cx.notify();
     });
 }

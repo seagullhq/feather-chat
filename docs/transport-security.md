@@ -1,7 +1,9 @@
 # Transport security (protocol v2)
 
 Status: **Normative**. Protects the hop between client and server. It is not
-end-to-end encryption: the server can read everything described here.
+end-to-end encryption: the server can read everything described here, except
+what [e2ee-text.md](e2ee-text.md) encrypts on top of it (text messages). That
+document also defines the `LOGIN` secrets and the account messages.
 
 There is no plaintext fallback. A v1 client and a v2 server do not
 interoperate.
@@ -51,10 +53,14 @@ store, names or expiry dates.
 | Concurrent connections, total | 1024 |
 | Concurrent connections per IP (IPv6: per /64) | 16 |
 | Concurrent connections without a successful LOGIN | 256 |
-| LOGIN + REGISTER + UPDATE_PASSWORD per IP | burst 10, then 1 every 6 s |
+| LOGIN + REGISTER + PRELOGIN + UPDATE_PASSWORD + RECOVER_BEGIN + RECOVER_FINISH per IP | burst 10, then 1 every 6 s |
 | Failed LOGIN per account (user ID) and IP | burst 5, then 1 every 30 s |
 | Failed LOGIN per account (user ID), all IPs | burst 50, then 1 every 6 s |
 | Failed LOGIN per device token | burst 5, then 1 every 30 s |
+| Conversation key requests per user ([e2ee-text.md](e2ee-text.md) §4.2) | burst 60, then 2 per second |
+
+`DELETE_USER` spends the same failed-attempt budgets as `LOGIN`. The recovery
+messages have the per-IP limit only.
 
 When the unauthenticated limit or the total limit is reached, a new connection
 is admitted by closing an unauthenticated one. Sources that have logged in
@@ -68,8 +74,8 @@ logged in.
 
 The account limits make username and email share one budget. To avoid revealing
 which identifiers belong to one account, going over them is answered exactly
-like a wrong password, after one bcrypt comparison against a dummy hash (the
-real hash is not compared): `invalid credentials, or too many failed attempts:
+like a wrong password, after one comparison against a dummy value (the stored
+credential is not compared): `invalid credentials, or too many failed attempts:
 try again later`.
 
 Over the per-IP rate limit the server answers `ERROR` with `too many attempts,
@@ -87,8 +93,9 @@ host and identifier in the OS keyring, keeps it across sign-out, and sends it as
 `deviceToken` in later `LOGIN` requests.
 
 - The token is base64url (no padding) of `nonce (16) ‖ expiry (u64) ‖
-  HMAC-SHA256`. The MAC covers the user ID, nonce, expiry and the stored password
-  hash, under a key derived from the TLS private key.
+  HMAC-SHA256`. The MAC covers the user ID, nonce, expiry and the stored
+  credential (bcrypt hash or auth key verifier), under a key derived from the
+  TLS private key.
 - It lasts 90 days. Changing the password or the TLS key voids it.
 - It never replaces the password. A LOGIN with a token valid for the account
   spends the token's own failure budget instead of the account's budgets, so

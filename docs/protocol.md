@@ -75,5 +75,10 @@ fallback: TLS 1.3 with a pinned server certificate on TCP, and per-session
 AES-256-GCM keys on UDP, handed out in the `HELLO` ACK. The rules are in
 [transport-security.md](transport-security.md). v2 does not interoperate with v1.
 
-This is **not end-to-end encryption**: the server can read everything. E2EE is
-still pending; see [security-model.md](security-model.md).
+This is per hop. Text messages are also end-to-end encrypted
+([e2ee-text.md](e2ee-text.md)): `PRELOGIN`, then `LOGIN` with a derived key (and
+`SET_KEYS` once); `GET_CONVERSATION_KEYS`, `CREATE_EPOCH`, `SHARE_KEYS`,
+`REJECT_WRAP` and `GET_USER_KEYS` manage conversation keys; send and update
+requests carry `e2ee`.
+Voice, screen share and calls are not end-to-end encrypted; see
+[security-model.md](security-model.md).

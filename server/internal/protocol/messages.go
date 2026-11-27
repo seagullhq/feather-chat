@@ -1,6 +1,10 @@
 package protocol
 
-import "time"
+import (
+	"time"
+
+	"github.com/seagullhq/feather-chat/server/internal/e2ee"
+)
 
 // Distinct wire IDs. MessageID is conversations.id, ChannelID is a channel id
 // and PageSize is a requested history page: keeping them separate from int
@@ -30,7 +34,6 @@ type Control struct {
 	Email             string                `json:"email,omitempty"`
 	Identifier        string                `json:"identifier,omitempty"`
 	Password          string                `json:"password,omitempty"`
-	OldPassword       string                `json:"oldPassword,omitempty"`
 	DeviceToken       string                `json:"deviceToken,omitempty"`
 	Error             string                `json:"error,omitempty"`
 	CallReason        string                `json:"callReason,omitempty"`
@@ -67,6 +70,36 @@ type Control struct {
 	ServerMessages      []ServerMessageSummary      `json:"serverMessages"`
 	// Sharing mirrors Member.Sharing on DM_CALL_STATE, where there is no roster.
 	Sharing bool `json:"sharing,omitempty"`
+
+	// Account keys (docs/e2ee-text.md §3). AuthScheme is a pointer so that 0
+	// is serialized.
+	AuthScheme         *int              `json:"authScheme,omitempty"`
+	Salt               []byte            `json:"salt,omitempty"`
+	AuthKey            []byte            `json:"authKey,omitempty"`
+	NewSalt            []byte            `json:"newSalt,omitempty"`
+	NewAuthKey         []byte            `json:"newAuthKey,omitempty"`
+	RecoveryAuthKey    []byte            `json:"recoveryAuthKey,omitempty"`
+	NewRecoveryAuthKey []byte            `json:"newRecoveryAuthKey,omitempty"`
+	AccountKeys        *e2ee.AccountKeys `json:"accountKeys,omitempty"`
+
+	// Conversation keys and messages (§4, §5). The GET_CONVERSATION_KEYS ACK
+	// is messages.ConversationKeys.
+	ConversationID       int64          `json:"conversationId,omitempty"`
+	BeforeEpoch          uint32         `json:"beforeEpoch,omitempty"`
+	Epoch                uint32         `json:"epoch,omitempty"`
+	KeyCommit            []byte         `json:"keyCommit,omitempty"`
+	CreatorKeyID         int64          `json:"creatorKeyId,omitempty"`
+	EpochSig             []byte         `json:"epochSig,omitempty"`
+	Wraps                []e2ee.NewWrap `json:"wraps,omitempty"`
+	SenderKeyID          int64          `json:"senderKeyId,omitempty"`
+	Shares               []e2ee.NewWrap `json:"shares,omitempty"`
+	SenderID             int            `json:"senderId,omitempty"`
+	KeyID                int64          `json:"keyId,omitempty"`
+	UserKeys             *e2ee.UserKeys `json:"userKeys,omitempty"`
+	E2EE                 *e2ee.Message  `json:"e2ee,omitempty"`
+	BeforeConversationID int            `json:"beforeConversationId,omitempty"`
+	// HasMore is present on every list ACK of messages or conversations.
+	HasMore *bool `json:"hasMore,omitempty"`
 }
 
 // DirectConversationSummary is one DM channel in a user's sidebar.
@@ -78,6 +111,8 @@ type DirectConversationSummary struct {
 	AuthorID      int       `json:"authorId,omitempty"`
 	CreatedAt     time.Time `json:"createdAt"`
 	UnreadCount   int       `json:"unreadCount,omitempty"`
+	// E2EE is the preview of an encrypted last message; Content is then absent.
+	E2EE *e2ee.Message `json:"e2ee,omitempty"`
 }
 
 // MessageSummary is one message as clients see it. Keep store types out of
@@ -87,7 +122,7 @@ type MessageSummary struct {
 	ID        int        `json:"id"`
 	ChannelID ChannelID  `json:"channelId"`
 	AuthorID  int        `json:"authorId"`
-	Content   string     `json:"content"`
+	Content   string     `json:"content,omitempty"`
 	ReplyTo   int        `json:"replyTo,omitempty"`
 	CreatedAt time.Time  `json:"createdAt"`
 	EditedAt  *time.Time `json:"editedAt,omitempty"`
@@ -96,6 +131,8 @@ type MessageSummary struct {
 	// offline) and, for ended, the talk time in seconds. Absent on text.
 	CallOutcome string `json:"callOutcome,omitempty"`
 	CallSeconds int    `json:"callSeconds,omitempty"`
+	// E2EE is set on encrypted messages; Content is then absent.
+	E2EE *e2ee.Message `json:"e2ee,omitempty"`
 }
 
 // Aliases keep each handler speaking its own domain without duplicating the

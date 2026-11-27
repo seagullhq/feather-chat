@@ -17,6 +17,8 @@ type Manager struct {
 	// claimed holds every SSRC taken at HELLO, in a room or not, so two
 	// clients can never end up with the same one.
 	claimed map[uint32]*Session
+	// bound holds the logged-in sessions.
+	bound map[*Session]bool
 }
 
 // NewManager builds an empty room set.
@@ -51,6 +53,23 @@ func (m *Manager) Bind(s *Session, userID int, username string) {
 		s.leaves++ // a ring made as another user is void
 	}
 	s.UserID, s.Username = userID, username
+	if m.bound == nil {
+		m.bound = map[*Session]bool{}
+	}
+	m.bound[s] = true
+}
+
+// LoggedIn returns every logged-in session of a user, before or after HELLO.
+func (m *Manager) LoggedIn(userID int) []*Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []*Session
+	for s := range m.bound {
+		if s.UserID == userID {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // SessionsOf returns the HELLO'd sessions that belong to the given users.
@@ -70,6 +89,7 @@ func (m *Manager) SessionsOf(userIDs map[int]bool) []*Session {
 func (m *Manager) Release(s *Session) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	delete(m.bound, s)
 	if m.claimed[s.SSRC] == s {
 		delete(m.claimed, s.SSRC)
 	}

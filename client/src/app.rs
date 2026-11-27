@@ -1,11 +1,12 @@
 //! Root view: switches between login and the servers window, and owns the control
 //! session that feeds both.
 
-use crate::api::{self, Control, Event, Request};
+use crate::api::{self, Addr, Control, Event, Request};
 use crate::store;
 use crate::theme::ThemeExt;
 use crate::ui::{
-    self, AuthRequest, AuthView, FriendsView, Mode, ServersEvent, ServersView, StatusBar, Titlebar,
+    self, AuthRequest, AuthView, FriendsView, Mode, SecurityNotice, ServersEvent, ServersView,
+    StatusBar, Titlebar,
 };
 use gpui::{prelude::*, *};
 
@@ -21,6 +22,9 @@ pub(crate) struct Root {
     logged_in: bool,
     /// Credentials of the in-flight login, saved to the keyring on success.
     pending: Option<(String, String, String)>,
+    /// The in-flight request is a plain login: only its refusal means the
+    /// saved login is no longer good.
+    plain_login: bool,
     /// Request refused by an untrusted certificate, replayed once accepted.
     retry: Option<Request>,
     /// Credentials currently stored in the keyring, kept in sync with the
@@ -28,6 +32,8 @@ pub(crate) struct Root {
     saved: Option<(String, String, String)>,
     events: async_channel::Sender<Event>,
     control: Option<Control>,
+    /// Changed-key warnings and safety numbers shown on top of the app.
+    notices: Vec<SecurityNotice>,
 }
 
 impl Root {
@@ -90,11 +96,13 @@ impl Root {
             titlebar,
             focus,
             pending: None,
+            plain_login: false,
             retry: None,
             saved: None,
             logged_in: false,
             events,
             control: None,
+            notices: Vec::new(),
         };
         // Auto-login from the keyring (blocking read, once at startup).
         if let Some(s) = store::load() {
@@ -103,6 +111,7 @@ impl Root {
             let req = Request::Login {
                 identifier: s.identifier,
                 password: s.password,
+                legacy_ok: false,
             };
             this.start(s.host, req, cx);
         }
@@ -110,57 +119,32 @@ impl Root {
     }
 
     fn on_request(&mut self, req: &AuthRequest, cx: &mut Context<Self>) {
-        let (host, req) = match req {
+        match req {
             AuthRequest::Trust { host, fingerprint } => {
                 if let Err(e) = api::trust(host, fingerprint) {
                     self.auth.update(cx, |a, cx| a.on_failed(e, cx));
                 } else if let Some(req) = self.retry.take() {
                     self.start(host.clone(), req, cx);
                 }
-                return;
             }
-            AuthRequest::Login {
-                host,
-                identifier,
-                password,
-            } => (
-                host,
-                Request::Login {
-                    identifier: identifier.clone(),
-                    password: password.clone(),
-                },
-            ),
-            AuthRequest::Register {
-                host,
-                username,
-                email,
-                password,
-            } => (
-                host,
-                Request::Register {
-                    username: username.clone(),
-                    email: email.clone(),
-                    password: password.clone(),
-                },
-            ),
-        };
-        self.start(host.clone(), req, cx);
+            AuthRequest::Start { host, request } => self.start(host.clone(), request.clone(), cx),
+        }
     }
 
     fn start(&mut self, host: String, req: Request, cx: &mut Context<Self>) {
-        let (id, pw) = match &req {
+        let (id, pw) = req.credentials();
+        let (id, pw) = (id.to_string(), pw.to_string());
+        self.pending = Some((host.clone(), id.clone(), pw));
+        self.plain_login = matches!(
+            req,
             Request::Login {
-                identifier,
-                password,
-            } => (identifier, password),
-            Request::Register {
-                username, password, ..
-            } => (username, password),
-        };
-        self.pending = Some((host.clone(), id.clone(), pw.clone()));
+                legacy_ok: false,
+                ..
+            }
+        );
         cx.set_global(ui::Session {
             host: host.clone(),
-            identifier: id.clone(),
+            identifier: id,
             control: None,
             events: self.events.clone(),
         });
@@ -180,6 +164,7 @@ impl Root {
         std::thread::spawn(store::clear);
         self.saved = None;
         self.logged_in = false;
+        self.notices.clear();
         self.control.take();
         cx.global_mut::<ui::Session>().control = None;
         self.servers.update(cx, |view, cx| view.on_disconnected(cx));
@@ -214,6 +199,50 @@ impl Root {
         std::thread::spawn(move || store::save(&host, &id, &pw));
     }
 
+    /// Authentication stopped to ask the user something: back to the login
+    /// screen. Returns the host.
+    fn interrupted(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        self.logged_in = false;
+        self.control.take();
+        cx.global_mut::<ui::Session>().control = None;
+        self.pending.take().map(|(host, ..)| host)
+    }
+
+    fn user_name(&self, id: i64, cx: &App) -> String {
+        self.friends
+            .read(cx)
+            .name_of(id)
+            .or_else(|| self.servers.read(cx).name_of(id))
+            .unwrap_or_else(|| format!("User {id}"))
+    }
+
+    /// The newest notice, as a dialog.
+    fn notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let notice = self.notices.last()?;
+        let close = cx.entity().downgrade();
+        let accept = close.clone();
+        Some(ui::security_dialog(
+            &self.focus,
+            notice,
+            move |_, cx| {
+                let _ = close.update(cx, |this, cx| {
+                    this.notices.pop();
+                    cx.notify();
+                });
+            },
+            move |user_id, identity, _, cx| {
+                let _ = accept.update(cx, |this, cx| {
+                    if let Some(c) = &this.control {
+                        c.accept_key(user_id, identity);
+                    }
+                    this.notices.pop();
+                    cx.notify();
+                });
+            },
+            cx,
+        ))
+    }
+
     fn on_event(&mut self, ev: Event, cx: &mut Context<Self>) {
         match ev {
             Event::AuthOk => {
@@ -226,12 +255,70 @@ impl Root {
             }
             Event::AuthFailed(m) | Event::RegisterFailed(m) => {
                 self.logged_in = false;
-                // ponytail: any failure after connecting drops the saved login;
-                // the user just types it again.
-                if self.pending.take().is_some() {
+                // ponytail: any login failure after connecting drops the saved
+                // login; the user just types it again. A failed upgrade, key
+                // setup or registration keeps it.
+                if self.pending.take().is_some() && self.plain_login {
                     std::thread::spawn(store::clear);
                 }
                 self.auth.update(cx, |a, cx| a.on_failed(m, cx))
+            }
+            Event::NeedConsent {
+                identifier,
+                password,
+            } => {
+                // The saved login stays until the upgrade succeeds.
+                if let Some(host) = self.interrupted(cx) {
+                    self.auth.update(cx, |a, cx| {
+                        a.on_need_consent(host, identifier, password, cx)
+                    });
+                }
+            }
+            Event::NeedKeys {
+                identifier,
+                password,
+                legacy,
+            } => {
+                if let Some(host) = self.interrupted(cx) {
+                    self.auth.update(cx, |a, cx| {
+                        a.on_need_keys(host, identifier, password, legacy, cx)
+                    });
+                }
+            }
+            Event::KeyChanged {
+                user_id,
+                identity,
+                old_number,
+                new_number,
+            } => {
+                let name = self.user_name(user_id, cx);
+                self.notices.retain(|n| !n.is_warning_for(user_id));
+                self.notices.push(SecurityNotice::KeyChanged {
+                    user_id,
+                    name,
+                    identity,
+                    old_number,
+                    new_number,
+                });
+            }
+            Event::SafetyNumber { peer, number } => {
+                let name = self.user_name(peer, cx);
+                self.notices
+                    .push(SecurityNotice::SafetyNumber { name, number });
+            }
+            Event::MessageUpdated { addr, msg } => match addr {
+                Addr::Dm(peer) => self
+                    .friends
+                    .update(cx, |view, cx| view.on_dm_updated(peer, msg, cx)),
+                Addr::Channel { server, channel } => self.servers.update(cx, |view, cx| {
+                    view.on_thread_updated(server, channel, msg, cx)
+                }),
+            },
+            Event::RecoveredLoginFailed { message, code } => {
+                self.logged_in = false;
+                self.pending = None;
+                self.auth
+                    .update(cx, |a, cx| a.on_recovered_login_failed(message, code, cx))
             }
             Event::ConnectFailed(m) => {
                 // Nothing was sent: the saved login stays in the keyring.
@@ -416,18 +503,24 @@ impl Root {
             Event::UsersFound { query, users } => self
                 .friends
                 .update(cx, |view, cx| view.set_found(query, users, cx)),
-            Event::DmReceived(m) => self
-                .friends
-                .update(cx, |view, cx| view.on_dm(m.author, m, false, cx)),
+            Event::DmReceived { peer, msg } => self.friends.update(cx, |view, cx| {
+                let mine = msg.author != peer;
+                view.on_dm(peer, msg, mine, cx)
+            }),
             Event::DmCallLog { peer, msg } => self.friends.update(cx, |view, cx| {
                 view.on_dm(peer, msg.clone(), msg.author != peer, cx)
             }),
             Event::DmSent { peer, msg } => self
                 .friends
                 .update(cx, |view, cx| view.on_dm(peer, msg, true, cx)),
-            Event::DmHistory { peer, msgs, before } => self
-                .friends
-                .update(cx, |view, cx| view.set_dm_history(peer, msgs, before, cx)),
+            Event::DmHistory {
+                peer,
+                msgs,
+                before,
+                has_more,
+            } => self.friends.update(cx, |view, cx| {
+                view.set_dm_history(peer, msgs, before, has_more, cx)
+            }),
             Event::ThreadHistory {
                 server_id,
                 channel_id,
@@ -455,6 +548,17 @@ impl Root {
             Event::FriendsChanged => self.friends.update(cx, |view, _| view.refresh()),
             Event::FriendRequested => self.friends.update(cx, |view, cx| view.on_requested(cx)),
             Event::FriendFailed(m) => self.friends.update(cx, |view, cx| view.on_failed(m, cx)),
+            Event::DmSendFailed { peer, text, error } => self
+                .friends
+                .update(cx, |view, cx| view.on_send_failed(peer, text, error, cx)),
+            Event::ThreadSendFailed {
+                server_id,
+                channel_id,
+                text,
+                error,
+            } => self.servers.update(cx, |view, cx| {
+                view.on_send_failed(server_id, channel_id, text, error, cx)
+            }),
             Event::Disconnected => {
                 self.control.take();
                 self.friends.update(cx, |view, cx| view.on_disconnected(cx));
@@ -470,6 +574,7 @@ impl Render for Root {
         let logged_in = self.logged_in;
         self.titlebar
             .update(cx, |t, cx| t.set_toggle(logged_in, cx));
+        let notice = self.notice(cx).filter(|_| logged_in);
         let t = cx.theme();
         let body = ui::round_inner(ui::tab_nav(div()), window, true, true)
             .track_focus(&self.focus)
@@ -491,7 +596,8 @@ impl Render for Root {
                         (true, Mode::Friends) => self.friends.clone().into_any_element(),
                     }),
             )
-            .children(self.logged_in.then(|| self.status_bar.clone()));
+            .children(self.logged_in.then(|| self.status_bar.clone()))
+            .children(notice);
         ui::window_frame(body, t.line, window)
     }
 }

@@ -207,7 +207,9 @@ All JSON, framed as above. A client MUST `LOGIN`, then `HELLO` (random non-zero
 `ssrc`; the ACK omits `ssrc` if it is taken, so pick another), before `JOIN`.
 The ACK to `LOGIN` carries `deviceToken`, which the client may send back in
 later `LOGIN` requests
-([transport-security.md](transport-security.md) §1.4).
+([transport-security.md](transport-security.md) §1.4). The `LOGIN` fields, the
+key messages (including `REJECT_WRAP`) and the encrypted `e2ee` object of text messages are defined in
+[e2ee-text.md](e2ee-text.md).
 The successful ACK to `HELLO` also carries `mediaKeyUp` and `mediaKeyDown`
 (standard base64, 32 bytes each). HELLO succeeds once per connection.
 
@@ -300,13 +302,16 @@ Status codes: M = MUST, S = SHOULD, O = MAY, X = prohibited by this format.
 
 Both channels are encrypted per hop: TLS 1.3 with a pinned server certificate
 on TCP, AES-256-GCM on UDP ([transport-security.md](transport-security.md)).
-This is **not** end-to-end encryption: the server can read every control message
-and every media payload. E2EE is pending. The UDP header (`FL`, SSRC, counter),
+Per-hop encryption lets the server read every control message and every media
+payload. Text messages are in addition end-to-end encrypted
+([e2ee-text.md](e2ee-text.md)); media is not. The UDP header (`FL`, SSRC, counter),
 datagram sizes and timing stay visible to an on-path observer. See
 [security-model.md](security-model.md).
 
 ## 11. Revision history
 
+- **v2 + text E2EE**: `PRELOGIN`, account keys, conversation key messages, `e2ee`
+  instead of text content ([e2ee-text.md](e2ee-text.md)).
 - **v2** (transport security): TLS 1.3 control channel, sealed datagrams
   (`V` = 1, `u64` counter, 16-byte tag), media keys in the `HELLO` ACK, `LOGIN`
   required before `HELLO`, at most 1158 bytes of H.264 per VIDEO fragment.

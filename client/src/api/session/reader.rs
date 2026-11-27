@@ -7,6 +7,7 @@ use std::io::Read;
 use super::super::server::RosterMember;
 use super::super::transport;
 use super::Event;
+use super::command::Command;
 
 /// Unsolicited pushes from the server: roster, channel and server changes.
 fn push(frame: &Value) -> Option<Event> {
@@ -16,25 +17,6 @@ fn push(frame: &Value) -> Option<Event> {
             return Some(Event::ServerRenamed {
                 id: server_id,
                 name: frame["name"].as_str()?.to_string(),
-            });
-        }
-        "DIRECT_MESSAGE" => {
-            let msg = super::super::friends::dm_from(&frame["directInfo"])?;
-            // A call log goes to both sides, with the other party's id: the
-            // author is the caller, so it cannot say which chat it belongs to.
-            return Some(match msg.call {
-                Some(_) => Event::DmCallLog {
-                    peer: frame["userId"].as_i64()?,
-                    msg,
-                },
-                None => Event::DmReceived(msg),
-            });
-        }
-        "SERVER_MESSAGE" => {
-            return Some(Event::ThreadReceived {
-                server_id,
-                channel_id: frame["channelId"].as_i64()?,
-                msg: super::super::friends::dm_from(&frame["serverInfo"])?,
             });
         }
         "FRIENDS_CHANGED" => return Some(Event::FriendsChanged),
@@ -99,14 +81,33 @@ fn push(frame: &Value) -> Option<Event> {
     }
 }
 
+/// Weak, so that dropping `Control` closes the queue and ends the session.
+fn forward(commands: &async_channel::WeakSender<Command>, frame: Value) {
+    if let Some(tx) = commands.upgrade() {
+        let _ = tx.try_send(Command::Push(frame));
+    }
+}
+
 pub(super) fn reader(
     mut stream: impl Read,
     frames: async_channel::Sender<Result<Value, String>>,
     events: async_channel::Sender<Event>,
+    commands: async_channel::WeakSender<Command>,
 ) {
     loop {
         match transport::read_frame(&mut stream) {
             Ok(frame) => {
+                // These need the keys: the worker handles them.
+                if matches!(
+                    frame["type"].as_str(),
+                    Some("DIRECT_MESSAGE" | "SERVER_MESSAGE" | "KEYS_CHANGED")
+                ) {
+                    forward(&commands, frame);
+                    continue;
+                }
+                if frame["type"] == "SERVER_MEMBERS_CHANGED" {
+                    forward(&commands, frame.clone());
+                }
                 // Server pushes never answer a request: keep them out of `call`.
                 if let Some(ev) = push(&frame) {
                     let _ = events.send_blocking(ev);

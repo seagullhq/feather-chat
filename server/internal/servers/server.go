@@ -421,11 +421,22 @@ func (s *ServerStore) CreateServer(ctx context.Context, ownerID int, serverName 
 	return &server, nil
 }
 
+// maxServerMembers bounds a server, banned members included so that an unban
+// never exceeds it: one key epoch wraps to every member (e2ee-text.md §4.2).
+const maxServerMembers = 1000
+
 // JoinServer adds the user to the server that owns code. Joining twice is a no-op.
 func (s *ServerStore) JoinServer(ctx context.Context, userID int, code string) (*Server, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	// The row lock serializes joins, so the count below holds.
 	var srv Server
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, invite_code FROM servers WHERE invite_code = $1`, code,
+	err = tx.QueryRowContext(ctx,
+		`SELECT id, name, invite_code FROM servers WHERE invite_code = $1 FOR NO KEY UPDATE`, code,
 	).Scan(&srv.ID, &srv.Name, &srv.InviteCode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrBadInvite
@@ -434,20 +445,34 @@ func (s *ServerStore) JoinServer(ctx context.Context, userID int, code string) (
 		return nil, err
 	}
 	var banned bool
-	err = s.db.QueryRowContext(ctx,
+	err = tx.QueryRowContext(ctx,
 		`SELECT COALESCE(banned, false) FROM server_members
 		 WHERE server_id = $1 AND user_id = $2`, srv.ID, userID,
 	).Scan(&banned)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err == nil {
+		if banned {
+			return nil, ErrBanned
+		}
+		return &srv, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	if banned {
-		return nil, ErrBanned
+	var members int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM server_members WHERE server_id = $1`, srv.ID).Scan(&members); err != nil {
+		return nil, err
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if members >= maxServerMembers {
+		return nil, ErrFull
+	}
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO server_members (server_id, user_id) VALUES ($1, $2)
 		ON CONFLICT DO NOTHING`, srv.ID, userID,
 	); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return &srv, nil

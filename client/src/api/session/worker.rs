@@ -1,10 +1,11 @@
 //! Worker thread: authenticates, then executes commands one at a time.
 
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::Arc;
 
-use super::super::auth::{self, Request};
+use super::super::auth::{self, Outcome, Request};
 use super::super::friends;
+use super::super::secure::{Addr, Secure};
 use super::super::server;
 use super::super::transport::ConnectError;
 use super::Session;
@@ -45,11 +46,12 @@ fn start_voice(
 
 fn commands(
     mut session: Session,
+    mut secure: Secure,
     commands: async_channel::Receiver<Command>,
     events: async_channel::Sender<Event>,
     host: String,
     id: media::Identity,
-    self_tx: async_channel::Sender<Command>,
+    self_tx: async_channel::WeakSender<Command>,
 ) {
     // The voice engine lives exactly as long as the JOIN it belongs to.
     let mut engine: Option<media::Engine> = None;
@@ -76,6 +78,19 @@ fn commands(
 
     while let Ok(command) = commands.recv_blocking() {
         match command {
+            Command::Push(frame) => push(&mut session, &mut secure, &events, &frame),
+            Command::RetryKeys => secure.retry_deferred(&mut session),
+            Command::SafetyNumber { peer } => {
+                let _ = events.send_blocking(match secure.safety_number(&mut session, peer) {
+                    Ok(number) => Event::SafetyNumber { peer, number },
+                    Err(e) => Event::FriendFailed(e),
+                });
+            }
+            Command::AcceptKey { user_id, identity } => {
+                if let Err(e) = secure.accept(&mut session, user_id, &identity) {
+                    let _ = events.send_blocking(Event::FriendFailed(e));
+                }
+            }
             Command::Join {
                 channel_id,
                 muted,
@@ -298,8 +313,9 @@ fn commands(
                         Err(e) => Event::ServerEditFailed(e),
                     });
             }
-            Command::DeleteUser => {
-                let _ = events.send_blocking(match server::delete_user(&mut session) {
+            Command::DeleteUser { password } => {
+                let deleted = secure.delete_user(&mut session, &password);
+                let _ = events.send_blocking(match deleted {
                     Ok(()) => Event::UserDeleted,
                     Err(e) => Event::UserDeleteFailed(e),
                 });
@@ -307,7 +323,10 @@ fn commands(
             Command::UpdateUsername { username } => {
                 let _ =
                     events.send_blocking(match server::update_username(&mut session, &username) {
-                        Ok(name) => Event::UsernameUpdated(name),
+                        Ok(name) => {
+                            secure.renamed(&name);
+                            Event::UsernameUpdated(name)
+                        }
                         Err(e) => Event::UsernameUpdateFailed(e),
                     });
             }
@@ -316,7 +335,7 @@ fn commands(
                 new_password,
             } => {
                 let _ = events.send_blocking(
-                    match server::change_password(&mut session, &old_password, &new_password) {
+                    match secure.change_password(&mut session, &old_password, &new_password) {
                         Ok(()) => Event::PasswordUpdated(new_password),
                         Err(e) => Event::PasswordUpdateFailed(e),
                     },
@@ -364,58 +383,70 @@ fn commands(
                     let _ = events.send_blocking(Event::MembersChanged { server_id });
                 }
             }
-            Command::SendDm { peer, text } => match friends::send_dm(&mut session, peer, &text) {
-                Ok(msg) => {
-                    let _ = events.send_blocking(Event::DmSent { peer, msg });
-                }
-                Err(e) => {
-                    let _ = events.send_blocking(Event::FriendFailed(e));
-                }
-            },
+            Command::SendDm { peer, text } => {
+                let sent = secure.send(&mut session, Addr::Dm(peer), &text);
+                let _ = events.send_blocking(match sent {
+                    Ok(msg) => Event::DmSent { peer, msg },
+                    Err(error) => Event::DmSendFailed { peer, text, error },
+                });
+            }
             Command::LoadDm { peer, before } => {
-                match friends::dm_history(&mut session, peer, before) {
-                    Ok(msgs) => {
-                        let _ = events.send_blocking(Event::DmHistory { peer, msgs, before });
-                    }
-                    Err(e) => {
-                        let _ = events.send_blocking(Event::FriendFailed(e));
-                    }
-                }
+                let page = secure.history(&mut session, Addr::Dm(peer), before);
+                let _ = events.send_blocking(match page {
+                    Ok((msgs, has_more)) => Event::DmHistory {
+                        peer,
+                        msgs,
+                        before,
+                        has_more,
+                    },
+                    Err(e) => Event::FriendFailed(e),
+                });
             }
             Command::SendThread {
                 server_id,
                 channel_id,
                 text,
-            } => match server::send_thread(&mut session, server_id, channel_id, &text) {
-                Ok(msg) => {
-                    let _ = events.send_blocking(Event::ThreadSent {
+            } => {
+                let addr = Addr::Channel {
+                    server: server_id,
+                    channel: channel_id,
+                };
+                let sent = secure.send(&mut session, addr, &text);
+                let _ = events.send_blocking(match sent {
+                    Ok(msg) => Event::ThreadSent {
                         server_id,
                         channel_id,
                         msg,
-                    });
-                }
-                Err(e) => {
-                    let _ = events.send_blocking(Event::ThreadFailed(e));
-                }
-            },
+                    },
+                    Err(error) => Event::ThreadSendFailed {
+                        server_id,
+                        channel_id,
+                        text,
+                        error,
+                    },
+                });
+            }
             Command::ListThread {
                 server_id,
                 channel_id,
                 before,
-            } => match server::list_thread(&mut session, channel_id, before) {
-                Ok((msgs, has_more)) => {
-                    let _ = events.send_blocking(Event::ThreadHistory {
+            } => {
+                let addr = Addr::Channel {
+                    server: server_id,
+                    channel: channel_id,
+                };
+                let page = secure.history(&mut session, addr, before);
+                let _ = events.send_blocking(match page {
+                    Ok((msgs, has_more)) => Event::ThreadHistory {
                         server_id,
                         channel_id,
                         msgs,
                         before,
                         has_more,
-                    });
-                }
-                Err(e) => {
-                    let _ = events.send_blocking(Event::ThreadFailed(e));
-                }
-            },
+                    },
+                    Err(e) => Event::ThreadFailed(e),
+                });
+            }
             Command::ListFriends => send_friends(&mut session, &events),
             Command::SearchUsers { query } => {
                 if let Ok(users) = friends::search_users(&mut session, &query) {
@@ -480,15 +511,84 @@ fn commands(
                 }
             },
         }
+        if let Some(delay) = secure.retry_due() {
+            let tx = self_tx.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(delay);
+                // Weak: a signed out session is not kept alive.
+                if let Some(tx) = tx.upgrade() {
+                    let _ = tx.try_send(Command::RetryKeys);
+                }
+            });
+        }
     }
     session.shutdown();
 }
 
+/// A server push forwarded by the reader.
+fn push(
+    session: &mut Session,
+    secure: &mut Secure,
+    events: &async_channel::Sender<Event>,
+    frame: &Value,
+) {
+    let server_id = frame["serverId"].as_i64().unwrap_or(0);
+    let channel_id = frame["channelId"].as_i64().unwrap_or(0);
+    let channel = Addr::Channel {
+        server: server_id,
+        channel: channel_id,
+    };
+    match frame["type"].as_str() {
+        Some("DIRECT_MESSAGE") => {
+            let row = &frame["directInfo"];
+            // A call log goes to both sides with the other party's id: its
+            // author is the caller, so it cannot say which chat it belongs to.
+            let call = !row["callOutcome"].is_null();
+            let peer = if call {
+                frame["userId"].as_i64()
+            } else {
+                row["authorId"].as_i64()
+            };
+            let Some(peer) = peer else { return };
+            if let Some(msg) = secure.decode(session, Addr::Dm(peer), row) {
+                let _ = events.send_blocking(if call {
+                    Event::DmCallLog { peer, msg }
+                } else {
+                    Event::DmReceived { peer, msg }
+                });
+            }
+        }
+        Some("SERVER_MESSAGE") => {
+            if let Some(msg) = secure.decode(session, channel, &frame["serverInfo"]) {
+                let _ = events.send_blocking(Event::ThreadReceived {
+                    server_id,
+                    channel_id,
+                    msg,
+                });
+            }
+        }
+        Some("KEYS_CHANGED") => {
+            let addr = match frame["userId"].as_i64() {
+                _ if server_id != 0 && channel_id != 0 => channel,
+                Some(peer) if peer != 0 => Addr::Dm(peer),
+                _ => return,
+            };
+            secure.keys_changed(session, addr);
+        }
+        Some("SERVER_MEMBERS_CHANGED") => secure.members_changed(session, server_id),
+        _ => {}
+    }
+}
+
 /// Bridges the media pipelines back into the command queue (the session is
 /// owned by the command thread, so they cannot talk to the server directly).
-fn notify(tx: &async_channel::Sender<Command>) -> media::Notify {
+fn notify(tx: &async_channel::WeakSender<Command>) -> media::Notify {
     let tx = tx.clone();
     std::sync::Arc::new(move |n| {
+        // Weak, so that dropping `Control` closes the queue and ends the session.
+        let Some(tx) = tx.upgrade() else {
+            return;
+        };
         let _ = tx.send_blocking(match n {
             media::Notice::ShareStarted => Command::ScreenAnnounce,
             media::Notice::ShareEnded(r) => Command::ScreenEnded(r),
@@ -509,22 +609,38 @@ fn send_friends(session: &mut Session, events: &async_channel::Sender<Event>) {
 /// becomes usable after `Event::AuthOk`.
 pub fn spawn(host: String, req: Request, tx: async_channel::Sender<Event>) -> Control {
     let (cmd_tx, cmd_rx) = async_channel::unbounded();
-    let cmd_tx_thread = cmd_tx.clone();
+    let cmd_tx_thread = cmd_tx.downgrade();
     std::thread::spawn(move || {
-        let conn = match &req {
-            Request::Login {
+        let (mut conn, id, account) = match auth::authenticate(&host, &req) {
+            Ok(Outcome::Ready(ready)) => *ready,
+            Ok(Outcome::NeedConsent {
                 identifier,
                 password,
-            } => auth::login(&host, identifier, password),
-            Request::Register {
-                username,
-                email,
+            }) => {
+                let _ = tx.send_blocking(Event::NeedConsent {
+                    identifier,
+                    password,
+                });
+                return;
+            }
+            Ok(Outcome::NeedKeys {
+                identifier,
                 password,
-            } => auth::register(&host, username, email, password),
-        };
-        let (mut conn, id) = match conn {
-            Ok(c) => c,
+                legacy,
+            }) => {
+                let _ = tx.send_blocking(Event::NeedKeys {
+                    identifier,
+                    password,
+                    legacy,
+                });
+                return;
+            }
             Err(e) => return fail(&tx, req, e),
+        };
+        let identifier = req.credentials().0.to_string();
+        let secure = match Secure::new(host.clone(), identifier, account, tx.clone()) {
+            Ok(s) => s,
+            Err(e) => return fail(&tx, req, ConnectError::Unsent(e)),
         };
 
         let _ = tx.send_blocking(Event::AuthOk);
@@ -536,12 +652,14 @@ pub fn spawn(host: String, req: Request, tx: async_channel::Sender<Event>) -> Co
         let self_tx = cmd_tx_thread;
         let (frames_tx, frames_rx) = async_channel::unbounded();
         let reader_events = tx.clone();
-        std::thread::spawn(move || reader(read_stream, frames_tx, reader_events));
+        let pushes = self_tx.clone();
+        std::thread::spawn(move || reader(read_stream, frames_tx, reader_events, pushes));
         commands(
             Session {
                 conn,
                 frames: frames_rx,
             },
+            secure,
             cmd_rx,
             tx,
             host,
@@ -554,14 +672,21 @@ pub fn spawn(host: String, req: Request, tx: async_channel::Sender<Event>) -> Co
 
 fn fail(tx: &async_channel::Sender<Event>, req: Request, e: ConnectError) {
     let _ = tx.send_blocking(match e {
+        ConnectError::Recovered(message) => match req {
+            Request::Recover { new_code, .. } => Event::RecoveredLoginFailed {
+                message,
+                code: new_code,
+            },
+            _ => Event::AuthFailed(message),
+        },
         ConnectError::Untrusted(server) => Event::Untrusted {
             server,
             request: req,
         },
         ConnectError::Unsent(e) => Event::ConnectFailed(e),
         ConnectError::Other(e) => match req {
-            Request::Login { .. } => Event::AuthFailed(e),
             Request::Register { .. } => Event::RegisterFailed(e),
+            _ => Event::AuthFailed(e),
         },
     });
 }

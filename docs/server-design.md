@@ -23,6 +23,7 @@ UDP socket <--> Manager.ServeUDP (one goroutine)
 | `room` | Sessions, rooms, screen-share subscriptions, media keys, UDP receive and forwarding |
 | `protocol` | Wire formats: UDP header, sealed datagrams, replay window, TCP framing, control messages |
 | `accounts`, `servers`, `friends`, `messages` | Database stores |
+| `e2ee` | Wire objects, signed byte layouts and signature checks of [e2ee-text.md](e2ee-text.md) |
 | `migrations` | Embedded SQL migrations, applied at startup |
 | `tlscert` | Loads or generates the server certificate |
 | `config` | Environment configuration |
@@ -37,8 +38,8 @@ UDP socket <--> Manager.ServeUDP (one goroutine)
 - A session gets media only at an address that echoed a PATH challenge
   ([transport-security.md](transport-security.md) §2.4).
 - The server stays opaque to the codecs: sequence numbers, jitter buffering and
-  frame reassembly belong to the client. It can read the payloads: encryption is
-  per hop, not end to end.
+  frame reassembly belong to the client. It can read the payloads: media
+  encryption is per hop, not end to end.
 
 ## Integrity rules
 
@@ -47,6 +48,21 @@ UDP socket <--> Manager.ServeUDP (one goroutine)
 - Media keys are created per accepted HELLO and die with the TCP connection.
 - Server to client datagrams preserve the sender's SSRC, so receivers can key
   decoders and jitter buffers off it.
+
+## Text encryption
+
+The server stores auth key verifiers, public keys, wrapped keys and ciphertext;
+it never holds a content key. Epoch creation, key shares and message writes run
+under a lock on the conversation row, taken before any message row (channels
+first take a shared lock on the server row, ordering them against kick and ban).
+Reading conversation keys takes no row lock. The `server_secrets` table holds the
+random secret behind the `PRELOGIN` salt of unknown identifiers. A server holds
+at most 1000 members, checked at join.
+
+`server -reset-user <username>` resets an account ([e2ee-text.md](e2ee-text.md)
+§3.5) and exits. The running server ends the account's sessions within 30
+seconds: each rechecks the stored credential. A password change or recovery ends
+the other sessions at once.
 
 ## Testing
 
@@ -57,6 +73,6 @@ PostgreSQL). No mocking framework.
 
 ## Out of scope
 
-End-to-end encryption (pending, see
+End-to-end encryption of media (see
 [security-model.md](security-model.md)), federation, and NAT traversal beyond
 following the client's validated address.

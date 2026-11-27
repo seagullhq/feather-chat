@@ -12,15 +12,12 @@ import (
 	"github.com/seagullhq/feather-chat/server/internal/protocol"
 )
 
-// maxServerPageBytes is a self-imposed page cap (small pages, low latency).
-// The hard protocol limit is 1 MiB per frame; staying well below it keeps a
-// page of long messages from killing the client connection.
-const maxServerPageBytes = 48 << 10
-
 // sendServerMessageError uses the same text for unknown IDs, foreign IDs and
 // denied access: sequential IDs would otherwise make enumeration trivial.
 func sendServerMessageError(c *client, op string, userID int, err error) {
 	switch {
+	case isE2EEError(err):
+		c.sendError(err.Error())
 	case errors.Is(err, messages.ErrServerMessageNotFound):
 		c.sendError("server message not found")
 	case errors.Is(err, messages.ErrServerChannelNotFound):
@@ -29,13 +26,6 @@ func sendServerMessageError(c *client, op string, userID int, err error) {
 		log.Printf("[SERVER MSG] %s by %d failed: %v", op, userID, err)
 		c.sendError("server message " + op + " failed")
 	}
-}
-
-// serverContent applies the message bounds to a server-channel request.
-// TrimSpace (all Unicode whitespace) is stricter than SQL btrim (U+0020 only):
-// whitespace-only input is rejected here, not by the constraint.
-func serverContent(msg protocol.Control) (string, error) {
-	return messageContent(msg.ServerContent, "server")
 }
 
 type serverMessageLimiter struct {
@@ -86,8 +76,7 @@ func (s *Server) handleSendServerMessage(c *client, msg protocol.Control) {
 		c.sendError("invalid server channel")
 		return
 	}
-	content, err := serverContent(msg)
-	if err != nil {
+	if err := encryptedOnly(msg); err != nil {
 		c.sendError(err.Error())
 		return
 	}
@@ -99,7 +88,7 @@ func (s *Server) handleSendServerMessage(c *client, msg protocol.Control) {
 	ctx, cancel := storeCtx()
 	defer cancel()
 	stored, err := s.messages.SendChannelMessage(ctx, c.sess.UserID, msg.ServerID,
-		messages.ChannelID(msg.ChannelID), content, int(msg.ServerReplyTo))
+		messages.ChannelID(msg.ChannelID), msg.E2EE, int(msg.ServerReplyTo))
 	if err != nil {
 		sendServerMessageError(c, "send", c.sess.UserID, err)
 		return
@@ -138,23 +127,7 @@ func (s *Server) handleListServerMessages(c *client, msg protocol.Control) {
 		return
 	}
 
-	hasMore := len(list) > limit
-	if hasMore {
-		list = list[:limit]
-	}
-	// Cap the serialized page as well: 100 messages of 4000 four-byte runes
-	// would produce a frame the client rejects with "connection lost".
-	out := make([]protocol.ServerMessageSummary, 0, len(list))
-	bytesUsed := 0
-	for i, m := range list {
-		size := len(m.Content) + 256
-		if i > 0 && bytesUsed+size > maxServerPageBytes {
-			hasMore = true
-			break
-		}
-		bytesUsed += size
-		out = append(out, messageSummary(m.Wire()))
-	}
+	out, hasMore := pageOf(messageSummaries(list), limit)
 
 	// Only the newest page means "I reached the bottom"; older pages are a
 	// keyset cursor and must never move the read pointer backwards.
@@ -174,7 +147,7 @@ func (s *Server) handleListServerMessages(c *client, msg protocol.Control) {
 
 	c.send(protocol.Control{
 		Type: "ACK", ChannelID: msg.ChannelID, ServerMessages: out,
-		ServerHasMore: hasMore, UnreadCount: unread,
+		ServerHasMore: hasMore, HasMore: &hasMore, UnreadCount: unread,
 	})
 }
 
@@ -186,8 +159,7 @@ func (s *Server) handleUpdateServerMessage(c *client, msg protocol.Control) {
 		c.sendError("server message id required")
 		return
 	}
-	content, err := serverContent(msg)
-	if err != nil {
+	if err := encryptedOnly(msg); err != nil {
 		c.sendError(err.Error())
 		return
 	}
@@ -198,7 +170,7 @@ func (s *Server) handleUpdateServerMessage(c *client, msg protocol.Control) {
 
 	ctx, cancel := storeCtx()
 	defer cancel()
-	edited, err := s.messages.EditChannelMessage(ctx, c.sess.UserID, int(msg.ServerMessageID), content)
+	edited, err := s.messages.EditChannelMessage(ctx, c.sess.UserID, int(msg.ServerMessageID), msg.E2EE)
 	if err != nil {
 		sendServerMessageError(c, "edit", c.sess.UserID, err)
 		return

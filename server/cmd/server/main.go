@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -45,13 +46,8 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "PEM certificate of the control channel (with -tls-key)")
 	tlsKey := flag.String("tls-key", "", "PEM private key of the control channel (with -tls-cert)")
 	tlsDir := flag.String("tls-dir", config.TLSDir(), "directory of cert.pem and key.pem, generated if both are missing (env FEATHER_TLS_DIR)")
+	resetUser := flag.String("reset-user", "", "reset the account of this username (new temporary password, keys retired) and exit")
 	flag.Parse()
-
-	cert, err := tlscert.Load(*tlsCert, *tlsKey, *tlsDir)
-	if err != nil {
-		log.Fatalf("failed to load TLS certificate: %v", err)
-	}
-	log.Printf("TLS certificate SHA-256 fingerprint: %s", tlscert.Fingerprint(cert))
 
 	// 1. Connect to PostgreSQL using the pgx driver
 	db, err := sql.Open("pgx", *pgURI)
@@ -82,6 +78,24 @@ func main() {
 
 	// 3. Initialize the stores with the *sql.DB instance
 	users := accounts.NewStore(db)
+	if *resetUser != "" {
+		resetCtx, resetCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer resetCancel()
+		password, err := users.Reset(resetCtx, *resetUser)
+		if err != nil {
+			log.Fatalf("failed to reset user %q: %v", *resetUser, err)
+		}
+		// Printed once, outside the log.
+		fmt.Printf("temporary password of %q: %s\n", *resetUser, password)
+		return
+	}
+
+	cert, err := tlscert.Load(*tlsCert, *tlsKey, *tlsDir)
+	if err != nil {
+		log.Fatalf("failed to load TLS certificate: %v", err)
+	}
+	log.Printf("TLS certificate SHA-256 fingerprint: %s", tlscert.Fingerprint(cert))
+
 	serverStore := servers.NewStore(db)
 	friendStore := friends.NewStore(db)
 	msgStore := messages.NewStore(db)

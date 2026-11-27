@@ -27,6 +27,9 @@ const (
 	// failedBurst, so one source cannot lock the owner out.
 	accountBurst = 50
 	accountEvery = 6 * time.Second
+	// Conversation key requests of one user (e2ee-text.md §4.2).
+	keyBurst = 60
+	keyEvery = 500 * time.Millisecond
 	// Sources remembered for having logged in.
 	maxKnownIPs = 4096
 )

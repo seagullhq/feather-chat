@@ -53,8 +53,11 @@ func (s *Session) Authed() bool { return s.UserID != 0 }
 
 // Send delivers one control message on the TCP link. Concurrent sends are
 // serialized; the error is the caller's to notice.
-func (s *Session) Send(control protocol.Control) error {
-	b, err := json.Marshal(control)
+func (s *Session) Send(control protocol.Control) error { return s.SendJSON(control) }
+
+// SendJSON is Send for replies whose fields do not fit protocol.Control.
+func (s *Session) SendJSON(v any) error {
+	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
@@ -64,16 +67,22 @@ func (s *Session) Send(control protocol.Control) error {
 	// reading (half-open link, frozen client) must not stall them forever.
 	_ = s.tcp.SetWriteDeadline(time.Now().Add(writeTimeout))
 	if err := protocol.WriteFrame(s.tcp, b); err != nil {
-		// A TLS stream is unusable after a failed write. Close the socket under
-		// it: tls.Conn.Close would try to write again and wait for the peer.
-		conn := s.tcp
-		if t, ok := conn.(*tls.Conn); ok {
-			conn = t.NetConn()
-		}
-		_ = conn.Close() // the read loop notices and cleans up
+		// A TLS stream is unusable after a failed write.
+		s.Close()
 		return err
 	}
 	return nil
+}
+
+// Close ends the control connection; its read loop notices and cleans up. It
+// closes the socket under TLS: tls.Conn.Close would try to write and could wait
+// for the peer.
+func (s *Session) Close() {
+	conn := s.tcp
+	if t, ok := conn.(*tls.Conn); ok {
+		conn = t.NetConn()
+	}
+	_ = conn.Close()
 }
 
 // Touch records that the session was just seen, so it does not look stale.
