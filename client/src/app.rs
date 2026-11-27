@@ -21,6 +21,8 @@ pub(crate) struct Root {
     logged_in: bool,
     /// Credentials of the in-flight login, saved to the keyring on success.
     pending: Option<(String, String, String)>,
+    /// Request refused by an untrusted certificate, replayed once accepted.
+    retry: Option<Request>,
     /// Credentials currently stored in the keyring, kept in sync with the
     /// account so a rename/password change needs no sign-out.
     saved: Option<(String, String, String)>,
@@ -88,6 +90,7 @@ impl Root {
             titlebar,
             focus,
             pending: None,
+            retry: None,
             saved: None,
             logged_in: false,
             events,
@@ -108,6 +111,14 @@ impl Root {
 
     fn on_request(&mut self, req: &AuthRequest, cx: &mut Context<Self>) {
         let (host, req) = match req {
+            AuthRequest::Trust { host, fingerprint } => {
+                if let Err(e) = api::trust(host, fingerprint) {
+                    self.auth.update(cx, |a, cx| a.on_failed(e, cx));
+                } else if let Some(req) = self.retry.take() {
+                    self.start(host.clone(), req, cx);
+                }
+                return;
+            }
             AuthRequest::Login {
                 host,
                 identifier,
@@ -215,12 +226,27 @@ impl Root {
             }
             Event::AuthFailed(m) | Event::RegisterFailed(m) => {
                 self.logged_in = false;
-                // ponytail: any failure drops the saved login (also a network
-                // error); the user just types it again.
+                // ponytail: any failure after connecting drops the saved login;
+                // the user just types it again.
                 if self.pending.take().is_some() {
                     std::thread::spawn(store::clear);
                 }
                 self.auth.update(cx, |a, cx| a.on_failed(m, cx))
+            }
+            Event::ConnectFailed(m) => {
+                // Nothing was sent: the saved login stays in the keyring.
+                self.logged_in = false;
+                self.pending = None;
+                self.auth.update(cx, |a, cx| a.on_failed(m, cx))
+            }
+            Event::Untrusted { server, request } => {
+                // Nothing was sent: the saved login stays in the keyring.
+                self.logged_in = false;
+                self.pending = None;
+                self.control.take();
+                cx.global_mut::<ui::Session>().control = None;
+                self.retry = Some(request);
+                self.auth.update(cx, |a, cx| a.on_untrusted(server, cx))
             }
             Event::ServersListed(servers) => self
                 .servers

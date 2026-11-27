@@ -36,8 +36,8 @@ func (s *Server) handleScreenStart(c *client, _ protocol.Control) {
 		return
 	}
 	c.send(protocol.Control{Type: "ACK", SSRC: c.sess.SSRC})
-	if strings.HasPrefix(c.sess.Room, "dm:") {
-		s.notifyDmCallState(c, me)
+	if roomName := s.rooms.RoomOf(c.sess); strings.HasPrefix(roomName, "dm:") {
+		s.notifyDmCallState(c, roomName, me)
 		return
 	}
 	s.notifyServer(c.sess.ServerID, c.sess, protocol.Control{Type: "MEMBER_STATE", ChannelID: c.sess.ChannelID, Member: &me})
@@ -45,12 +45,13 @@ func (s *Server) handleScreenStart(c *client, _ protocol.Control) {
 
 // handleScreenStop answers SCREEN_STOP. Also runs implicitly on LEAVE (dropLocked).
 func (s *Server) handleScreenStop(c *client, _ protocol.Control) {
-	if c.sess.Room == "" {
+	roomName := s.rooms.RoomOf(c.sess)
+	if roomName == "" {
 		return
 	}
 	me := s.rooms.StopShare(c.sess)
-	if strings.HasPrefix(c.sess.Room, "dm:") {
-		s.notifyDmCallState(c, me)
+	if strings.HasPrefix(roomName, "dm:") {
+		s.notifyDmCallState(c, roomName, me)
 		return
 	}
 	s.notifyServer(c.sess.ServerID, c.sess, protocol.Control{Type: "MEMBER_STATE", ChannelID: c.sess.ChannelID, Member: &me})

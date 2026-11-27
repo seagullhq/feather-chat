@@ -1,7 +1,9 @@
 use super::*;
 use crate::api::Request;
+use crate::api::transport::tests::{Identity, ServerStream};
 use crate::api::transport::{CONTROL_PORT, read_frame, write_frame};
-use serde_json::json;
+use crate::api::trust;
+use serde_json::{Value, json};
 use std::net::TcpListener;
 use std::sync::{Mutex, MutexGuard};
 
@@ -11,14 +13,65 @@ fn port_lock() -> MutexGuard<'static, ()> {
     PORT_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// A TLS identity already trusted for the loopback host.
+fn trusted_identity() -> Identity {
+    let id = Identity::new();
+    trust::trust("127.0.0.1", &id.fingerprint).unwrap();
+    id
+}
+
+/// ACK for `hello`, with media keys.
+fn hello_ack(s: &mut ServerStream, hello: &Value) {
+    let key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+    write_frame(
+        s,
+        &json!({"type":"ACK","ssrc":hello["ssrc"],"mediaKeyUp":key,"mediaKeyDown":key}),
+    )
+    .unwrap();
+}
+
+#[test]
+fn unknown_server_gets_no_data_and_returns_the_request() {
+    let _guard = port_lock();
+    let _ = std::fs::remove_file(trust::path().unwrap());
+    let l = TcpListener::bind(("127.0.0.1", CONTROL_PORT)).unwrap();
+    let id = Identity::new();
+    let expected = id.fingerprint.clone();
+    let server = std::thread::spawn(move || {
+        let mut s = id.accept(&l);
+        assert!(read_frame(&mut s).is_err());
+    });
+    let (tx, rx) = async_channel::unbounded();
+    spawn(
+        "127.0.0.1".into(),
+        Request::Login {
+            identifier: "bob".into(),
+            password: "x".into(),
+        },
+        tx,
+    );
+    let Event::Untrusted {
+        server: untrusted,
+        request: Request::Login { identifier, .. },
+    } = rx.recv_blocking().unwrap()
+    else {
+        panic!("expected Untrusted");
+    };
+    assert_eq!(untrusted.fingerprint, expected);
+    assert_eq!(untrusted.pinned, None);
+    assert_eq!(identifier, "bob");
+    server.join().unwrap();
+}
+
 // Fake server: ACK LOGIN with a name, ACK HELLO with an ssrc, then answer
 // the automatic LIST_SERVERS before closing.
 #[test]
 fn login_flow() {
     let _guard = port_lock();
     let l = TcpListener::bind(("127.0.0.1", CONTROL_PORT)).unwrap();
+    let id = trusted_identity();
     let server = std::thread::spawn(move || {
-        let (mut s, _) = l.accept().unwrap();
+        let mut s = id.accept(&l);
         let m = read_frame(&mut s).unwrap();
         assert_eq!(m["type"], "LOGIN");
         write_frame(&mut s, &json!({"type":"ACK","name":"bob"})).unwrap();
@@ -27,7 +80,7 @@ fn login_flow() {
             (m["type"].as_str(), m["name"].as_str()),
             (Some("HELLO"), Some("bob"))
         );
-        write_frame(&mut s, &json!({"type":"ACK","ssrc":m["ssrc"]})).unwrap();
+        hello_ack(&mut s, &m);
         let m = read_frame(&mut s).unwrap();
         assert_eq!(m["type"], "LIST_SERVERS");
         write_frame(
@@ -88,14 +141,15 @@ fn login_flow() {
 fn create_server_flow() {
     let _guard = port_lock();
     let l = TcpListener::bind(("127.0.0.1", CONTROL_PORT)).unwrap();
+    let id = trusted_identity();
     let server = std::thread::spawn(move || {
-        let (mut s, _) = l.accept().unwrap();
+        let mut s = id.accept(&l);
         let m = read_frame(&mut s).unwrap();
         assert_eq!(m["type"], "LOGIN");
         write_frame(&mut s, &json!({"type":"ACK","name":"bob"})).unwrap();
         let m = read_frame(&mut s).unwrap();
         assert_eq!(m["type"], "HELLO");
-        write_frame(&mut s, &json!({"type":"ACK","ssrc":m["ssrc"]})).unwrap();
+        hello_ack(&mut s, &m);
         let m = read_frame(&mut s).unwrap();
         assert_eq!(m["type"], "LIST_SERVERS");
         write_frame(&mut s, &json!({"type":"ACK","servers":[]})).unwrap();
@@ -164,14 +218,15 @@ fn create_server_flow() {
 fn change_role_flow() {
     let _guard = port_lock();
     let l = TcpListener::bind(("127.0.0.1", CONTROL_PORT)).unwrap();
+    let id = trusted_identity();
     let server = std::thread::spawn(move || {
-        let (mut s, _) = l.accept().unwrap();
+        let mut s = id.accept(&l);
         let m = read_frame(&mut s).unwrap();
         assert_eq!(m["type"], "LOGIN");
         write_frame(&mut s, &json!({"type":"ACK","name":"bob"})).unwrap();
         let m = read_frame(&mut s).unwrap();
         assert_eq!(m["type"], "HELLO");
-        write_frame(&mut s, &json!({"type":"ACK","ssrc":m["ssrc"]})).unwrap();
+        hello_ack(&mut s, &m);
         let m = read_frame(&mut s).unwrap();
         assert_eq!(m["type"], "LIST_SERVERS");
         write_frame(&mut s, &json!({"type":"ACK","servers":[]})).unwrap();

@@ -14,6 +14,8 @@ type Control struct {
 	Type              string                `json:"type"`
 	Name              string                `json:"name,omitempty"`
 	SSRC              uint32                `json:"ssrc,omitempty"`
+	MediaKeyUp        string                `json:"mediaKeyUp,omitempty"`
+	MediaKeyDown      string                `json:"mediaKeyDown,omitempty"`
 	Room              string                `json:"room,omitempty"`
 	ChannelID         int                   `json:"channelId,omitempty"`
 	Members           []Member              `json:"members,omitempty"`
@@ -29,6 +31,7 @@ type Control struct {
 	Identifier        string                `json:"identifier,omitempty"`
 	Password          string                `json:"password,omitempty"`
 	OldPassword       string                `json:"oldPassword,omitempty"`
+	DeviceToken       string                `json:"deviceToken,omitempty"`
 	Error             string                `json:"error,omitempty"`
 	CallReason        string                `json:"callReason,omitempty"`
 	ChannelName       string                `json:"channelName,omitempty"`

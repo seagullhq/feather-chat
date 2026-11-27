@@ -4,7 +4,6 @@
 //! loop never waits on a 10-40 ms codec call.
 
 use std::collections::HashMap;
-use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
@@ -13,6 +12,7 @@ use std::time::{Duration, Instant};
 use gpui::RenderImage;
 use image::{Frame as ImgFrame, RgbaImage};
 
+use super::link::Link;
 use super::shared::Shared;
 use super::wire::{KIND_VIDEO, header};
 use super::{Notice, Notify};
@@ -47,13 +47,13 @@ impl Sender {
     pub(super) fn start(
         source: Source,
         shared: Arc<Shared>,
-        sock: UdpSocket,
+        link: Arc<Link>,
         ssrc: u32,
         notify: Notify,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let s = stop.clone();
-        let thread = std::thread::spawn(move || send_loop(source, shared, sock, ssrc, notify, s));
+        let thread = std::thread::spawn(move || send_loop(source, shared, link, ssrc, notify, s));
         Self {
             stop,
             thread: Some(thread),
@@ -73,7 +73,7 @@ impl Drop for Sender {
 fn send_loop(
     source: Source,
     shared: Arc<Shared>,
-    sock: UdpSocket,
+    link: Arc<Link>,
     ssrc: u32,
     notify: Notify,
     stop: Arc<AtomicBool>,
@@ -137,7 +137,7 @@ fn send_loop(
                     {
                         let mut p = header(KIND_VIDEO, ssrc);
                         p.extend(payload);
-                        let _ = sock.send(&p);
+                        let _ = link.send(&p);
                         if i > 0 {
                             std::thread::sleep(PACKET_GAP);
                         }

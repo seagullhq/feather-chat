@@ -21,6 +21,7 @@ import (
 	"github.com/seagullhq/feather-chat/server/internal/migrations"
 	"github.com/seagullhq/feather-chat/server/internal/room"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
+	"github.com/seagullhq/feather-chat/server/internal/tlscert"
 
 	// PostgreSQL driver via pgx, compatible with database/sql
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -41,7 +42,16 @@ func main() {
 	// Define tcp and udp address
 	tcpAddr := flag.String("tcp", ":7700", "TCP control address")
 	udpAddr := flag.String("udp", ":7701", "UDP media address")
+	tlsCert := flag.String("tls-cert", "", "PEM certificate of the control channel (with -tls-key)")
+	tlsKey := flag.String("tls-key", "", "PEM private key of the control channel (with -tls-cert)")
+	tlsDir := flag.String("tls-dir", config.TLSDir(), "directory of cert.pem and key.pem, generated if both are missing (env FEATHER_TLS_DIR)")
 	flag.Parse()
+
+	cert, err := tlscert.Load(*tlsCert, *tlsKey, *tlsDir)
+	if err != nil {
+		log.Fatalf("failed to load TLS certificate: %v", err)
+	}
+	log.Printf("TLS certificate SHA-256 fingerprint: %s", tlscert.Fingerprint(cert))
 
 	// 1. Connect to PostgreSQL using the pgx driver
 	db, err := sql.Open("pgx", *pgURI)
@@ -92,5 +102,5 @@ func main() {
 	log.Printf("feather-chat server ready: control=%s media=%s", *tcpAddr, *udpAddr)
 	rooms := room.NewManager()
 	go rooms.ServeUDP(listenerUDP.(*net.UDPConn))
-	control.New(users, serverStore, friendStore, msgStore, rooms).Serve(listenerTCP)
+	control.New(users, serverStore, friendStore, msgStore, rooms).Serve(listenerTCP, tlscert.Config(cert))
 }

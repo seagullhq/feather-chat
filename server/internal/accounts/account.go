@@ -82,13 +82,22 @@ func (s *Store) Delete(ctx context.Context, userID int) error {
 	return nil
 }
 
-func (s *Store) Authenticate(ctx context.Context, identifier string, password string) (*User, error) {
+// Gate limits password attempts per account. It is asked before the password is
+// compared; if ok, done must be called once with whether the password was wrong.
+type Gate func(userID int, passwordHash string) (done func(failed bool), ok bool)
+
+// Authenticate returns the user named by identifier (username or email) if the
+// password matches. A refusal by a gate looks like an unknown identifier: one
+// bcrypt compare and ErrBadCredentials, so it reveals nothing about accounts.
+func (s *Store) Authenticate(ctx context.Context, identifier string, password string, gates ...Gate) (*User, error) {
 	identifier = strings.TrimSpace(identifier)
 
 	query := `
 		SELECT id, username, email, password_hash, created_at, updated_at
 		FROM users
 		WHERE lower(username) = lower($1) OR lower(email) = lower($1)
+		ORDER BY (lower(email) = lower($1)) DESC
+		LIMIT 1
 	`
 
 	var user User
@@ -109,7 +118,21 @@ func (s *Store) Authenticate(ctx context.Context, identifier string, password st
 		return nil, err
 	}
 
-	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
+	var dones []func(failed bool)
+	hash, allowed := []byte(user.PasswordHash), true
+	for _, gate := range gates {
+		done, ok := gate(user.ID, user.PasswordHash)
+		if !ok {
+			hash, allowed = dummyHash, false
+			break
+		}
+		dones = append(dones, done)
+	}
+	wrong := bcrypt.CompareHashAndPassword(hash, []byte(password)) != nil
+	for _, done := range dones {
+		done(allowed && wrong)
+	}
+	if !allowed || wrong {
 		return nil, ErrBadCredentials
 	}
 

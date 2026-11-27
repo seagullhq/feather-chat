@@ -3,8 +3,9 @@
 
 /// Header: frame u32 | ts u32 | flags u8 | idx u16 | count u16.
 pub const HEADER: usize = 13;
-/// 1200 byte datagram − 5 byte UDP header − payload header.
-pub const MAX_CHUNK: usize = 1200 - 5 - HEADER;
+/// 1200 byte datagram − sealed header − GCM tag − payload header
+/// (docs/transport-security.md §2.2).
+pub const MAX_CHUNK: usize = 1200 - 13 - 16 - HEADER;
 
 const KEY: u8 = 1;
 

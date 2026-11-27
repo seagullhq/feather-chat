@@ -6,12 +6,22 @@ pub(super) const KIND_AUDIO: u8 = 0;
 pub(super) const KIND_PING: u8 = 1;
 pub(super) const KIND_VIDEO: u8 = 2;
 pub(super) const KIND_SYSAUDIO: u8 = 3;
+pub(super) const KIND_PATH: u8 = 4;
 pub(super) const TERMINATOR: u8 = 0x20;
 
 pub(super) fn header(flags: u8, ssrc: u32) -> Vec<u8> {
     let mut h = vec![flags];
     h.extend(ssrc.to_be_bytes());
     h
+}
+
+/// The echo of the server's PATH challenge (transport-security.md §2.4): the
+/// same 8 bytes, which proves we receive at our source address.
+pub(super) fn path_reply(ssrc: u32, challenge: &[u8]) -> Option<Vec<u8>> {
+    let challenge: &[u8; 8] = challenge.try_into().ok()?;
+    let mut p = header(KIND_PATH, ssrc);
+    p.extend(challenge);
+    Some(p)
 }
 
 /// AUDIO / SYSAUDIO datagram: header, seq (u32 BE), one Opus frame

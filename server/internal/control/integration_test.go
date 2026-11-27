@@ -2,7 +2,10 @@ package control_test
 
 import (
 	"context"
+	"crypto/cipher"
+	"crypto/tls"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +28,7 @@ import (
 	"github.com/seagullhq/feather-chat/server/internal/protocol"
 	"github.com/seagullhq/feather-chat/server/internal/room"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
+	"github.com/seagullhq/feather-chat/server/internal/tlscert"
 )
 
 // testStore connects to the PostgreSQL database named in .env for real, so the
@@ -57,37 +61,56 @@ func testStore(t *testing.T) (*accounts.Store, *sql.DB) {
 // listeners, the same way main wires it.
 func serveTest(t *testing.T, ltcp net.Listener, ludp net.PacketConn, users *accounts.Store, serverStore *servers.ServerStore, friendStore *friends.ServerStore, msgStore *messages.ServerStore) {
 	t.Helper()
-	rooms := room.NewManager()
-	go rooms.ServeUDP(ludp.(*net.UDPConn))
-	go control.New(users, serverStore, friendStore, msgStore, rooms).Serve(ltcp)
-}
-
-// dialControl connects a real client over TCP: HELLO, then LOGIN (and REGISTER
-// for the first one), then JOIN. TCP ordering guarantees the server handles
-// them in this order, so the JOIN sees an authenticated session.
-func dialControl(t *testing.T, addr string, ssrc uint32, channelID int, username, email, password string, register bool) net.Conn {
-	t.Helper()
-	c, err := net.Dial("tcp", addr)
+	cert, err := tlscert.Load("", "", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	sendTest(t, c, protocol.Control{Type: "HELLO", SSRC: ssrc, Name: "x"})
+	rooms := room.NewManager()
+	go rooms.ServeUDP(ludp.(*net.UDPConn))
+	go control.New(users, serverStore, friendStore, msgStore, rooms).Serve(ltcp, tlscert.Config(cert))
+}
+
+// dialTLS opens a control connection, trusting whatever certificate the test
+// server generated.
+func dialTLS(addr string) (net.Conn, error) {
+	return tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})
+}
+
+// dialControl connects a real client over TLS: LOGIN (and REGISTER for the
+// first one), then HELLO, then JOIN. TCP ordering guarantees the server
+// handles them in this order.
+func dialControl(t *testing.T, addr string, ssrc uint32, channelID int, username, email, password string, register bool) net.Conn {
+	t.Helper()
+	c, _ := dialControlHello(t, addr, ssrc, channelID, username, email, password, register)
+	return c
+}
+
+// dialControlHello is dialControl also returning the HELLO ACK, which carries
+// the media keys (no ssrc and no keys when the SSRC was refused).
+func dialControlHello(t *testing.T, addr string, ssrc uint32, channelID int, username, email, password string, register bool) (net.Conn, protocol.Control) {
+	t.Helper()
+	c, err := dialTLS(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if register {
 		sendTest(t, c, protocol.Control{Type: "REGISTER", Username: username, Email: email, Password: password})
 	}
 	sendTest(t, c, protocol.Control{Type: "LOGIN", Identifier: username, Password: password})
 	// LOGIN ACK carries the username; waiting keeps REGISTER/LOGIN ordered across clients.
 	awaitControl(t, c, "LOGIN ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.Name != "" })
+	sendTest(t, c, protocol.Control{Type: "HELLO", SSRC: ssrc, Name: "x"})
+	hello := awaitControl(t, c, "HELLO ACK", func(m protocol.Control) bool { return m.Type == "ACK" })
 	if channelID != 0 {
 		sendTest(t, c, protocol.Control{Type: "JOIN", ChannelID: channelID})
 		awaitRoom(t, c)
 	}
-	return c
+	return c, hello
 }
 
 // awaitRoom reads ACKs until JOIN is confirmed, so the caller knows the
 // session is really in the room before it starts sending UDP. The server
-// answers HELLO/REGISTER/LOGIN/JOIN in order; the JOIN ACK is the one carrying
+// answers REGISTER/LOGIN/HELLO/JOIN in order; the JOIN ACK is the one carrying
 // a room name.
 func awaitRoom(t *testing.T, c net.Conn) {
 	t.Helper()
@@ -186,8 +209,8 @@ func TestIntegrationTwoClients(t *testing.T) {
 	udpAddr := ludp.LocalAddr().String()
 
 	// A registers the real user; B logs into the same account.
-	a := dialControl(t, ltcp.Addr().String(), 0x1111, 0, username, email, password, true)
-	b := dialControl(t, ltcp.Addr().String(), 0x2222, 0, username, email, password, false)
+	a, helloA := dialControlHello(t, ltcp.Addr().String(), 0x1111, 0, username, email, password, true)
+	b, helloB := dialControlHello(t, ltcp.Addr().String(), 0x2222, 0, username, email, password, false)
 	defer a.Close()
 	defer b.Close()
 	sendTest(t, a, protocol.Control{Type: "CREATE_SERVER", ServerName: "v" + username})
@@ -218,36 +241,31 @@ func TestIntegrationTwoClients(t *testing.T) {
 	// A and B bind their UDP sockets by sending a PING, so the server learns
 	// their addr and both clear the audio gate (§5: no AUDIO before the first
 	// PING echo). The sockets stay open: the server forwards to these addrs.
-	audp, _ := net.Dial("udp", udpAddr)
-	defer audp.Close()
-	audp.Write(append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindPing, SSRC: 0x1111}), make([]byte, 8)...))
-
-	budp, _ := net.Dial("udp", udpAddr)
-	defer budp.Close()
-	budp.Write(append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindPing, SSRC: 0x2222}), make([]byte, 8)...))
-
-	for _, u := range []net.Conn{audp, budp} {
-		u.SetReadDeadline(time.Now().Add(time.Second))
-		echo := make([]byte, 1024)
-		u.Read(echo) // drain each PING echo that opened that NAT mapping
+	mediaA := dialMedia(t, udpAddr, 0x1111, helloA)
+	mediaB := dialMedia(t, udpAddr, 0x2222, helloB)
+	for _, m := range []*mediaClient{mediaA, mediaB} {
+		m.send(t, protocol.KindPing, make([]byte, 8))
+		h, challenge := m.read(t) // the address must be validated first
+		if h.Kind != protocol.KindPath {
+			t.Fatalf("want a PATH challenge, got %+v", h)
+		}
+		m.send(t, protocol.KindPath, challenge)
+		m.send(t, protocol.KindPing, make([]byte, 8))
+		if h, _ := m.read(t); h.Kind != protocol.KindPing {
+			t.Fatalf("want the PING echo, got %+v", h)
+		}
 	}
 
-	// A sends an AUDIO frame; server forwards verbatim to B.
-	audp.Write(append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindAudio, SSRC: 0x1111}), []byte("opusframe")...))
+	// A sends an AUDIO frame; the server seals it again for B.
+	mediaA.send(t, protocol.KindAudio, []byte("opusframe"))
 
-	budp.SetReadDeadline(time.Now().Add(time.Second))
-	buf := make([]byte, 1024)
-	n, err := budp.Read(buf)
-	if err != nil {
-		t.Fatal("B did not receive forwarded audio:", err)
-	}
-	h, _ := protocol.DecodeHeader(buf[:n])
-	t.Logf("B received %d bytes: %+v", n, h)
+	h, payload := mediaB.read(t)
+	t.Logf("B received %+v", h)
 	if h.SSRC != 0x1111 || h.Kind != protocol.KindAudio {
 		t.Fatalf("B got header %+v, want SSRC 0x1111 audio", h)
 	}
-	if string(buf[n-len("opusframe"):n]) != "opusframe" {
-		t.Fatalf("payload not forwarded verbatim: %q", buf[:n])
+	if string(payload) != "opusframe" {
+		t.Fatalf("payload = %q", payload)
 	}
 
 	// B leaves the room; A's next audio must not reach it. Before the fix LEAVE
@@ -258,11 +276,65 @@ func TestIntegrationTwoClients(t *testing.T) {
 	awaitControl(t, a, "MEMBER_LEFT", func(m protocol.Control) bool {
 		return m.Type == "MEMBER_LEFT" && m.SSRC == 0x2222
 	})
-	audp.Write(append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindAudio, SSRC: 0x1111}), []byte("afterleave")...))
-	budp.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-	if n, err := budp.Read(buf); err == nil {
+	mediaA.send(t, protocol.KindAudio, []byte("afterleave"))
+	mediaB.conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	if n, err := mediaB.conn.Read(make([]byte, 1024)); err == nil {
 		t.Fatalf("B received %d bytes after leaving the room", n)
 	}
+}
+
+// mediaClient is the UDP side of one test client.
+type mediaClient struct {
+	conn     net.Conn
+	ssrc     uint32
+	up, down cipher.AEAD
+	counter  uint64
+}
+
+func dialMedia(t *testing.T, addr string, ssrc uint32, hello protocol.Control) *mediaClient {
+	t.Helper()
+	aead := func(encoded string) cipher.AEAD {
+		key, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, err := protocol.NewMediaAEAD(key)
+		if err != nil {
+			t.Fatalf("media key: %v", err)
+		}
+		return a
+	}
+	conn, err := net.Dial("udp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return &mediaClient{conn: conn, ssrc: ssrc, up: aead(hello.MediaKeyUp), down: aead(hello.MediaKeyDown)}
+}
+
+func (m *mediaClient) send(t *testing.T, kind uint8, payload []byte) {
+	t.Helper()
+	b := protocol.SealMedia(m.up, protocol.Header{Kind: kind, SSRC: m.ssrc}, m.counter, payload)
+	m.counter++
+	if _, err := m.conn.Write(b); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (m *mediaClient) read(t *testing.T) (protocol.Header, []byte) {
+	t.Helper()
+	m.conn.SetReadDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 2048)
+	n, err := m.conn.Read(buf)
+	if err != nil {
+		t.Fatal("no media datagram:", err)
+	}
+	_, payload, ok := protocol.OpenMedia(m.down, buf[:n])
+	if !ok {
+		t.Fatal("downlink datagram does not open")
+	}
+	h, _ := protocol.DecodeHeader(buf[:n])
+	return h, payload
 }
 
 // TestIntegrationCreateServer covers CREATE_SERVER end to end. Before the fix a
@@ -321,12 +393,11 @@ func TestIntegrationCreateServer(t *testing.T) {
 	serveTest(t, ltcp, ludp, store, serverStore, friends.NewStore(db), messages.NewStore(db))
 
 	// CREATE_SERVER before LOGIN must be refused.
-	anon, err := net.Dial("tcp", ltcp.Addr().String())
+	anon, err := dialTLS(ltcp.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer anon.Close()
-	sendTest(t, anon, protocol.Control{Type: "HELLO", SSRC: 0x3333, Name: "anon"})
 	sendTest(t, anon, protocol.Control{Type: "CREATE_SERVER", ServerName: "refused"})
 	if e := awaitControl(t, anon, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != "authentication required" {
 		t.Fatalf("anonymous CREATE_SERVER error = %q, want %q", e.Error, "authentication required")
@@ -406,7 +477,7 @@ func TestIntegrationListServers(t *testing.T) {
 	serveTest(t, ltcp, ludp, store, serverStore, friends.NewStore(db), messages.NewStore(db))
 
 	// LIST_SERVERS before LOGIN must be refused.
-	anon, err := net.Dial("tcp", ltcp.Addr().String())
+	anon, err := dialTLS(ltcp.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -990,7 +1061,7 @@ func TestIntegrationDirectMessages(t *testing.T) {
 	defer b.Close()
 	defer outsider.Close()
 
-	anon, err := net.Dial("tcp", addr)
+	anon, err := dialTLS(addr)
 	if err != nil {
 		t.Fatal(err)
 	}

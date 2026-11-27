@@ -1,6 +1,7 @@
 package control
 
 import (
+	"encoding/base64"
 	"errors"
 	"log"
 	"strconv"
@@ -10,13 +11,23 @@ import (
 	"github.com/seagullhq/feather-chat/server/internal/servers"
 )
 
-// handleHello answers HELLO by claiming the client's SSRC.
+// handleHello answers HELLO by claiming the client's SSRC and handing out the
+// session's media keys.
 func (s *Server) handleHello(c *client, msg protocol.Control) {
-	if msg.SSRC == 0 || !s.rooms.Claim(c.sess, msg.SSRC, msg.Name) {
-		c.send(protocol.Control{Type: "ACK"}) // no ssrc in the ACK: pick another
+	if !c.requireAuth() {
 		return
 	}
-	c.send(protocol.Control{Type: "ACK", SSRC: msg.SSRC})
+	up, down, ok := s.rooms.Claim(c.sess, msg.SSRC, msg.Name)
+	if !ok {
+		// No ssrc in the ACK: it is taken (pick another), or the session
+		// already owns one.
+		c.send(protocol.Control{Type: "ACK"})
+		return
+	}
+	c.send(protocol.Control{Type: "ACK", SSRC: msg.SSRC,
+		MediaKeyUp:   base64.StdEncoding.EncodeToString(up),
+		MediaKeyDown: base64.StdEncoding.EncodeToString(down),
+	})
 }
 
 // handleJoin answers JOIN by moving the session into the channel's room.
@@ -54,13 +65,14 @@ func (s *Server) handleJoin(c *client, msg protocol.Control) {
 
 // handleState answers STATE by updating mute/deafen and telling the room.
 func (s *Server) handleState(c *client, msg protocol.Control) {
-	if c.sess.Room == "" {
+	roomName := s.rooms.RoomOf(c.sess)
+	if roomName == "" {
 		return
 	}
 	me := s.rooms.SetState(c.sess, msg.Muted, msg.Deafened)
-	if strings.HasPrefix(c.sess.Room, "dm:") {
+	if strings.HasPrefix(roomName, "dm:") {
 		// DM calls have no server to fan out to: tell the room-mates directly.
-		s.notifyDmCallState(c, me)
+		s.notifyDmCallState(c, roomName, me)
 		return
 	}
 	s.notifyServer(c.sess.ServerID, c.sess, protocol.Control{Type: "MEMBER_STATE", ChannelID: c.sess.ChannelID, Member: &me})
@@ -74,11 +86,10 @@ func (s *Server) handleLeave(c *client, _ protocol.Control) {
 // leaveRoom drops the media entry and tells the room-mates. It also runs
 // when the TCP link dies, so nobody stays listed as a ghost.
 func (s *Server) leaveRoom(c *client) {
-	if c.sess.Room == "" {
+	roomName := s.rooms.Leave(c.sess)
+	if roomName == "" {
 		return
 	}
-	roomName := c.sess.Room
-	s.rooms.Leave(c.sess)
 	if strings.HasPrefix(roomName, "dm:") {
 		s.onDmCallLeave(c, roomName)
 		return

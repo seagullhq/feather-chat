@@ -6,6 +6,7 @@ use std::sync::Arc;
 use super::super::auth::{self, Request};
 use super::super::friends;
 use super::super::server;
+use super::super::transport::ConnectError;
 use super::Session;
 use super::command::{Command, Control};
 use super::event::Event;
@@ -17,7 +18,7 @@ use crate::media;
 /// sync with the flags the engine started with.
 fn start_voice(
     host: &str,
-    ssrc: u32,
+    id: &media::Identity,
     muted: bool,
     deafened: bool,
     session: &mut Session,
@@ -25,7 +26,7 @@ fn start_voice(
     notify: media::Notify,
 ) -> Option<Arc<media::Shared>> {
     drop(engine.take());
-    let media = match media::Engine::start(host, ssrc, muted, deafened, notify) {
+    let media = match media::Engine::start(host, id.clone(), muted, deafened, notify) {
         Ok(e) => {
             let shared = e.shared();
             let _ = engine.replace(e);
@@ -47,7 +48,7 @@ fn commands(
     commands: async_channel::Receiver<Command>,
     events: async_channel::Sender<Event>,
     host: String,
-    ssrc: u32,
+    id: media::Identity,
     self_tx: async_channel::Sender<Command>,
 ) {
     // The voice engine lives exactly as long as the JOIN it belongs to.
@@ -86,7 +87,7 @@ fn commands(
                         // a successful one replaces it.
                         let media = start_voice(
                             &host,
-                            ssrc,
+                            &id,
                             muted,
                             deafened,
                             &mut session,
@@ -201,7 +202,7 @@ fn commands(
                 Ok(()) => {
                     let media = start_voice(
                         &host,
-                        ssrc,
+                        &id,
                         muted,
                         deafened,
                         &mut session,
@@ -222,7 +223,7 @@ fn commands(
                 // The server already joined both sessions on accept.
                 let media = start_voice(
                     &host,
-                    ssrc,
+                    &id,
                     muted,
                     deafened,
                     &mut session,
@@ -521,19 +522,16 @@ pub fn spawn(host: String, req: Request, tx: async_channel::Sender<Event>) -> Co
                 password,
             } => auth::register(&host, username, email, password),
         };
-        let (conn, ssrc) = match conn {
+        let (mut conn, id) = match conn {
             Ok(c) => c,
-            Err(e) => return fail(&tx, &req, e),
+            Err(e) => return fail(&tx, req, e),
         };
 
         let _ = tx.send_blocking(Event::AuthOk);
         conn.set_read_timeout(None);
-        let read_stream = match conn.try_clone() {
-            Ok(s) => s,
-            Err(_) => {
-                let _ = tx.send_blocking(Event::Disconnected);
-                return;
-            }
+        let Some(read_stream) = conn.take_reader() else {
+            let _ = tx.send_blocking(Event::Disconnected);
+            return;
         };
         let self_tx = cmd_tx_thread;
         let (frames_tx, frames_rx) = async_channel::unbounded();
@@ -547,16 +545,23 @@ pub fn spawn(host: String, req: Request, tx: async_channel::Sender<Event>) -> Co
             cmd_rx,
             tx,
             host,
-            ssrc,
+            id,
             self_tx,
         );
     });
     Control { tx: cmd_tx }
 }
 
-fn fail(tx: &async_channel::Sender<Event>, req: &Request, e: String) {
-    let _ = tx.send_blocking(match req {
-        Request::Login { .. } => Event::AuthFailed(e),
-        Request::Register { .. } => Event::RegisterFailed(e),
+fn fail(tx: &async_channel::Sender<Event>, req: Request, e: ConnectError) {
+    let _ = tx.send_blocking(match e {
+        ConnectError::Untrusted(server) => Event::Untrusted {
+            server,
+            request: req,
+        },
+        ConnectError::Unsent(e) => Event::ConnectFailed(e),
+        ConnectError::Other(e) => match req {
+            Request::Login { .. } => Event::AuthFailed(e),
+            Request::Register { .. } => Event::RegisterFailed(e),
+        },
     });
 }

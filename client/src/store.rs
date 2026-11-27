@@ -33,6 +33,23 @@ pub fn save(host: &str, identifier: &str, password: &str) {
     }
 }
 
+/// The server's proof that this device logged in to the account before. It
+/// outlives sign-out, so it has its own entry.
+fn device_entry(host: &str, identifier: &str) -> Option<keyring::Entry> {
+    let account = format!("{} {}", host.trim(), identifier.trim()).to_lowercase();
+    keyring::Entry::new("feather-chat-device", &account).ok()
+}
+
+pub fn device_token(host: &str, identifier: &str) -> Option<String> {
+    device_entry(host, identifier)?.get_password().ok()
+}
+
+pub fn save_device_token(host: &str, identifier: &str, token: &str) {
+    if let Some(e) = device_entry(host, identifier) {
+        let _ = e.set_password(token);
+    }
+}
+
 pub fn clear() {
     if let Some(e) = entry() {
         let _ = e.delete_credential();

@@ -17,7 +17,11 @@ const (
 	KindPing     uint8 = 1
 	KindVideo    uint8 = 2 // screen-share H.264 fragment, forwarded to watchers only
 	KindSysAudio uint8 = 3 // screen-share system audio (Opus), forwarded to watchers only
+	KindPath     uint8 = 4 // address challenge and its echo, never forwarded
 )
+
+// PathLen is the payload of a PATH datagram: the random challenge.
+const PathLen = 8
 
 // Datagram size caps: audio and PING stay at 1024, video fragments may use 1200.
 const (

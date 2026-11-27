@@ -2,6 +2,7 @@ package control
 
 import (
 	"log"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -23,6 +24,10 @@ type dmCall struct {
 	caller int
 	callee int
 	active bool
+	// from is the session that rang; only it can be joined on accept, and only
+	// if it has not left since mark (see room.Manager.Ring).
+	from *room.Session
+	mark uint64
 	// startedAt is when it was answered; zero while ringing.
 	startedAt time.Time
 }
@@ -45,13 +50,13 @@ func dmRoom(a, b int) string {
 }
 
 // begin reserves the pair for a ringing call. One call per pair at a time.
-func (m *callManager) begin(roomName string, caller, callee int) (*dmCall, bool) {
+func (m *callManager) begin(roomName string, caller, callee int, from *room.Session, mark uint64) (*dmCall, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.calls[roomName]; exists {
 		return nil, false
 	}
-	call := &dmCall{room: roomName, caller: caller, callee: callee}
+	call := &dmCall{room: roomName, caller: caller, callee: callee, from: from, mark: mark}
 	m.calls[roomName] = call
 	return call, true
 }
@@ -70,37 +75,44 @@ func (m *callManager) accept(roomName string, user int) (*dmCall, bool) {
 	return call, true
 }
 
-// state reads a call's phase under the lock that accept writes it with.
-func (m *callManager) state(call *dmCall) (active bool, startedAt time.Time) {
+// take removes the pair's active call, reading and removing under one lock: of
+// two simultaneous leaves only one gets it. A ringing call stays: nobody is in
+// its room yet, so a late leave of an earlier call must not end it.
+func (m *callManager) take(roomName string) (call *dmCall, startedAt time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return call.active, call.startedAt
+	call = m.calls[roomName]
+	if call == nil || !call.active {
+		return nil, time.Time{}
+	}
+	delete(m.calls, roomName)
+	return call, call.startedAt
 }
 
-// reject drops a ringing call. Either participant may decline it: the callee
-// refuses the ring, and the caller uses the same path when their client is
-// already busy locally (the server has no room state for a ring yet).
-func (m *callManager) reject(roomName string, user int) bool {
+// reject drops a ringing call and returns it. Either participant may decline
+// it: the callee refuses the ring, and the caller uses the same path when their
+// client is already busy locally (the server has no room state for a ring yet).
+func (m *callManager) reject(roomName string, user int) (*dmCall, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	call := m.calls[roomName]
 	if call == nil || call.active || (call.callee != user && call.caller != user) {
-		return false
+		return nil, false
 	}
 	delete(m.calls, roomName)
-	return true
+	return call, true
 }
 
-// cancel withdraws a ringing call. Only the caller may cancel it.
-func (m *callManager) cancel(roomName string, user int) bool {
+// cancel withdraws a ringing call and returns it. Only the caller may cancel it.
+func (m *callManager) cancel(roomName string, user int) (*dmCall, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	call := m.calls[roomName]
 	if call == nil || call.active || call.caller != user {
-		return false
+		return nil, false
 	}
 	delete(m.calls, roomName)
-	return true
+	return call, true
 }
 
 // call returns the call of a pair in either phase.
@@ -157,10 +169,10 @@ func (s *Server) dmNotify(user int, except *room.Session, msg protocol.Control) 
 
 // notifyDmCallState tells the other side of a DM call how this session is now:
 // mute/deafen and, on a share change, the SSRC of the sharing screen.
-func (s *Server) notifyDmCallState(c *client, me protocol.Member) {
+func (s *Server) notifyDmCallState(c *client, roomName string, me protocol.Member) {
 	muted, deafened := me.Muted, me.Deafened
 	notify(s.rooms.Others(c.sess), protocol.Control{
-		Type: "DM_CALL_STATE", Room: c.sess.Room, UserID: c.sess.UserID, SSRC: c.sess.SSRC,
+		Type: "DM_CALL_STATE", Room: roomName, UserID: c.sess.UserID, SSRC: c.sess.SSRC,
 		Muted: &muted, Deafened: &deafened, Sharing: me.Sharing,
 	})
 }
@@ -221,13 +233,13 @@ func (s *Server) handleDmCall(c *client, msg protocol.Control) {
 		c.sendError("hello required")
 		return
 	}
-	if c.sess.Room != "" {
+	if s.rooms.RoomOf(c.sess) != "" {
 		c.sendError("busy")
 		return
 	}
 	// A peer already in a voice room (server channel or DM call) cannot ring.
 	for _, p := range s.rooms.SessionsOf(map[int]bool{peer: true}) {
-		if p.Room != "" {
+		if s.rooms.RoomOf(p) != "" {
 			c.sendError("busy")
 			return
 		}
@@ -257,7 +269,8 @@ func (s *Server) handleDmCall(c *client, msg protocol.Control) {
 	}
 
 	roomName := dmRoom(c.sess.UserID, peer)
-	call, ok := s.calls.begin(roomName, c.sess.UserID, peer)
+	mark := s.rooms.Ring(c.sess)
+	call, ok := s.calls.begin(roomName, c.sess.UserID, peer, c.sess, mark)
 	if !ok {
 		c.sendError("busy")
 		return
@@ -269,8 +282,9 @@ func (s *Server) handleDmCall(c *client, msg protocol.Control) {
 	c.send(protocol.Control{Type: "ACK", Room: roomName, UserID: peer})
 }
 
-// handleDmCallAccept joins both sessions to the pair's room. The caller's
-// session is found by user id: a second device may have sent the invitation.
+// handleDmCallAccept joins both sessions to the pair's room: the callee's and
+// the one that rang. A caller that has since left, joined a channel or
+// disconnected is not pulled in; the call ends as cancelled.
 func (s *Server) handleDmCallAccept(c *client, msg protocol.Control) {
 	if !c.requireAuth() {
 		return
@@ -280,24 +294,25 @@ func (s *Server) handleDmCallAccept(c *client, msg protocol.Control) {
 		c.sendError(err.Error())
 		return
 	}
+	if c.sess.SSRC == 0 {
+		c.sendError("hello required")
+		return
+	}
 	roomName := dmRoom(c.sess.UserID, peer)
 	call, ok := s.calls.accept(roomName, c.sess.UserID)
 	if !ok {
 		c.sendError("no incoming call")
 		return
 	}
-	var caller *room.Session
-	for _, p := range s.rooms.SessionsOf(map[int]bool{call.caller: true}) {
-		caller = p
-		break
-	}
-	if caller == nil {
-		s.calls.drop(roomName, call)
+	s.leaveRoom(c) // as JOIN does: the callee's old room hears MEMBER_LEFT
+	caller := call.from
+	if !s.rooms.JoinCall(caller, c.sess, roomName, call.mark) {
+		s.calls.drop(roomName, call) // active, so no one else ends it
+		s.dmNotifyBoth(call, c.sess, "cancelled")
+		s.recordDMCall(call, "cancelled", time.Time{})
 		c.sendError("caller unavailable")
 		return
 	}
-	s.rooms.Join(caller, roomName)
-	s.rooms.Join(c.sess, roomName)
 	caller.Touch() // a long ring must not make the caller look stale
 	c.sess.Touch()
 	s.dmNotify(call.caller, nil, protocol.Control{
@@ -320,8 +335,8 @@ func (s *Server) handleDmCallReject(c *client, msg protocol.Control) {
 		return
 	}
 	roomName := dmRoom(c.sess.UserID, peer)
-	call := s.calls.call(roomName)
-	if !s.calls.reject(roomName, c.sess.UserID) {
+	call, ok := s.calls.reject(roomName, c.sess.UserID)
+	if !ok {
 		c.sendError("no incoming call")
 		return
 	}
@@ -341,8 +356,8 @@ func (s *Server) handleDmCallCancel(c *client, msg protocol.Control) {
 		return
 	}
 	roomName := dmRoom(c.sess.UserID, peer)
-	call := s.calls.call(roomName)
-	if !s.calls.cancel(roomName, c.sess.UserID) {
+	call, ok := s.calls.cancel(roomName, c.sess.UserID)
+	if !ok {
 		c.sendError("no outgoing call")
 		return
 	}
@@ -364,25 +379,25 @@ func (s *Server) dmCallTimeout(roomName string, call *dmCall) {
 // onDmCallLeave ends an active call when a session drops its media room
 // (LEAVE, a switch to a server channel, or a dead TCP link).
 func (s *Server) onDmCallLeave(c *client, roomName string) {
-	call := s.calls.call(roomName)
+	call, startedAt := s.calls.take(roomName)
 	if call == nil {
 		return
 	}
-	active, startedAt := s.calls.state(call)
-	s.calls.drop(roomName, call)
 	s.dmNotifyBoth(call, c.sess, "left")
-	if active {
-		s.recordDMCall(call, "ended", startedAt)
-	} else {
-		s.recordDMCall(call, "cancelled", time.Time{})
-	}
+	s.recordDMCall(call, "ended", startedAt)
 }
 
-// dmCancelPendingFor clears rings on disconnect. Active calls are already
-// handled by leaveRoom, which runs first.
-func (s *Server) dmCancelPendingFor(userID int) {
+// dmCancelPendingFor clears the rings a disconnecting session ends: those it
+// made, and those to its user when no other session of theirs can answer.
+// Active calls are already handled by leaveRoom, which runs first.
+func (s *Server) dmCancelPendingFor(gone *room.Session) {
+	userID := gone.UserID
+	reachable := slices.ContainsFunc(s.rooms.SessionsOf(map[int]bool{userID: true}),
+		func(p *room.Session) bool { return p != gone })
 	for _, call := range s.calls.all() {
-		if call.active || (call.caller != userID && call.callee != userID) {
+		// active is not read here: accept writes it, and expire checks it
+		// under the lock.
+		if call.from != gone && (call.callee != userID || reachable) {
 			continue
 		}
 		if !s.calls.expire(call.room, call) {

@@ -24,12 +24,18 @@ native apps and Mumble made the same split. Feather too splits into a TCP
 
 ```
 Client                                    Server
-  |--- TCP HELLO (version, name, ssrc) --->|
-  |<-- TCP HELLO_ACK ---------------------|
+  |=== TLS 1.3 handshake (pinned cert) ====|   all TCP below runs inside it
+  |--- TCP LOGIN -------------------------->|
+  |<-- TCP ACK ---------------------------|
+  |--- TCP HELLO (name, ssrc) ------------->|
+  |<-- TCP ACK (ssrc, media keys) --------|
   |--- TCP JOIN room ---------------------->|
   |<-- TCP ACK ---------------------------|
   |--- UDP PING(...) ---------------------->|   connectivity check, NAT open
-  |<-- UDP PING-echo ----------------------|
+  |<-- UDP PATH challenge ------------------|   new source address only
+  |--- UDP PATH echo ---------------------->|   server adopts the address
+  |--- UDP PING(...) ---------------------->|
+  |<-- UDP PING-echo -----------------------|
   |=== stream AUDIO over UDP ============>|   server broadcasts to room,
   |<== AUDIO from peers ====================|  sender excluded
   |--- TCP SCREEN_START / SCREEN_WATCH --->|   share control (§7.2)
@@ -37,20 +43,21 @@ Client                                    Server
   |--- TCP LEAVE (on exit) --------------->|   roster updated on TCP
 ```
 
-The server behaves as a mini-SFU: it never decodes Opus, it forwards
-datagrams verbatim via SSRC→room lookup. All session intelligence (jitter,
+The server behaves as a mini-SFU: it never decodes Opus. It opens each
+datagram, finds the room by SSRC, and seals the unchanged payload again for each
+recipient. All session intelligence (jitter,
 PLC, queueing) stays at endpoints — matching
 [server-design.md](server-design.md).
 
 ## 3. Important but unobvious features
 
 - **SSRC on every packet** keeps server forwarding SSRC-agnostic;
-  collisions are resolved at JOIN by the server.
+  collisions are resolved at HELLO by the server.
 - **Terminator bit (T)** marks end-of-talkspurt; it is the simplified
   equivalent of RTP's marker bit and Mumble's terminator flag in one bit.
 - **No DTX**: only seq exists (no timestamp), so gaps must always mean
   loss.
-- **PING echo** with a `uint64` payload echoed verbatim — connectivity
+- **PING echo** with a `uint64` payload echoed unchanged — connectivity
   check, NAT-map opener and RTT probe in one packet type.
 - **Version interop**: unknown kind values are dropped, unknown TCP message
   types tolerated — the wire format evolves without breaking mixed
@@ -61,9 +68,12 @@ PLC, queueing) stays at endpoints — matching
   (sections 4b and 7.2); key requests are limited to one per 500 ms per viewer
   and presenter.
 
-## 4. Encryption roadmap
+## 4. Encryption
 
-Until the last roadmap item lands: plaintext. The handshake target is per
-[security-model.md](security-model.md); the format is already shaped so the
-header serves as associated data and the payload becomes `nonce‖ciphertext`
-without structural change.
+Both channels are encrypted between client and server, with no plaintext
+fallback: TLS 1.3 with a pinned server certificate on TCP, and per-session
+AES-256-GCM keys on UDP, handed out in the `HELLO` ACK. The rules are in
+[transport-security.md](transport-security.md). v2 does not interoperate with v1.
+
+This is **not end-to-end encryption**: the server can read everything. E2EE is
+still pending; see [security-model.md](security-model.md).

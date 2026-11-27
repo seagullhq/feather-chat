@@ -1,6 +1,7 @@
 package room
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"net"
 	"sync"
@@ -12,15 +13,18 @@ import (
 // Session is one connected client (TCP control + UDP media).
 type Session struct {
 	SSRC uint32
-	Room string
+	// room is guarded by Manager.mu: accepting a DM call joins the caller from
+	// the callee's goroutine. Read it with Manager.RoomOf.
+	room string
+	// leaves counts every Leave and change of user, guarded by Manager.mu.
+	leaves uint64
 	// ChannelID is the DB channel behind Room; only the control goroutine touches it.
 	ChannelID int
 	// ServerID owns ChannelID; kept after leaving so MEMBER_LEFT can still reach the server.
 	ServerID int
-	UDPAddr  *net.UDPAddr
 
-	// UserID and Username are bound at LOGIN; UserID doubles as the
-	// logged-in marker (DB ids start at 1).
+	// UserID and Username are bound at LOGIN (Manager.Bind); UserID doubles as
+	// the logged-in marker (DB ids start at 1).
 	UserID   int
 	Username string
 
@@ -28,10 +32,12 @@ type Session struct {
 	wmu        sync.Mutex // guards tcp writes
 	name       string     // display name, guarded by Manager.mu
 	lastSeen   time.Time
-	pinged     bool // First ping received?
-	muted      bool // guarded by Manager.mu
-	deafened   bool // guarded by Manager.mu
-	shareState      // screen-share state, guarded by Manager.mu
+	media      *mediaKeys   // set once by HELLO, guarded by Manager.mu
+	udpAddr    *net.UDPAddr // validated by a PATH echo, guarded by Manager.mu
+	pinged     bool         // First ping received? Owned by the UDP goroutine.
+	muted      bool         // guarded by Manager.mu
+	deafened   bool         // guarded by Manager.mu
+	shareState              // screen-share state, guarded by Manager.mu
 	lastMu     sync.Mutex
 }
 
@@ -57,7 +63,17 @@ func (s *Session) Send(control protocol.Control) error {
 	// Pushes are written from other sessions' goroutines: a peer that stopped
 	// reading (half-open link, frozen client) must not stall them forever.
 	_ = s.tcp.SetWriteDeadline(time.Now().Add(writeTimeout))
-	return protocol.WriteFrame(s.tcp, b)
+	if err := protocol.WriteFrame(s.tcp, b); err != nil {
+		// A TLS stream is unusable after a failed write. Close the socket under
+		// it: tls.Conn.Close would try to write again and wait for the peer.
+		conn := s.tcp
+		if t, ok := conn.(*tls.Conn); ok {
+			conn = t.NetConn()
+		}
+		_ = conn.Close() // the read loop notices and cleans up
+		return err
+	}
+	return nil
 }
 
 // Touch records that the session was just seen, so it does not look stale.

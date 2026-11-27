@@ -2,23 +2,23 @@
 
 use opus_rs::{Application, OpusEncoder};
 use std::collections::HashMap;
-use std::net::UdpSocket;
 use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::{Duration, Instant};
 
+use super::link::Link;
 use super::peer::Peer;
 use super::prefs::PREFS;
 use super::shared::Shared;
 use super::wire::{
-    KIND_AUDIO, KIND_PING, KIND_SYSAUDIO, KIND_VIDEO, TERMINATOR, audio_packet, header, rms,
-    smooth_level,
+    KIND_AUDIO, KIND_PATH, KIND_PING, KIND_SYSAUDIO, KIND_VIDEO, TERMINATOR, audio_packet, header,
+    path_reply, rms, smooth_level,
 };
 use super::{FRAME, OUT_RING, PEER_TIMEOUT, RATE};
 
 pub(super) fn worker(
     shared: Arc<Shared>,
-    sock: UdpSocket,
+    link: Arc<Link>,
     ssrc: u32,
     mut cap: rtrb::Consumer<i16>,
     mut out: rtrb::Producer<f32>,
@@ -47,48 +47,60 @@ pub(super) fn worker(
         if now >= next_ping {
             let mut p = header(KIND_PING, ssrc);
             p.extend((now - t0).as_micros().to_be_bytes()[8..].iter());
-            let _ = sock.send(&p);
+            let _ = link.send(&p);
             next_ping = now + Duration::from_millis(if echoed { 1000 } else { 200 });
         }
 
-        // Receive everything queued.
-        while let Ok(n) = sock.recv(&mut rx) {
-            if n < 5 || rx[0] >> 6 != 0 {
+        // Receive everything queued. Forged and replayed datagrams stop at `open`.
+        while let Ok(n) = link.sock.recv(&mut rx) {
+            let Some((flags, from, payload)) = link.keys.open(&mut rx[..n]) else {
                 continue;
-            }
-            let from = u32::from_be_bytes([rx[1], rx[2], rx[3], rx[4]]);
-            match rx[0] & 0x1f {
+            };
+            match flags & 0x1f {
                 KIND_PING => {
                     echoed = true;
-                    // The server echoes our datagram: bytes 5..13 are the send time.
-                    if n >= 13 {
-                        let sent = u64::from_be_bytes(rx[5..13].try_into().unwrap());
+                    // The server echoes our payload: the send time.
+                    if let Some(sent) = payload.first_chunk::<8>() {
+                        let sent = u64::from_be_bytes(*sent);
                         let rtt = (t0.elapsed().as_micros() as u64).saturating_sub(sent);
                         shared
                             .rtt_us
                             .store(rtt.clamp(1, u32::MAX as u64) as u32, Relaxed);
                     }
                 }
-                KIND_AUDIO if n > 9 && from != ssrc => {
-                    let seq = u32::from_be_bytes([rx[5], rx[6], rx[7], rx[8]]);
-                    peers.entry(from).or_insert_with(Peer::new).insert(
-                        seq,
-                        rx[9..n].to_vec(),
-                        rx[0] & TERMINATOR != 0,
-                    );
+                // The server challenges every new source address of ours.
+                KIND_PATH if from == ssrc => {
+                    if let Some(p) = path_reply(ssrc, payload) {
+                        let _ = link.send(&p);
+                        // The PING that drew the challenge got no echo: retry now.
+                        if !echoed {
+                            next_ping = now;
+                        }
+                    }
                 }
-                // Same payload as AUDIO, but only watchers of a share get it.
-                KIND_SYSAUDIO if n > 9 && from != ssrc => {
-                    let seq = u32::from_be_bytes([rx[5], rx[6], rx[7], rx[8]]);
-                    sys_peers.entry(from).or_insert_with(Peer::new).insert(
-                        seq,
-                        rx[9..n].to_vec(),
-                        rx[0] & TERMINATOR != 0,
+                // SYSAUDIO has the same payload as AUDIO, but only watchers of
+                // a share get it.
+                kind @ (KIND_AUDIO | KIND_SYSAUDIO) if from != ssrc => {
+                    let Some((seq, frame)) = payload.split_first_chunk::<4>() else {
+                        continue;
+                    };
+                    if frame.is_empty() {
+                        continue;
+                    }
+                    let map = if kind == KIND_AUDIO {
+                        &mut peers
+                    } else {
+                        &mut sys_peers
+                    };
+                    map.entry(from).or_insert_with(Peer::new).insert(
+                        u32::from_be_bytes(*seq),
+                        frame.to_vec(),
+                        flags & TERMINATOR != 0,
                     );
                 }
                 // Screen-share video goes to its own thread: decoding takes tens of ms.
-                KIND_VIDEO if n > 5 + crate::capture::packet::HEADER && from != ssrc => {
-                    let _ = video.try_send((from, rx[5..n].to_vec()));
+                KIND_VIDEO if payload.len() > crate::capture::packet::HEADER && from != ssrc => {
+                    let _ = video.try_send((from, payload.to_vec()));
                 }
                 _ => {}
             }
@@ -112,7 +124,8 @@ pub(super) fn worker(
             shared.mic.store(mic_level.to_bits(), Relaxed);
             // Muting ends the talkspurt with one terminator frame, then stops.
             let term = silent && was_sending;
-            if silent && !term {
+            // No audio before the first PING echo: the server would drop it.
+            if !echoed || silent && !term {
                 continue;
             }
             if term {
@@ -121,7 +134,7 @@ pub(super) fn worker(
             was_sending = !silent;
             if let Ok(len) = enc.encode_i16(&pcm, FRAME, &mut coded) {
                 let p = audio_packet(ssrc, seq, term, &coded[..len]);
-                let _ = sock.send(&p);
+                let _ = link.send(&p);
                 seq = seq.wrapping_add(1);
             }
         }

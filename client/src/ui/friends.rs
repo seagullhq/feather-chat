@@ -600,8 +600,9 @@ impl FriendsView {
             return;
         }
         // The peer left the media room, but our session is still in it: drop
-        // the local engine and tell the server, or the mic stays open.
-        if call.phase == DmPhase::Active {
+        // the local engine and tell the server, or the mic stays open. While
+        // connecting, the join is already queued, so the leave follows it.
+        if matches!(call.phase, DmPhase::Active | DmPhase::Connecting) {
             if let Some(control) = &self.control {
                 control.leave();
             }

@@ -2,7 +2,7 @@
 //! complete frame to the session that is waiting for a reply.
 
 use serde_json::Value;
-use std::net::TcpStream;
+use std::io::Read;
 
 use super::super::server::RosterMember;
 use super::super::transport;
@@ -100,7 +100,7 @@ fn push(frame: &Value) -> Option<Event> {
 }
 
 pub(super) fn reader(
-    mut stream: TcpStream,
+    mut stream: impl Read,
     frames: async_channel::Sender<Result<Value, String>>,
     events: async_channel::Sender<Event>,
 ) {

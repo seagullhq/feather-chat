@@ -2,16 +2,26 @@
 
 use std::sync::Arc;
 
+use crate::api::auth::Request;
 use crate::api::friends::Friend;
 use crate::api::server::{
     ChannelSummary, ChannelTypeSummary, RosterMember, ServerMember, ServerSummary,
 };
+use crate::api::trust::Untrusted;
 use crate::media;
 
 pub enum Event {
     AuthOk,
     AuthFailed(String),
     RegisterFailed(String),
+    /// The server was never reached or never trusted; nothing was sent.
+    ConnectFailed(String),
+    /// The server certificate is not trusted: nothing was sent. `request` can
+    /// be retried once the user accepts it.
+    Untrusted {
+        server: Untrusted,
+        request: Request,
+    },
     ServersListed(Vec<ServerSummary>),
     ServersListFailed(String),
     ChannelTypesListed(Vec<ChannelTypeSummary>),

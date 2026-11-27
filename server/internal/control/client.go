@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,6 +20,12 @@ import (
 type client struct {
 	srv  *Server
 	sess *room.Session
+	// ip is the rate limiting key of the remote address.
+	ip string
+	// slot is the connection's place in the connection limiter.
+	slot *connSlot
+	// loginBy is when a connection that has not logged in is dropped.
+	loginBy time.Time
 	// keyReq throttles SCREEN_KEYREQ per presenter. Owned by this connection's
 	// read loop, so it needs no lock.
 	keyReq keyReqLimiter
@@ -26,19 +33,27 @@ type client struct {
 
 // handleConn runs the per-client TCP control session (HELLO/JOIN/LEAVE)
 // until the link dies or the listener stops.
-func (s *Server) handleConn(conn net.Conn) {
+func (s *Server) handleConn(conn *tls.Conn, slot *connSlot) {
 	defer conn.Close()
 	remote := conn.RemoteAddr().String()
 	log.Printf("[CONTROL] connected %s", remote)
 	defer log.Printf("[CONTROL] disconnected %s", remote)
 
-	c := &client{srv: s, sess: room.NewSession(conn)}
+	ctx, cancel := context.WithTimeout(context.Background(), handshakeTimeout)
+	defer cancel()
+	if err := conn.HandshakeContext(ctx); err != nil {
+		log.Printf("[CONTROL] TLS handshake with %s failed: %v", remote, err)
+		return
+	}
+
+	c := &client{srv: s, sess: room.NewSession(conn), ip: slot.ip, slot: slot,
+		loginBy: time.Now().Add(preAuthTimeout)}
 	// disconnect drops the media entry and tells the room-mates. It also
 	// runs when the TCP link dies, so nobody stays listed as a ghost.
 	defer s.disconnect(c)
 
 	for {
-		payload, err := protocol.ReadFrame(conn)
+		payload, err := c.readFrame(conn)
 		if err != nil {
 			// EOF and abrupt client disconnects are normal; only log real errors.
 			if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) && !errors.Is(err, syscall.ECONNRESET) {
@@ -51,16 +66,32 @@ func (s *Server) handleConn(conn net.Conn) {
 			log.Printf("[CONTROL] invalid frame from %s: %v", remote, err)
 			continue // tolerate unknown types (§7 interop rule)
 		}
-		log.Printf("[CONTROL] %s type=%s user=%d", remote, msg.Type, c.sess.UserID)
+		log.Printf("[CONTROL] %s type=%.64q user=%d", remote, msg.Type, c.sess.UserID)
 		s.dispatch(c, msg)
 	}
+}
+
+// readFrame reads the next control frame. Until LOGIN succeeds, frames are
+// small and the connection has a fixed time to log in: frames do not extend it.
+func (c *client) readFrame(conn net.Conn) ([]byte, error) {
+	deadline, limit := time.Time{}, 0
+	if !c.sess.Authed() {
+		deadline, limit = c.loginBy, preAuthMaxFrame
+	}
+	if err := conn.SetReadDeadline(deadline); err != nil {
+		return nil, err
+	}
+	if limit > 0 {
+		return protocol.ReadFrameLimit(conn, limit)
+	}
+	return protocol.ReadFrame(conn)
 }
 
 // disconnect leaves any room and frees the SSRC; the TCP link is dead by
 // then, and conn.Close runs right after.
 func (s *Server) disconnect(c *client) {
 	s.leaveRoom(c)
-	s.dmCancelPendingFor(c.sess.UserID)
+	s.dmCancelPendingFor(c.sess)
 	s.rooms.Release(c.sess)
 }
 

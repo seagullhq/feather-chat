@@ -31,7 +31,7 @@ const MaxSharers = 4
 func (m *Manager) StartShare(s *Session) (protocol.Member, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	r := m.rooms[s.Room]
+	r := m.rooms[s.room]
 	if r == nil {
 		return protocol.Member{}, false
 	}
@@ -61,7 +61,7 @@ func (m *Manager) StopShare(s *Session) protocol.Member {
 func (m *Manager) Watch(viewer *Session, ssrc uint32) *Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	t := m.rooms[viewer.Room][ssrc]
+	t := m.rooms[viewer.room][ssrc]
 	if t == nil || t == viewer || !t.sharing {
 		return nil
 	}
@@ -76,7 +76,7 @@ func (m *Manager) Watch(viewer *Session, ssrc uint32) *Session {
 func (m *Manager) Unwatch(viewer *Session, ssrc uint32) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if t := m.rooms[viewer.Room][ssrc]; t != nil {
+	if t := m.rooms[viewer.room][ssrc]; t != nil {
 		delete(t.watchers, viewer)
 	}
 }
@@ -91,7 +91,7 @@ func (m *Manager) Watchers(s *Session) []*Session {
 	now := time.Now()
 	var out []*Session
 	for p := range s.watchers {
-		if p.UDPAddr != nil && !p.stale(now) {
+		if p.udpAddr != nil && !p.stale(now) {
 			out = append(out, p)
 		}
 	}

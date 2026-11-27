@@ -9,8 +9,10 @@ mod friends;
 mod server;
 mod session;
 mod transport;
+mod trust;
 
 pub use auth::Request;
 pub use friends::{CallLog, DM_PAGE, DirectMessage, Friend, Relation};
 pub use server::{ChannelSummary, ChannelTypeSummary, RosterMember, ServerMember, ServerSummary};
 pub use session::{Control, Event, spawn};
+pub use trust::{Untrusted, trust};

@@ -4,6 +4,7 @@
 package control
 
 import (
+	"crypto/tls"
 	"errors"
 	"log"
 	"net"
@@ -25,15 +26,34 @@ type Server struct {
 	servers  *servers.ServerStore
 	friends  *friends.ServerStore
 	messages *messages.ServerStore
+
+	conns connLimiter
+	// authByIP throttles LOGIN and REGISTER; failedLogins throttles wrong
+	// passwords per account and source, or per known device.
+	authByIP     *keyedLimiter
+	failedLogins *keyedLimiter
+	// accountLogins caps failures per account across all sources.
+	accountLogins *keyedLimiter
+	// deviceKey signs device tokens.
+	deviceKey []byte
 }
 
 // New wires a control server around the stores and the room state.
 func New(users *accounts.Store, serverStore *servers.ServerStore, friendStore *friends.ServerStore, msgStore *messages.ServerStore, rooms *room.Manager) *Server {
-	return &Server{rooms: rooms, calls: newCallManager(), users: users, servers: serverStore, friends: friendStore, messages: msgStore}
+	return &Server{rooms: rooms, calls: newCallManager(), users: users, servers: serverStore, friends: friendStore, messages: msgStore,
+		authByIP:      newKeyedLimiter(authBurst, authEvery),
+		failedLogins:  newKeyedLimiter(failedBurst, failedEvery),
+		accountLogins: newKeyedLimiter(accountBurst, accountEvery),
+		deviceKey:     deviceKey(nil),
+	}
 }
 
-// Serve accepts and dispatches control connections until the listener stops.
-func (s *Server) Serve(l net.Listener) {
+// Serve accepts TLS control connections and dispatches them until the
+// listener stops. Connections over the limits are closed before the handshake;
+// at the unauthenticated or total limit an older unauthenticated one is closed
+// instead.
+func (s *Server) Serve(l net.Listener, tlsConfig *tls.Config) {
+	s.deviceKey = deviceKey(tlsConfig) // before any connection reads it
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -42,7 +62,17 @@ func (s *Server) Serve(l net.Listener) {
 			}
 			return
 		}
-		go s.handleConn(conn)
+		ip := ipKey(conn.RemoteAddr())
+		slot, ok := s.conns.acquire(ip, conn)
+		if !ok {
+			log.Printf("[CONTROL] connection limit reached, refusing %s", conn.RemoteAddr())
+			_ = conn.Close()
+			continue
+		}
+		go func() {
+			defer s.conns.release(slot)
+			s.handleConn(tls.Server(conn, tlsConfig), slot)
+		}()
 	}
 }
 
@@ -108,7 +138,7 @@ var handlers = map[string]func(*Server, *client, protocol.Control){
 func (s *Server) dispatch(c *client, msg protocol.Control) {
 	h, ok := handlers[msg.Type]
 	if !ok {
-		log.Printf("[CONTROL] ignoring unknown type %q from user %d", msg.Type, c.sess.UserID)
+		log.Printf("[CONTROL] ignoring unknown type %.64q from user %d", msg.Type, c.sess.UserID)
 		return
 	}
 	h(s, c, msg)

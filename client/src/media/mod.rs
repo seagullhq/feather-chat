@@ -7,8 +7,10 @@
 
 mod audio;
 mod check;
+mod crypto;
 mod desktop;
 mod engine;
+mod link;
 mod peer;
 mod prefs;
 mod resample;
@@ -22,7 +24,9 @@ mod worker;
 mod tests;
 
 pub use check::{MicCheck, Step};
+pub use crypto::MediaKeys;
 pub use engine::Engine;
+pub use link::Identity;
 pub use prefs::{PREFS, current_device, dev_name, host, system_default_device_name};
 pub use share::LOCAL_SCREEN;
 pub use shared::Shared;

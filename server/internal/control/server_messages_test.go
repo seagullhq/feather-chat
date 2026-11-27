@@ -53,7 +53,9 @@ func setupChatFixture(t *testing.T) *chatFixture {
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Covers the whole test: bcrypt under -race plus a 100k row seed takes
+	// over 30s on a loaded machine. It only guards against a hung query.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	t.Cleanup(cancel)
 	for i, name := range names {
 		if err := store.Register(ctx, name, name+"@example.test", password); err != nil {

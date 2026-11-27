@@ -5,7 +5,6 @@
 //! frame ends the talkspurt on watchers when the toggle goes off.
 
 use opus_rs::{Application, OpusEncoder};
-use std::net::UdpSocket;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::mpsc;
@@ -13,6 +12,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use super::desktop::Capture;
+use super::link::Link;
 use super::shared::Shared;
 use super::wire::{rms, smooth_level, sysaudio_packet};
 use super::{FRAME, Notice, Notify, RATE};
@@ -27,13 +27,13 @@ pub(super) struct Sender {
 }
 
 impl Sender {
-    pub(super) fn start(shared: Arc<Shared>, sock: UdpSocket, ssrc: u32, notify: Notify) -> Self {
+    pub(super) fn start(shared: Arc<Shared>, link: Arc<Link>, ssrc: u32, notify: Notify) -> Self {
         let (cap_tx, cap_rx) = rtrb::RingBuffer::<i16>::new(RATE as usize);
         let (capture, errors) = Capture::start(cap_tx);
         let stop = Arc::new(AtomicBool::new(false));
         let s = stop.clone();
         let thread = thread::spawn(move || {
-            send_loop(cap_rx, capture, errors, sock, ssrc, shared, notify, s)
+            send_loop(cap_rx, capture, errors, link, ssrc, shared, notify, s)
         });
         Self {
             stop,
@@ -55,7 +55,7 @@ fn send_loop(
     mut cap: rtrb::Consumer<i16>,
     capture: Capture,
     errors: mpsc::Receiver<String>,
-    sock: UdpSocket,
+    link: Arc<Link>,
     ssrc: u32,
     shared: Arc<Shared>,
     notify: Notify,
@@ -97,7 +97,7 @@ fn send_loop(
             shared.set_share_audio_level(level);
             if let Ok(len) = enc.encode_i16(&pcm, FRAME, &mut coded) {
                 let p = sysaudio_packet(ssrc, seq, false, &coded[..len]);
-                let _ = sock.send(&p);
+                let _ = link.send(&p);
                 seq = seq.wrapping_add(1);
                 sending = true;
             }
@@ -110,7 +110,7 @@ fn send_loop(
         pcm.fill(0);
         if let Ok(len) = enc.encode_i16(&pcm, FRAME, &mut coded) {
             let p = sysaudio_packet(ssrc, seq, true, &coded[..len]);
-            let _ = sock.send(&p);
+            let _ = link.send(&p);
         }
     }
     // The capture thread only ends on stop or after reporting an error. A
