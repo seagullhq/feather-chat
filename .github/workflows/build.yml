@@ -364,7 +364,7 @@ jobs:
         with:
           context: server
           platforms: linux/amd64,linux/arm64
-          push: ${{ inputs.release }}
+          push: ${{ inputs.release || false }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
