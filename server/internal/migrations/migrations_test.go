@@ -96,6 +96,14 @@ func TestMigrationsRoundTrip(t *testing.T) {
 		t.Fatalf("seed channel: %v", err)
 	}
 
+	requireObject(t, db, "user_keys", `SELECT to_regclass('user_keys') IS NOT NULL`)
+	if err := migrateTo(db, 14); err != nil {
+		t.Fatalf("down 000015: %v", err)
+	}
+	requireObject(t, db, "e2ee objects removed", `
+		SELECT to_regclass('user_keys') IS NULL AND to_regclass('epoch_wraps') IS NULL
+		   AND to_regproc('conversation_member_ids') IS NULL`)
+
 	// Going to version 12 runs 000013.down: the reply index disappears.
 	if err := migrateTo(db, 12); err != nil {
 		t.Fatalf("down 000013: %v", err)
@@ -184,6 +192,7 @@ func TestMigrationsRoundTrip(t *testing.T) {
 		                 AND table_name = 'conversations' AND column_name = 'server_channel_id')`)
 	requireObject(t, db, "server_messages dropped after final up", `SELECT to_regclass('server_messages') IS NULL`)
 	requireObject(t, db, "history index restored", `SELECT to_regclass('idx_conversation_messages_history') IS NOT NULL`)
+	requireObject(t, db, "user_keys restored", `SELECT to_regclass('user_keys') IS NOT NULL`)
 	requireObject(t, db, "reply index restored", `SELECT to_regclass('idx_conversation_messages_reply') IS NOT NULL`)
 }
 

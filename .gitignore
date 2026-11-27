@@ -2,6 +2,10 @@ dist/
 vcpkg_installed/
 CMakeUserPresets.json
 server/server
+
+# Generated TLS certificate and private key (-tls-dir defaults to ./tls).
+/tls/
+/server/tls/
 compile_commands.json
 .env
 !.env.example
@@ -12,3 +16,4 @@ compile_commands.json
 
 # Rust
 client/target/
+NUL

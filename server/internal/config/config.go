@@ -8,6 +8,15 @@ import (
 	"os"
 )
 
+// TLSDir is the directory of the control channel certificate:
+// FEATHER_TLS_DIR, default ./tls.
+func TLSDir() string {
+	if dir := os.Getenv("FEATHER_TLS_DIR"); dir != "" {
+		return dir
+	}
+	return "./tls"
+}
+
 // PostgresURI builds the PostgreSQL connection URI from the POSTGRES_*
 // environment variables.
 func PostgresURI() string {

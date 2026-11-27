@@ -53,13 +53,15 @@ func setupChatFixture(t *testing.T) *chatFixture {
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Covers the whole test: bcrypt under -race plus a 100k row seed takes
+	// over 30s on a loaded machine. It only guards against a hung query.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	t.Cleanup(cancel)
 	for i, name := range names {
-		if err := store.Register(ctx, name, name+"@example.test", password); err != nil {
+		if err := testRegister(ctx, store, name, name+"@example.test", password); err != nil {
 			t.Fatalf("Register %s: %v", name, err)
 		}
-		u, err := store.Authenticate(ctx, name, password)
+		u, err := store.Authenticate(ctx, name, testSecret(password))
 		if err != nil {
 			t.Fatalf("Authenticate %s: %v", name, err)
 		}
@@ -172,7 +174,7 @@ func TestIntegrationServerMessages(t *testing.T) {
 		msg  protocol.Control
 		want string
 	}{
-		{"whitespace", protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID, ChannelID: f.ch1.ID, ServerContent: " \t\n\u00a0 "}, "server message content required"},
+		{"whitespace", protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID, ChannelID: f.ch1.ID}, "encrypted message required"},
 		{"no server", protocol.Control{Type: "SEND_SERVER_MESSAGE", ChannelID: f.ch1.ID, ServerContent: "hi"}, "invalid server channel"},
 	} {
 		sendTest(t, owner, tc.msg)
@@ -197,7 +199,7 @@ func TestIntegrationServerMessages(t *testing.T) {
 	}
 
 	// First real send: ACK and push agree, and channelId is the server channel.
-	sendTest(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID, ChannelID: f.ch1.ID, ServerContent: "hello"})
+	sendTest(t, owner, seal(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID, ChannelID: f.ch1.ID, ServerContent: "hello"}))
 	ack := awaitControl(t, owner, "send ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.ServerInfo != nil })
 	push := awaitControl(t, member, "SERVER_MESSAGE", func(m protocol.Control) bool { return m.Type == "SERVER_MESSAGE" && m.ServerInfo != nil })
 	if ack.Type != "ACK" || ack.ServerInfo.ID != push.ServerInfo.ID {
@@ -222,7 +224,7 @@ func TestIntegrationServerMessages(t *testing.T) {
 	}
 
 	// Second send reuses the same conversation.
-	sendTest(t, member, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID, ChannelID: f.ch1.ID, ServerContent: "hi owner"})
+	sendTest(t, member, seal(t, member, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID, ChannelID: f.ch1.ID, ServerContent: "hi owner"}))
 	second := awaitControl(t, member, "second ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.ServerInfo != nil })
 	awaitControl(t, owner, "second push", func(m protocol.Control) bool { return m.Type == "SERVER_MESSAGE" && m.ServerInfo != nil })
 	secondID := second.ServerInfo.ID
@@ -316,16 +318,16 @@ func TestIntegrationServerMessages(t *testing.T) {
 
 	// Only the author may edit or delete. Cross-channel IDs and other users'
 	// messages produce the same generic error.
-	sendTest(t, member, protocol.Control{Type: "UPDATE_SERVER_MESSAGE", ServerMessageID: protocol.MessageID(firstID), ServerContent: "stolen"})
+	sendTest(t, member, seal(t, member, protocol.Control{Type: "UPDATE_SERVER_MESSAGE", ServerMessageID: protocol.MessageID(firstID), ServerContent: "stolen"}))
 	f.expectError(t, member, "server message not found")
 	var content string
-	if err := f.db.QueryRowContext(f.ctx, `SELECT content FROM conversation_messages WHERE id = $1`, firstID).Scan(&content); err != nil || content != "hello" {
+	if err := f.db.QueryRowContext(f.ctx, `SELECT convert_from(substring(e2ee_box FROM 1 FOR 5), 'UTF8') FROM conversation_messages WHERE id = $1`, firstID).Scan(&content); err != nil || content != "hello" {
 		t.Fatalf("message after denied edit = %q, err %v", content, err)
 	}
-	sendTest(t, owner, protocol.Control{Type: "UPDATE_SERVER_MESSAGE", ServerMessageID: protocol.MessageID(firstID), ServerContent: "edited"})
+	sendTest(t, owner, seal(t, owner, protocol.Control{Type: "UPDATE_SERVER_MESSAGE", ServerMessageID: protocol.MessageID(firstID), ServerContent: "edited"}))
 	edited := awaitControl(t, owner, "edit ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.ServerInfo != nil })
 	awaitControl(t, member, "edit push", func(m protocol.Control) bool { return m.Type == "SERVER_MESSAGE_EDITED" && m.ServerInfo != nil })
-	if edited.ServerInfo.Content != "edited" || edited.ServerInfo.EditedAt == nil {
+	if textOf(edited.ServerInfo.Content, edited.ServerInfo.E2EE) != "edited" || edited.ServerInfo.EditedAt == nil {
 		t.Fatalf("edit ACK = %+v", edited.ServerInfo)
 	}
 	sendTest(t, member, protocol.Control{Type: "DELETE_SERVER_MESSAGE", ServerMessageID: protocol.MessageID(firstID)})
@@ -373,12 +375,12 @@ func TestIntegrationServerMessages(t *testing.T) {
 		t.Fatalf("updated_at update should still work: %v", err)
 	}
 
-	// Page byte budget: 40 long messages must be split, not sent as one huge
+	// Page byte budget: 100 long messages must be split, not sent as one huge
 	// frame, and keyset pagination must return every message exactly once.
 	long := strings.Repeat("界", 4000) // 12 KB each in UTF-8
 	if _, err := f.db.ExecContext(f.ctx, `
 		INSERT INTO conversation_messages (conversation_id, author_id, content)
-		SELECT $1, $2, $3 FROM generate_series(1, 40)`, convID, f.ids[0], long); err != nil {
+		SELECT $1, $2, $3 FROM generate_series(1, 100)`, convID, f.ids[0], long); err != nil {
 		t.Fatalf("long message insert: %v", err)
 	}
 	seen := make(map[int]bool)
@@ -427,12 +429,12 @@ func TestIntegrationServerMessages(t *testing.T) {
 			t.Fatal("pagination did not terminate")
 		}
 	}
-	if len(seen) < 40 {
-		t.Fatalf("pagination returned %d messages, want at least 40 long ones", len(seen))
+	if len(seen) < 100 {
+		t.Fatalf("pagination returned %d messages, want at least 100 long ones", len(seen))
 	}
-	// Mirrors control.maxServerPageBytes (48 KiB) plus JSON field overhead.
-	if maxFrame > (48<<10)+(32<<10) {
-		t.Fatalf("largest frame is %d bytes, want <= %d", maxFrame, (48<<10)+(32<<10))
+	// Mirrors control.maxPageBytes (512 KiB) plus the other ACK fields.
+	if maxFrame > (512<<10)+1024 || maxFrame < 256<<10 {
+		t.Fatalf("largest frame is %d bytes, want 256-513 KiB", maxFrame)
 	}
 
 	// Kick removes the read-pointer row through the cleanup trigger.
@@ -480,8 +482,8 @@ func TestIntegrationServerMessageRateLimit(t *testing.T) {
 	// 1 msg/s bucket refill and hide the limit.
 	const burst = 10
 	for i := 0; i < burst; i++ {
-		sendTest(t, sender, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
-			ChannelID: f.ch1.ID, ServerContent: fmt.Sprintf("burst %d", i)})
+		sendTest(t, sender, seal(t, sender, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
+			ChannelID: f.ch1.ID, ServerContent: fmt.Sprintf("burst %d", i)}))
 	}
 	var ok, rejected int
 	for i := 0; i < burst; i++ {
@@ -506,8 +508,8 @@ func TestIntegrationServerMessageRateLimit(t *testing.T) {
 	// One refill makes one more token available: the limiter must recover
 	// without recreating the handler or the test connection.
 	time.Sleep(1100 * time.Millisecond)
-	sendTest(t, sender, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
-		ChannelID: f.ch1.ID, ServerContent: "after refill"})
+	sendTest(t, sender, seal(t, sender, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
+		ChannelID: f.ch1.ID, ServerContent: "after refill"}))
 	refilled := awaitAckOrError(t, sender)
 	if refilled.Type != "ACK" || refilled.ServerInfo == nil {
 		t.Fatalf("message after refill = %+v, want ACK", refilled)
@@ -549,12 +551,13 @@ func TestConcurrentServerFirstMessages(t *testing.T) {
 	results := make(chan result, 2)
 	start := make(chan struct{})
 	for i, conn := range []net.Conn{f.conns[0], f.conns[1]} {
-		go func(i int, conn net.Conn) {
+		msg := seal(t, conn, protocol.Control{
+			Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
+			ChannelID: f.ch1.ID, ServerContent: fmt.Sprintf("concurrent %d", i),
+		})
+		go func(conn net.Conn) {
 			<-start
-			payload, err := json.Marshal(protocol.Control{
-				Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
-				ChannelID: f.ch1.ID, ServerContent: fmt.Sprintf("concurrent %d", i),
-			})
+			payload, err := json.Marshal(msg)
 			if err == nil {
 				err = protocol.WriteFrame(conn, payload)
 			}
@@ -564,7 +567,7 @@ func TestConcurrentServerFirstMessages(t *testing.T) {
 			}
 			ack, err := readServerAck(conn)
 			results <- result{id: ack.ServerInfo.ID, err: err}
-		}(i, conn)
+		}(conn)
 	}
 	close(start)
 
@@ -593,8 +596,8 @@ func TestDeletedServerMessageAuthor(t *testing.T) {
 	f := setupChatFixture(t)
 	member := f.conns[1]
 
-	sendTest(t, member, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
-		ChannelID: f.ch1.ID, ServerContent: "from a user who will be deleted"})
+	sendTest(t, member, seal(t, member, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
+		ChannelID: f.ch1.ID, ServerContent: "from a user who will be deleted"}))
 	ack := awaitControl(t, member, "send ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.ServerInfo != nil })
 	messageID := ack.ServerInfo.ID
 	awaitControl(t, f.conns[0], "push", func(m protocol.Control) bool { return m.Type == "SERVER_MESSAGE" })
@@ -621,7 +624,7 @@ func TestDeletedServerMessageAuthor(t *testing.T) {
 	}
 	sendTest(t, f.conns[0], protocol.Control{Type: "LIST_SERVER_MESSAGES", ChannelID: f.ch1.ID})
 	history := awaitControl(t, f.conns[0], "history", func(m protocol.Control) bool { return m.Type == "ACK" && m.ServerMessages != nil })
-	if len(history.ServerMessages) != 1 || history.ServerMessages[0].AuthorID != 0 {
+	if len(history.ServerMessages) != 1 || history.ServerMessages[0].AuthorID != f.ids[1] {
 		t.Fatalf("history with deleted author = %+v", history.ServerMessages)
 	}
 }
@@ -642,8 +645,8 @@ func TestServerChannelTypeTransitions(t *testing.T) {
 
 	// voice -> thread: the conversation is born at the first message.
 	setType(f.threadType)
-	sendTest(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
-		ChannelID: f.voice.ID, ServerContent: "now a text channel"})
+	sendTest(t, owner, seal(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
+		ChannelID: f.voice.ID, ServerContent: "now a text channel"}))
 	awaitControl(t, owner, "first ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.ServerInfo != nil })
 	awaitControl(t, f.conns[1], "push", func(m protocol.Control) bool { return m.Type == "SERVER_MESSAGE" })
 	if n := f.conversationCount(t, f.voice.ID); n != 1 {
@@ -661,8 +664,8 @@ func TestServerChannelTypeTransitions(t *testing.T) {
 
 	// voice -> thread again: the same conversation is reused, no duplicate.
 	setType(f.threadType)
-	sendTest(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
-		ChannelID: f.voice.ID, ServerContent: "back to text"})
+	sendTest(t, owner, seal(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
+		ChannelID: f.voice.ID, ServerContent: "back to text"}))
 	awaitControl(t, owner, "second ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.ServerInfo != nil })
 	awaitControl(t, f.conns[1], "second push", func(m protocol.Control) bool { return m.Type == "SERVER_MESSAGE" })
 	if n := f.conversationCount(t, f.voice.ID); n != 1 {
@@ -679,13 +682,13 @@ func TestServerChannelDeleteCascade(t *testing.T) {
 	f := setupChatFixture(t)
 	owner, member := f.conns[0], f.conns[1]
 
-	sendTest(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
-		ChannelID: f.ch1.ID, ServerContent: "parent"})
+	sendTest(t, owner, seal(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
+		ChannelID: f.ch1.ID, ServerContent: "parent"}))
 	parent := awaitControl(t, owner, "parent ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.ServerInfo != nil })
 	awaitControl(t, member, "parent push", func(m protocol.Control) bool { return m.Type == "SERVER_MESSAGE" })
 
-	sendTest(t, member, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
-		ChannelID: f.ch1.ID, ServerContent: "reply", ServerReplyTo: protocol.MessageID(parent.ServerInfo.ID)})
+	sendTest(t, member, seal(t, member, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
+		ChannelID: f.ch1.ID, ServerContent: "reply", ServerReplyTo: protocol.MessageID(parent.ServerInfo.ID)}))
 	reply := awaitControl(t, member, "reply ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.ServerInfo != nil })
 	awaitControl(t, owner, "reply push", func(m protocol.Control) bool { return m.Type == "SERVER_MESSAGE" })
 
@@ -728,8 +731,8 @@ func TestBannedServerMemberCannotReadOrWrite(t *testing.T) {
 	f := setupChatFixture(t)
 	owner, member := f.conns[0], f.conns[1]
 
-	sendTest(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
-		ChannelID: f.ch1.ID, ServerContent: "before the ban"})
+	sendTest(t, owner, seal(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
+		ChannelID: f.ch1.ID, ServerContent: "before the ban"}))
 	first := awaitControl(t, owner, "send ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.ServerInfo != nil })
 	awaitControl(t, member, "push", func(m protocol.Control) bool { return m.Type == "SERVER_MESSAGE" })
 
@@ -839,8 +842,8 @@ func TestServerMessageACKFieldsAlwaysPresent(t *testing.T) {
 	assertFields(readACK(member), `"serverHasMore":false`, `"unreadCount":0`, `"serverMessages":[]`)
 
 	// Mark-read ACK: unreadCount is 0 after the watermark advances.
-	sendTest(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
-		ChannelID: f.ch3.ID, ServerContent: "mark me"})
+	sendTest(t, owner, seal(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
+		ChannelID: f.ch3.ID, ServerContent: "mark me"}))
 	sent := awaitControl(t, owner, "send ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.ServerInfo != nil })
 	awaitControl(t, member, "send push", func(m protocol.Control) bool { return m.Type == "SERVER_MESSAGE" })
 
@@ -853,8 +856,8 @@ func TestServerMessageQueryPlans(t *testing.T) {
 	f := setupChatFixture(t)
 	owner, member := f.conns[0], f.conns[1]
 
-	sendTest(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
-		ChannelID: f.ch1.ID, ServerContent: "plan seed"})
+	sendTest(t, owner, seal(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
+		ChannelID: f.ch1.ID, ServerContent: "plan seed"}))
 	awaitControl(t, owner, "send ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.ServerInfo != nil })
 	awaitControl(t, member, "push", func(m protocol.Control) bool { return m.Type == "SERVER_MESSAGE" })
 
@@ -928,8 +931,8 @@ func TestServerChatAuthorizationBoundaries(t *testing.T) {
 	f := setupChatFixture(t)
 	owner, member, outsider := f.conns[0], f.conns[1], f.conns[2]
 
-	sendTest(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
-		ChannelID: f.ch1.ID, ServerContent: "boundary seed"})
+	sendTest(t, owner, seal(t, owner, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
+		ChannelID: f.ch1.ID, ServerContent: "boundary seed"}))
 	seed := awaitControl(t, owner, "seed ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.ServerInfo != nil })
 	awaitControl(t, member, "seed push", func(m protocol.Control) bool { return m.Type == "SERVER_MESSAGE" })
 	messageID := seed.ServerInfo.ID
@@ -947,8 +950,8 @@ func TestServerChatAuthorizationBoundaries(t *testing.T) {
 		{"server A with channel B", f.srv1.ID, f.ch2.ID},
 		{"server B with channel A", f.srv2.ID, f.ch1.ID},
 	} {
-		sendTest(t, member, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: tc.serverID,
-			ChannelID: tc.channelID, ServerContent: "cross-server"})
+		sendTest(t, member, seal(t, member, protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: tc.serverID,
+			ChannelID: tc.channelID, ServerContent: "cross-server"}))
 		f.expectError(t, member, "server channel not found")
 	}
 
@@ -1040,8 +1043,8 @@ func TestLargeServerChannelDeleteCascade(t *testing.T) {
 	f := setupChatFixture(t)
 	const synthetic = 100_000
 
-	sendTest(t, f.conns[0], protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
-		ChannelID: f.ch1.ID, ServerContent: "busy channel"})
+	sendTest(t, f.conns[0], seal(t, f.conns[0], protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv1.ID,
+		ChannelID: f.ch1.ID, ServerContent: "busy channel"}))
 	awaitControl(t, f.conns[0], "seed ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.ServerInfo != nil })
 	awaitControl(t, f.conns[1], "seed push", func(m protocol.Control) bool { return m.Type == "SERVER_MESSAGE" })
 
@@ -1090,8 +1093,8 @@ func TestLargeServerChannelDeleteCascade(t *testing.T) {
 	}
 
 	// A write on a surviving channel must still succeed after the cascade.
-	sendTest(t, f.conns[0], protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv2.ID,
-		ChannelID: f.ch2.ID, ServerContent: "still alive"})
+	sendTest(t, f.conns[0], seal(t, f.conns[0], protocol.Control{Type: "SEND_SERVER_MESSAGE", ServerID: f.srv2.ID,
+		ChannelID: f.ch2.ID, ServerContent: "still alive"}))
 	alive := awaitControl(t, f.conns[0], "write after cascade", func(m protocol.Control) bool { return m.Type == "ACK" && m.ServerInfo != nil })
 	if alive.ServerInfo.ChannelID != protocol.ChannelID(f.ch2.ID) {
 		t.Fatalf("write after cascade landed on channel %d, want %d", alive.ServerInfo.ChannelID, f.ch2.ID)

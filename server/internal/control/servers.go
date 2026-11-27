@@ -49,11 +49,6 @@ func directRecipientID(msg protocol.Control) (int, error) {
 	return id, nil
 }
 
-// directContent applies the message bounds to a DM request.
-func directContent(msg protocol.Control) (string, error) {
-	return messageContent(msg.DirectContent, "direct")
-}
-
 func (s *Server) handleSendDM(c *client, msg protocol.Control) {
 	if !c.requireAuth() {
 		return
@@ -63,8 +58,7 @@ func (s *Server) handleSendDM(c *client, msg protocol.Control) {
 		c.sendError(err.Error())
 		return
 	}
-	content, err := directContent(msg)
-	if err != nil {
+	if err := encryptedOnly(msg); err != nil {
 		c.sendError(err.Error())
 		return
 	}
@@ -82,10 +76,11 @@ func (s *Server) handleSendDM(c *client, msg protocol.Control) {
 		return
 	}
 
-	dm, err := s.messages.SendDM(ctx, c.sess.UserID, recipientID, msg.DirectReplyTo, content)
+	dm, err := s.messages.SendEncryptedDM(ctx, c.sess.UserID, recipientID, msg.DirectReplyTo, msg.E2EE)
 	if err != nil {
 		switch {
-		case errors.Is(err, messages.ErrSelfRequest),
+		case isE2EEError(err),
+			errors.Is(err, messages.ErrSelfRequest),
 			errors.Is(err, messages.ErrAlreadyExists),
 			errors.Is(err, messages.ErrNotFound),
 			errors.Is(err, messages.ErrMessageNotFound):
@@ -140,6 +135,12 @@ func (s *Server) handleReceiveDM(c *client, msg protocol.Control) {
 		return
 	}
 
+	limit := msg.DMLimit
+	if limit <= 0 || limit > 100 {
+		limit = 50 // the store's page bounds
+	}
+	out, hasMore := pageOf(messageSummaries(list), limit)
+
 	// Fetching a page means the viewer has seen it; advance the read pointer.
 	var newestID int
 	if len(list) > 0 {
@@ -156,7 +157,7 @@ func (s *Server) handleReceiveDM(c *client, msg protocol.Control) {
 			protocol.Control{Type: "DIRECT_MESSAGE_READ", DirectMessageID: state.LastReadMessageID})
 	}
 	c.send(protocol.Control{
-		Type: "ACK", DirectMessages: messageSummaries(list), UnreadCount: state.UnreadCount,
+		Type: "ACK", DirectMessages: out, HasMore: &hasMore, UnreadCount: state.UnreadCount,
 	})
 }
 
@@ -168,14 +169,13 @@ func (s *Server) handleUpdateDM(c *client, msg protocol.Control) {
 		c.sendError("direct message id required")
 		return
 	}
-	content, err := directContent(msg)
-	if err != nil {
+	if err := encryptedOnly(msg); err != nil {
 		c.sendError(err.Error())
 		return
 	}
 	ctx, cancel := storeCtx()
 	defer cancel()
-	edited, peerID, err := s.messages.EditDM(ctx, c.sess.UserID, msg.DirectMessageID, content)
+	edited, peerID, err := s.messages.EditDM(ctx, c.sess.UserID, msg.DirectMessageID, msg.E2EE)
 	if err != nil {
 		sendDMMutationError(c, "edit", c.sess.UserID, msg.DirectMessageID, err)
 		return
@@ -234,13 +234,13 @@ func (s *Server) handleMarkDMRead(c *client, msg protocol.Control) {
 	})
 }
 
-func (s *Server) handleListDMConversations(c *client, _ protocol.Control) {
+func (s *Server) handleListDMConversations(c *client, msg protocol.Control) {
 	if !c.requireAuth() {
 		return
 	}
 	ctx, cancel := storeCtx()
 	defer cancel()
-	conversations, err := s.messages.ListDMConversations(ctx, c.sess.UserID)
+	conversations, err := s.messages.ListDMConversations(ctx, c.sess.UserID, msg.BeforeConversationID)
 	if err != nil {
 		log.Printf("[DM] conversation list for %d failed: %v", c.sess.UserID, err)
 		c.sendError("direct conversation list failed")
@@ -252,13 +252,15 @@ func (s *Server) handleListDMConversations(c *client, _ protocol.Control) {
 			ChannelID: conv.ChannelID, PeerID: conv.PeerID,
 			LastMessageID: conv.LastMessageID, Content: conv.Content,
 			AuthorID: conv.AuthorID, CreatedAt: conv.CreatedAt, UnreadCount: conv.UnreadCount,
+			E2EE: conv.E2EE,
 		}
 	}
-	c.send(protocol.Control{Type: "ACK", DirectConversations: out})
+	page, hasMore := pageOf(out, messages.ConversationPage)
+	c.send(protocol.Control{Type: "ACK", DirectConversations: page, HasMore: &hasMore})
 }
 
 func sendDMMutationError(c *client, op string, userID, messageID int, err error) {
-	if errors.Is(err, messages.ErrMessageNotFound) {
+	if errors.Is(err, messages.ErrMessageNotFound) || isE2EEError(err) {
 		c.sendError(err.Error())
 		return
 	}
@@ -815,7 +817,7 @@ func (s *Server) handleJoinServer(c *client, msg protocol.Control) {
 	defer cancel()
 	server, err := s.servers.JoinServer(ctx, c.sess.UserID, code)
 	if err != nil {
-		if errors.Is(err, servers.ErrBadInvite) || errors.Is(err, servers.ErrBanned) {
+		if errors.Is(err, servers.ErrBadInvite) || errors.Is(err, servers.ErrBanned) || errors.Is(err, servers.ErrFull) {
 			c.sendError(err.Error())
 			return
 		}

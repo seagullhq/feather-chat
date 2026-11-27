@@ -10,6 +10,10 @@ pub struct Saved {
 }
 
 fn entry() -> Option<keyring::Entry> {
+    // Tests never touch the user's keyring.
+    if cfg!(test) {
+        return None;
+    }
     keyring::Entry::new("feather-chat", "login").ok()
 }
 
@@ -30,6 +34,26 @@ pub fn save(host: &str, identifier: &str, password: &str) {
         let _ = e.set_password(
             &json!({"host":host,"identifier":identifier,"password":password}).to_string(),
         );
+    }
+}
+
+/// The server's proof that this device logged in to the account before. It
+/// outlives sign-out, so it has its own entry.
+fn device_entry(host: &str, identifier: &str) -> Option<keyring::Entry> {
+    if cfg!(test) {
+        return None;
+    }
+    let account = format!("{} {}", host.trim(), identifier.trim()).to_lowercase();
+    keyring::Entry::new("feather-chat-device", &account).ok()
+}
+
+pub fn device_token(host: &str, identifier: &str) -> Option<String> {
+    device_entry(host, identifier)?.get_password().ok()
+}
+
+pub fn save_device_token(host: &str, identifier: &str, token: &str) {
+    if let Some(e) = device_entry(host, identifier) {
+        let _ = e.set_password(token);
     }
 }
 

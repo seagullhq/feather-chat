@@ -2,16 +2,54 @@
 
 use std::sync::Arc;
 
+use crate::api::auth::Request;
 use crate::api::friends::Friend;
+use crate::api::secure::Addr;
 use crate::api::server::{
     ChannelSummary, ChannelTypeSummary, RosterMember, ServerMember, ServerSummary,
 };
+use crate::api::trust::Untrusted;
 use crate::media;
 
 pub enum Event {
     AuthOk,
+    /// A legacy account: ask before sending the password in the old form.
+    NeedConsent {
+        identifier: String,
+        password: String,
+    },
+    /// The account needs encryption keys: show a recovery code.
+    NeedKeys {
+        identifier: String,
+        password: String,
+        legacy: bool,
+    },
+    /// A user presents a different identity key.
+    KeyChanged {
+        user_id: i64,
+        identity: [u8; 32],
+        old_number: String,
+        new_number: String,
+    },
+    SafetyNumber {
+        peer: i64,
+        number: String,
+    },
+    /// A message shown as a placeholder can now be read.
+    MessageUpdated {
+        addr: Addr,
+        msg: crate::api::DirectMessage,
+    },
     AuthFailed(String),
     RegisterFailed(String),
+    /// The server was never reached or never trusted; nothing was sent.
+    ConnectFailed(String),
+    /// The server certificate is not trusted: nothing was sent. `request` can
+    /// be retried once the user accepts it.
+    Untrusted {
+        server: Untrusted,
+        request: Request,
+    },
     ServersListed(Vec<ServerSummary>),
     ServersListFailed(String),
     ChannelTypesListed(Vec<ChannelTypeSummary>),
@@ -156,8 +194,17 @@ pub enum Event {
     /// Your friend request was accepted by the server.
     FriendRequested,
     FriendFailed(String),
+    /// A direct message was not sent; `text` is given back.
+    DmSendFailed {
+        peer: i64,
+        text: String,
+        error: String,
+    },
     /// A friend wrote to you (push).
-    DmReceived(crate::api::DirectMessage),
+    DmReceived {
+        peer: i64,
+        msg: crate::api::DirectMessage,
+    },
     /// Your message went through.
     DmSent {
         peer: i64,
@@ -174,6 +221,7 @@ pub enum Event {
         msgs: Vec<crate::api::DirectMessage>,
         /// Set for an older page (it goes on top), `None` for the newest.
         before: Option<i64>,
+        has_more: bool,
     },
     /// Page of a text channel, oldest first. `before` as in `DmHistory`.
     ThreadHistory {
@@ -196,5 +244,18 @@ pub enum Event {
         msg: crate::api::DirectMessage,
     },
     ThreadFailed(String),
+    /// A channel message was not sent; `text` is given back.
+    ThreadSendFailed {
+        server_id: i64,
+        channel_id: i64,
+        text: String,
+        error: String,
+    },
+    /// Recovery took effect but the login after it failed. `code` is the new,
+    /// already active recovery code.
+    RecoveredLoginFailed {
+        message: String,
+        code: String,
+    },
     Disconnected,
 }

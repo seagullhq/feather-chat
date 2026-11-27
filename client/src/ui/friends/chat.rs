@@ -3,10 +3,10 @@
 //! list is scrolled to the top).
 
 use super::FriendsView;
-use crate::api::{CallLog, DirectMessage, Friend};
+use crate::api::{CallLog, DirectMessage, Friend, Mark};
 use crate::theme::Theme;
 use crate::ui::Submit;
-use crate::ui::components::{Avatar, icon, tonal};
+use crate::ui::components::{Avatar, ghost, icon, tonal};
 use crate::ui::markdown::{Markdown, MdTheme};
 use gpui::{prelude::*, *};
 
@@ -19,6 +19,7 @@ pub(crate) struct ChatMessage {
     pub text: String,
     /// A local line about the call (ended, rejected, ...), not a person's message.
     pub system: bool,
+    pub mark: Mark,
 }
 
 impl ChatMessage {
@@ -31,12 +32,14 @@ impl ChatMessage {
                 mine,
                 text: call_line(call, mine),
                 system: true,
+                mark: m.mark,
             },
             None => Self {
                 id: m.id,
                 mine,
                 text: m.content,
                 system: false,
+                mark: m.mark,
             },
         }
     }
@@ -136,12 +139,37 @@ impl FriendsView {
                         .on_click(cx.listener(|this, _, _, cx| this.send_chat(cx))),
                     ),
             );
+        let peer = friend.id;
+        let toolbar = div().flex().justify_end().px_3().py_1().child(
+            ghost(
+                ("dm-safety-number", friend.id as u64),
+                "Safety number",
+                "eye",
+                t,
+            )
+            .on_click(cx.listener(move |this, _, _, _| {
+                if let Some(c) = &this.control {
+                    c.safety_number(peer);
+                }
+            })),
+        );
         div()
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
+            .child(toolbar)
             .child(list)
+            .when_some(self.error.clone(), |d, e| {
+                d.child(
+                    div()
+                        .id("dm-chat-error")
+                        .role(Role::Alert)
+                        .px_3()
+                        .text_color(t.danger)
+                        .child(e),
+                )
+            })
             .child(composer)
             .into_any_element()
     }
@@ -158,6 +186,7 @@ impl FriendsView {
         // The message shows up when the server confirms it (DmSent).
         let Some(c) = &self.control else { return };
         if c.send_dm(id, text) {
+            self.error = None;
             self.chat_input
                 .update(cx, |input, cx| input.set_text("", cx));
         }
@@ -198,6 +227,17 @@ pub(crate) fn message(m: &ChatMessage, name: &str, first: bool, t: &Theme) -> Di
     } else {
         body
     };
+    let body = if m.mark == Mark::Unavailable {
+        body.child(div().italic().text_color(t.muted).child(m.text.clone()))
+    } else {
+        body.child(Markdown::new(
+            &keep_newlines(&m.text),
+            MdTheme::from_theme(t),
+        ))
+    };
+    let body = body.when_some(mark_note(m.mark), |d, note| {
+        d.child(div().text_size(px(11.)).text_color(t.muted).child(note))
+    });
     div()
         .flex()
         .gap_3()
@@ -206,10 +246,16 @@ pub(crate) fn message(m: &ChatMessage, name: &str, first: bool, t: &Theme) -> Di
         .when(first, |d| d.mt_2())
         .hover(|s| s.bg(t.fill_hover))
         .child(side)
-        .child(body.child(Markdown::new(
-            &keep_newlines(&m.text),
-            MdTheme::from_theme(t),
-        )))
+        .child(body)
+}
+
+/// The note under a message that is not fully protected.
+fn mark_note(mark: Mark) -> Option<&'static str> {
+    match mark {
+        Mark::Plain => Some("Not encrypted"),
+        Mark::Unverified => Some("Unverified sender key"),
+        Mark::Encrypted | Mark::Unavailable => None,
+    }
 }
 
 /// Markdown folds a single newline into a space; chat keeps it as a line break.

@@ -26,10 +26,17 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+    # TLS certificate and key. Losing this volume changes the fingerprint, and
+    # every client then refuses to connect until it trusts the new one.
+    volumes:
+      - tls:/tls
     # Raw TCP + UDP are not HTTP: publish them on the host, not through Traefik.
+    # IPv4 only: on IPv6, Docker's userland proxy can hide the client address,
+    # and the per-IP limits then count every client as one. Rootless Docker
+    # hides it on IPv4 too unless its port driver preserves source addresses.
     ports:
-      - "7700:7700/tcp"
-      - "7701:7701/udp"
+      - "0.0.0.0:7700:7700/tcp"
+      - "0.0.0.0:7701:7701/udp"
     # Shared network, so the other Dokploy service's Postgres is reachable by name.
     networks:
       - dokploy-network
@@ -38,5 +45,6 @@ networks:
   dokploy-network:
     external: true
 
-# volumes:
-#   db:
+volumes:
+  tls:
+  # db:

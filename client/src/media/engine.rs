@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
 
 use super::audio::audio;
+use super::link::{Identity, Link};
 use super::share::{Sender, viewer_loop};
 use super::shared::Shared;
 use super::sysaudio::Sender as SysAudioSender;
@@ -17,7 +18,7 @@ pub struct Engine {
     shared: Arc<Shared>,
     threads: Vec<std::thread::JoinHandle<()>>,
     /// Kept to start a screen share on the same UDP flow (same NAT mapping, same SSRC).
-    sock: UdpSocket,
+    link: Arc<Link>,
     ssrc: u32,
     notify: Notify,
     sender: Option<Sender>,
@@ -28,7 +29,7 @@ pub struct Engine {
 impl Engine {
     pub fn start(
         host: &str,
-        ssrc: u32,
+        id: Identity,
         muted: bool,
         deafened: bool,
         notify: Notify,
@@ -46,6 +47,8 @@ impl Engine {
         .map_err(|e| e.to_string())?;
         sock.connect(server).map_err(|e| e.to_string())?;
         sock.set_nonblocking(true).map_err(|e| e.to_string())?;
+        let Identity { ssrc, keys } = id;
+        let link = Arc::new(Link { sock, keys });
 
         let shared = Arc::new(Shared::default());
         shared.muted.store(muted, Relaxed);
@@ -57,14 +60,14 @@ impl Engine {
         let audio = std::thread::spawn(move || audio(s, true, cap_tx, out_rx));
         let (video_tx, video_rx) = std::sync::mpsc::sync_channel(1024);
         let s = shared.clone();
-        let wsock = sock.try_clone().map_err(|e| e.to_string())?;
-        let worker = std::thread::spawn(move || worker(s, wsock, ssrc, cap_rx, out_tx, video_tx));
+        let wlink = link.clone();
+        let worker = std::thread::spawn(move || worker(s, wlink, ssrc, cap_rx, out_tx, video_tx));
         let (s, n) = (shared.clone(), notify.clone());
         let viewer = std::thread::spawn(move || viewer_loop(s, video_rx, n));
         Ok(Self {
             shared,
             threads: vec![audio, worker, viewer],
-            sock,
+            link,
             ssrc,
             notify,
             sender: None,
@@ -75,11 +78,10 @@ impl Engine {
     /// Starts capturing the chosen source. The sender stays silent until
     /// `set_announced(true)`.
     pub fn start_share(&mut self, source: Source) -> Result<(), String> {
-        let sock = self.sock.try_clone().map_err(|e| e.to_string())?;
         self.sender = Some(Sender::start(
             source,
             self.shared.clone(),
-            sock,
+            self.link.clone(),
             self.ssrc,
             self.notify.clone(),
         ));
@@ -92,10 +94,9 @@ impl Engine {
             if self.sysaudio.is_some() {
                 return Ok(());
             }
-            let sock = self.sock.try_clone().map_err(|e| e.to_string())?;
             self.sysaudio = Some(SysAudioSender::start(
                 self.shared.clone(),
-                sock,
+                self.link.clone(),
                 self.ssrc,
                 self.notify.clone(),
             ));

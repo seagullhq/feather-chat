@@ -246,7 +246,7 @@ func TestIntegrationDmCallLogsOutcomeAndDuration(t *testing.T) {
 	}
 
 	// An event is not text: the caller cannot rewrite it.
-	sendTest(t, f.a, protocol.Control{Type: "UPDATE_DIRECT_MESSAGE", DirectMessageID: got.ID, DirectContent: "edited"})
+	sendTest(t, f.a, seal(t, f.a, protocol.Control{Type: "UPDATE_DIRECT_MESSAGE", DirectMessageID: got.ID, DirectContent: "edited"}))
 	awaitControl(t, f.a, "edit refused", func(m protocol.Control) bool { return m.Type == "ERROR" })
 }
 

@@ -1,6 +1,10 @@
 package messages
 
-import "time"
+import (
+	"time"
+
+	"github.com/seagullhq/feather-chat/server/internal/e2ee"
+)
 
 // WireSummary is the part of a message shared by DMs and server channels.
 // Both stored shapes convert to it so control needs one mapping to the wire.
@@ -16,6 +20,7 @@ type WireSummary struct {
 	// Call event fields; empty on text.
 	CallOutcome string
 	CallSeconds int
+	E2EE        *e2ee.Message
 }
 
 // WireMessage is implemented by every stored message type sent to a client.
@@ -28,13 +33,14 @@ func (m DirectMessage) Wire() WireSummary {
 		ID: m.ID, ChannelID: m.ChannelID, AuthorID: m.Author,
 		Content: m.Content, ReplyTo: m.ReplyTo,
 		CreatedAt: m.CreatedAt, EditedAt: m.EditedAt, DeletedAt: m.DeletedAt,
-		CallOutcome: m.CallOutcome, CallSeconds: m.CallSeconds,
+		CallOutcome: m.CallOutcome, CallSeconds: m.CallSeconds, E2EE: m.E2EE,
 	}
 }
 
 func (m MessageSummary) Wire() WireSummary {
 	return WireSummary{
-		ID: m.ID, ChannelID: int(m.ChannelID), AuthorID: m.AuthorID,
+		E2EE: m.E2EE,
+		ID:   m.ID, ChannelID: int(m.ChannelID), AuthorID: m.AuthorID,
 		Content: m.Content, ReplyTo: m.ReplyTo,
 		CreatedAt: m.CreatedAt, EditedAt: m.EditedAt, DeletedAt: m.DeletedAt,
 	}

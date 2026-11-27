@@ -15,6 +15,34 @@ fn audio_packet_matches_wire_format() {
     assert_eq!(audio_packet(1, 0, true, &[])[0], 0x20);
 }
 
+/// PATH (kind 4) echoes the 8 challenge bytes (transport-security.md §2.4).
+#[test]
+fn path_reply_echoes_the_challenge() {
+    use super::MediaKeys;
+    use super::wire::path_reply;
+    let reply = path_reply(0x11223344, &[7; 8]).unwrap();
+    assert_eq!(reply, [4, 0x11, 0x22, 0x33, 0x44, 7, 7, 7, 7, 7, 7, 7, 7]);
+    assert!(path_reply(1, &[7; 7]).is_none());
+    assert!(path_reply(1, &[7; 9]).is_none());
+    // The receiver lets the kind through.
+    let keys = MediaKeys::new(&[1; 32], &[1; 32]).unwrap();
+    let mut sealed = keys.seal(&reply).unwrap();
+    assert!(keys.open(&mut sealed).is_some());
+}
+
+/// The sealed datagram limits of docs/transport-security.md §2.2.
+#[test]
+fn sealed_video_fragment_fits_the_datagram_limit() {
+    use super::MediaKeys;
+    use super::wire::{KIND_VIDEO, header};
+    use crate::capture::packet;
+    assert_eq!(packet::MAX_CHUNK, 1158);
+    let keys = MediaKeys::new(&[1; 32], &[2; 32]).unwrap();
+    let mut p = header(KIND_VIDEO, 1);
+    p.extend(&packet::fragment(1, 0, true, &[0; 3000])[0]);
+    assert_eq!(keys.seal(&p).unwrap().len(), 1200);
+}
+
 /// SYSAUDIO is the AUDIO layout with kind 3 (wire-format.md §4b).
 #[test]
 fn sysaudio_packet_matches_wire_format() {

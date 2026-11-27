@@ -4,6 +4,7 @@
 package control
 
 import (
+	"crypto/tls"
 	"errors"
 	"log"
 	"net"
@@ -25,15 +26,37 @@ type Server struct {
 	servers  *servers.ServerStore
 	friends  *friends.ServerStore
 	messages *messages.ServerStore
+
+	conns connLimiter
+	// authByIP throttles LOGIN and REGISTER; failedLogins throttles wrong
+	// passwords per account and source, or per known device.
+	authByIP     *keyedLimiter
+	failedLogins *keyedLimiter
+	// accountLogins caps failures per account across all sources.
+	accountLogins *keyedLimiter
+	// keyRequests throttles the conversation key messages per user.
+	keyRequests *keyedLimiter
+	// deviceKey signs device tokens.
+	deviceKey []byte
 }
 
 // New wires a control server around the stores and the room state.
 func New(users *accounts.Store, serverStore *servers.ServerStore, friendStore *friends.ServerStore, msgStore *messages.ServerStore, rooms *room.Manager) *Server {
-	return &Server{rooms: rooms, calls: newCallManager(), users: users, servers: serverStore, friends: friendStore, messages: msgStore}
+	return &Server{rooms: rooms, calls: newCallManager(), users: users, servers: serverStore, friends: friendStore, messages: msgStore,
+		authByIP:      newKeyedLimiter(authBurst, authEvery),
+		failedLogins:  newKeyedLimiter(failedBurst, failedEvery),
+		accountLogins: newKeyedLimiter(accountBurst, accountEvery),
+		keyRequests:   newKeyedLimiter(keyBurst, keyEvery),
+		deviceKey:     deviceKey(nil),
+	}
 }
 
-// Serve accepts and dispatches control connections until the listener stops.
-func (s *Server) Serve(l net.Listener) {
+// Serve accepts TLS control connections and dispatches them until the
+// listener stops. Connections over the limits are closed before the handshake;
+// at the unauthenticated or total limit an older unauthenticated one is closed
+// instead.
+func (s *Server) Serve(l net.Listener, tlsConfig *tls.Config) {
+	s.deviceKey = deviceKey(tlsConfig) // before any connection reads it
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -42,7 +65,17 @@ func (s *Server) Serve(l net.Listener) {
 			}
 			return
 		}
-		go s.handleConn(conn)
+		ip := ipKey(conn.RemoteAddr())
+		slot, ok := s.conns.acquire(ip, conn)
+		if !ok {
+			log.Printf("[CONTROL] connection limit reached, refusing %s", conn.RemoteAddr())
+			_ = conn.Close()
+			continue
+		}
+		go func() {
+			defer s.conns.release(slot)
+			s.handleConn(tls.Server(conn, tlsConfig), slot)
+		}()
 	}
 }
 
@@ -50,6 +83,15 @@ func (s *Server) Serve(l net.Listener) {
 // fall through silently, per the §7 interop rule.
 var handlers = map[string]func(*Server, *client, protocol.Control){
 	"REGISTER":                   (*Server).handleRegister,
+	"PRELOGIN":                   (*Server).handlePrelogin,
+	"SET_KEYS":                   (*Server).handleSetKeys,
+	"RECOVER_BEGIN":              (*Server).handleRecoverBegin,
+	"RECOVER_FINISH":             (*Server).handleRecoverFinish,
+	"GET_CONVERSATION_KEYS":      (*Server).handleGetConversationKeys,
+	"CREATE_EPOCH":               (*Server).handleCreateEpoch,
+	"SHARE_KEYS":                 (*Server).handleShareKeys,
+	"REJECT_WRAP":                (*Server).handleRejectWrap,
+	"GET_USER_KEYS":              (*Server).handleGetUserKeys,
 	"LOGIN":                      (*Server).handleLogin,
 	"HELLO":                      (*Server).handleHello,
 	"JOIN":                       (*Server).handleJoin,
@@ -103,12 +145,23 @@ var handlers = map[string]func(*Server, *client, protocol.Control){
 	"MARK_SERVER_MESSAGE_READ":   (*Server).handleMarkServerMessageRead,
 }
 
+// keylessAllowed lists what a session of an account without keys may send:
+// SET_KEYS and what is allowed before login.
+var keylessAllowed = map[string]bool{
+	"SET_KEYS": true, "PRELOGIN": true, "REGISTER": true, "LOGIN": true,
+	"RECOVER_BEGIN": true, "RECOVER_FINISH": true,
+}
+
 // dispatch routes one decoded message, ignoring unknown types (§7 interop
 // rule).
 func (s *Server) dispatch(c *client, msg protocol.Control) {
 	h, ok := handlers[msg.Type]
 	if !ok {
-		log.Printf("[CONTROL] ignoring unknown type %q from user %d", msg.Type, c.sess.UserID)
+		log.Printf("[CONTROL] ignoring unknown type %.64q from user %d", msg.Type, c.sess.UserID)
+		return
+	}
+	if c.needKeys && !keylessAllowed[msg.Type] {
+		c.sendError("account keys required")
 		return
 	}
 	h(s, c, msg)

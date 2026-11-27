@@ -132,7 +132,20 @@ pub(super) fn cancel_call(session: &mut Session, peer: i64) -> Result<(), String
         .map(drop)
 }
 
-/// One direct message as the server sends it.
+/// How a message reached the screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    /// Decrypted and signed by keys this client trusts.
+    Encrypted,
+    /// Stored before encryption (or a call log): the server can read it.
+    Plain,
+    /// Decrypted, but a key rests only on the server's word.
+    Unverified,
+    /// A placeholder: `content` says why there is no text.
+    Unavailable,
+}
+
+/// One message of a DM or text channel, ready to show.
 #[derive(Clone)]
 pub struct DirectMessage {
     pub id: i64,
@@ -141,6 +154,7 @@ pub struct DirectMessage {
     /// A finished 1:1 call, logged by the server: outcome (ended, rejected,
     /// cancelled, missed, offline) and talk time in seconds. None on text.
     pub call: Option<CallLog>,
+    pub mark: Mark,
 }
 
 /// The call a chat line stands for. The author of the message is the caller.
@@ -150,57 +164,5 @@ pub struct CallLog {
     pub seconds: u32,
 }
 
-pub(super) fn dm_from(m: &serde_json::Value) -> Option<DirectMessage> {
-    // Soft-deleted messages are not shown.
-    if !m["deletedAt"].is_null() {
-        return None;
-    }
-    Some(DirectMessage {
-        id: m["id"].as_i64()?,
-        author: m["authorId"].as_i64()?,
-        content: m["content"].as_str()?.to_string(),
-        call: m["callOutcome"].as_str().map(|outcome| CallLog {
-            outcome: outcome.to_string(),
-            seconds: m["callSeconds"].as_u64().unwrap_or(0) as u32,
-        }),
-    })
-}
-
-pub(super) fn send_dm(
-    session: &mut Session,
-    peer: i64,
-    text: &str,
-) -> Result<DirectMessage, String> {
-    let ack = session.call(json!({
-        "type":"SEND_DIRECT_MESSAGE",
-        "directRecipientID":peer.to_string(),
-        "directContent":text,
-    }))?;
-    dm_from(&ack["directInfo"]).ok_or_else(|| "bad reply".to_string())
-}
-
 /// Messages per history page; the server's default page.
-pub const DM_PAGE: usize = 50;
-
-/// A page of the conversation, oldest first: the newest one, or with `before`
-/// the one just older than that message id. The server marks it read.
-pub(super) fn dm_history(
-    session: &mut Session,
-    peer: i64,
-    before: Option<i64>,
-) -> Result<Vec<DirectMessage>, String> {
-    let ack = session.call(json!({
-        "type":"RECIEVE_DIRECT_MESSAGE",
-        "directRecipientID":peer.to_string(),
-        "dmLimit": DM_PAGE,
-        "dmBeforeId": before.unwrap_or(0),
-    }))?;
-    let mut list: Vec<_> = ack["directMessages"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(dm_from)
-        .collect();
-    list.reverse();
-    Ok(list)
-}
+pub(super) const DM_PAGE: usize = 50;

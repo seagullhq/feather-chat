@@ -3,7 +3,6 @@ package room
 import (
 	"net"
 	"testing"
-	"time"
 
 	"github.com/seagullhq/feather-chat/server/internal/protocol"
 )
@@ -11,11 +10,11 @@ import (
 func newSess(t *testing.T, m *Manager, ssrc uint32, roomName string) *Session {
 	t.Helper()
 	s := NewSession(nil)
-	if !m.Claim(s, ssrc, "u") {
+	if _, _, ok := m.Claim(s, ssrc, "u"); !ok {
 		t.Fatal("claim")
 	}
 	m.Join(s, roomName)
-	s.UDPAddr = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(ssrc)}
+	m.setAddr(s, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(ssrc)})
 	return s
 }
 
@@ -76,50 +75,30 @@ func TestShareLimit(t *testing.T) {
 }
 
 func TestUDPVideoOnlyToWatchers(t *testing.T) {
-	m := NewManager()
-	srv, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	if err != nil {
-		t.Fatal(err)
+	m, srv := serveMedia(t)
+	mk := func(ssrc uint32) *peer {
+		p := newPeer(t, m, srv, ssrc)
+		m.Join(p.sess, "r")
+		p.ping() // echo = address learnt, pinged
+		return p
 	}
-	defer srv.Close()
-	go m.ServeUDP(srv)
-
-	mk := func(ssrc uint32) (*Session, *net.UDPConn) {
-		c, err := net.DialUDP("udp", nil, srv.LocalAddr().(*net.UDPAddr))
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { c.Close() })
-		s := NewSession(nil)
-		m.Claim(s, ssrc, "u")
-		m.Join(s, "r")
-		ping := append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindPing, SSRC: ssrc}), 0, 0, 0, 0, 0, 0, 0, 1)
-		c.Write(ping)
-		buf := make([]byte, 64)
-		c.SetReadDeadline(time.Now().Add(time.Second))
-		if _, err := c.Read(buf); err != nil { // echo = UDPAddr learned, pinged
-			t.Fatal(err)
-		}
-		return s, c
-	}
-	a, ca := mk(1)
-	_, cb := mk(2) // watcher
-	_, cc := mk(3) // bystander
-	m.StartShare(a)
-	if m.Watch(m.BySSRC(2), 1) != a {
+	a := mk(1)
+	b := mk(2) // watcher
+	c := mk(3) // bystander
+	m.StartShare(a.sess)
+	if m.Watch(m.BySSRC(2), 1) != a.sess {
 		t.Fatal("watch")
 	}
 
-	pkt := append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindVideo, SSRC: 1}), make([]byte, protocol.MaxVideoDatagram-protocol.HeaderLen)...)
-	ca.Write(pkt)
+	payload := make([]byte, protocol.MaxVideoDatagram-protocol.SealedHeaderLen-16)
+	pkt := a.seal(protocol.KindVideo, payload)
+	if len(pkt) != protocol.MaxVideoDatagram {
+		t.Fatalf("sealed length %d", len(pkt))
+	}
+	a.write(pkt)
 
-	buf := make([]byte, 2048)
-	cb.SetReadDeadline(time.Now().Add(time.Second))
-	if n, err := cb.Read(buf); err != nil || n != len(pkt) {
-		t.Fatalf("watcher got n=%d err=%v", n, err)
+	if h, got := b.read(); h.SSRC != 1 || h.Kind != protocol.KindVideo || len(got) != len(payload) {
+		t.Fatalf("watcher got %+v len=%d", h, len(got))
 	}
-	cc.SetReadDeadline(time.Now().Add(150 * time.Millisecond))
-	if _, err := cc.Read(buf); err == nil {
-		t.Fatal("bystander must not receive video")
-	}
+	c.expectSilence()
 }

@@ -261,29 +261,16 @@ pub(super) fn delete_server(session: &mut Session, server_id: i64) -> Result<(),
 }
 
 /// Deletes the logged-in account for good.
-pub(super) fn delete_user(session: &mut Session) -> Result<(), String> {
-    session.call(json!({"type":"DELETE_USER"})).map(|_| ())
+pub(super) fn delete_user(session: &mut Session, auth_key: &str) -> Result<(), String> {
+    session
+        .call(json!({"type":"DELETE_USER","authKey":auth_key}))
+        .map(|_| ())
 }
 
 /// Changes the account's username and returns the stored one.
 pub(super) fn update_username(session: &mut Session, username: &str) -> Result<String, String> {
     let ack = session.call(json!({"type":"UPDATE_USERNAME","username":username}))?;
     Ok(ack["name"].as_str().unwrap_or(username).to_string())
-}
-
-/// Changes the account's password after checking the current one.
-pub(super) fn change_password(
-    session: &mut Session,
-    old_password: &str,
-    new_password: &str,
-) -> Result<(), String> {
-    session
-        .call(json!({
-            "type":"UPDATE_PASSWORD",
-            "oldPassword":old_password,
-            "password":new_password
-        }))
-        .map(|_| ())
 }
 
 pub(super) fn create_channel(
@@ -317,43 +304,4 @@ pub(super) fn join_channel(session: &mut Session, channel_id: i64) -> Result<Joi
         channel_id: ack["channelId"].as_i64().unwrap_or(channel_id),
         members: RosterMember::list(&ack["members"]),
     })
-}
-
-/// Posts a text message to a text channel (thread). The ACK carries the stored
-/// message; the other members get it as a push.
-pub(super) fn send_thread(
-    session: &mut Session,
-    server_id: i64,
-    channel_id: i64,
-    text: &str,
-) -> Result<super::friends::DirectMessage, String> {
-    let ack = session.call(json!({
-        "type": "SEND_SERVER_MESSAGE",
-        "serverId": server_id,
-        "channelId": channel_id,
-        "serverContent": text,
-    }))?;
-    super::friends::dm_from(&ack["serverInfo"]).ok_or_else(|| "bad reply".to_string())
-}
-
-/// A page of a text channel, oldest first: the newest one, or with `before`
-/// the one just older than that message id. Also says whether older ones exist.
-pub(super) fn list_thread(
-    session: &mut Session,
-    channel_id: i64,
-    before: Option<i64>,
-) -> Result<(Vec<super::friends::DirectMessage>, bool), String> {
-    let ack = session.call(json!({
-        "type": "LIST_SERVER_MESSAGES",
-        "channelId": channel_id,
-        "serverBeforeId": before.unwrap_or(0),
-    }))?;
-    let mut list: Vec<_> = ack["serverMessages"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(super::friends::dm_from)
-        .collect();
-    list.reverse();
-    Ok((list, ack["serverHasMore"].as_bool().unwrap_or(false)))
 }

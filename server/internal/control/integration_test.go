@@ -2,7 +2,10 @@ package control_test
 
 import (
 	"context"
+	"crypto/cipher"
+	"crypto/tls"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +28,7 @@ import (
 	"github.com/seagullhq/feather-chat/server/internal/protocol"
 	"github.com/seagullhq/feather-chat/server/internal/room"
 	"github.com/seagullhq/feather-chat/server/internal/servers"
+	"github.com/seagullhq/feather-chat/server/internal/tlscert"
 )
 
 // testStore connects to the PostgreSQL database named in .env for real, so the
@@ -40,6 +44,7 @@ func testStore(t *testing.T) (*accounts.Store, *sql.DB) {
 		t.Skipf("postgres open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	testDB = db // for seal
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -57,37 +62,55 @@ func testStore(t *testing.T) (*accounts.Store, *sql.DB) {
 // listeners, the same way main wires it.
 func serveTest(t *testing.T, ltcp net.Listener, ludp net.PacketConn, users *accounts.Store, serverStore *servers.ServerStore, friendStore *friends.ServerStore, msgStore *messages.ServerStore) {
 	t.Helper()
-	rooms := room.NewManager()
-	go rooms.ServeUDP(ludp.(*net.UDPConn))
-	go control.New(users, serverStore, friendStore, msgStore, rooms).Serve(ltcp)
-}
-
-// dialControl connects a real client over TCP: HELLO, then LOGIN (and REGISTER
-// for the first one), then JOIN. TCP ordering guarantees the server handles
-// them in this order, so the JOIN sees an authenticated session.
-func dialControl(t *testing.T, addr string, ssrc uint32, channelID int, username, email, password string, register bool) net.Conn {
-	t.Helper()
-	c, err := net.Dial("tcp", addr)
+	cert, err := tlscert.Load("", "", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	sendTest(t, c, protocol.Control{Type: "HELLO", SSRC: ssrc, Name: "x"})
-	if register {
-		sendTest(t, c, protocol.Control{Type: "REGISTER", Username: username, Email: email, Password: password})
+	rooms := room.NewManager()
+	go rooms.ServeUDP(ludp.(*net.UDPConn))
+	go control.New(users, serverStore, friendStore, msgStore, rooms).Serve(ltcp, tlscert.Config(cert))
+}
+
+// dialTLS opens a control connection, trusting whatever certificate the test
+// server generated.
+func dialTLS(addr string) (net.Conn, error) {
+	return tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})
+}
+
+// dialControl connects a real client over TLS: LOGIN (and REGISTER for the
+// first one), then HELLO, then JOIN. TCP ordering guarantees the server
+// handles them in this order.
+func dialControl(t *testing.T, addr string, ssrc uint32, channelID int, username, email, password string, register bool) net.Conn {
+	t.Helper()
+	c, _ := dialControlHello(t, addr, ssrc, channelID, username, email, password, register)
+	return c
+}
+
+// dialControlHello is dialControl also returning the HELLO ACK, which carries
+// the media keys (no ssrc and no keys when the SSRC was refused).
+func dialControlHello(t *testing.T, addr string, ssrc uint32, channelID int, username, email, password string, register bool) (net.Conn, protocol.Control) {
+	t.Helper()
+	c, err := dialTLS(addr)
+	if err != nil {
+		t.Fatal(err)
 	}
-	sendTest(t, c, protocol.Control{Type: "LOGIN", Identifier: username, Password: password})
-	// LOGIN ACK carries the username; waiting keeps REGISTER/LOGIN ordered across clients.
-	awaitControl(t, c, "LOGIN ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.Name != "" })
+	if register {
+		sendTest(t, c, protocol.Control{Type: "REGISTER", Username: username, Email: email,
+			Salt: hash("salt", username)[:16], AuthKey: hash("auth", password)})
+	}
+	loginTest(t, c, username, password)
+	sendTest(t, c, protocol.Control{Type: "HELLO", SSRC: ssrc, Name: "x"})
+	hello := awaitControl(t, c, "HELLO ACK", func(m protocol.Control) bool { return m.Type == "ACK" })
 	if channelID != 0 {
 		sendTest(t, c, protocol.Control{Type: "JOIN", ChannelID: channelID})
 		awaitRoom(t, c)
 	}
-	return c
+	return c, hello
 }
 
 // awaitRoom reads ACKs until JOIN is confirmed, so the caller knows the
 // session is really in the room before it starts sending UDP. The server
-// answers HELLO/REGISTER/LOGIN/JOIN in order; the JOIN ACK is the one carrying
+// answers REGISTER/LOGIN/HELLO/JOIN in order; the JOIN ACK is the one carrying
 // a room name.
 func awaitRoom(t *testing.T, c net.Conn) {
 	t.Helper()
@@ -113,6 +136,9 @@ func awaitRoom(t *testing.T, c net.Conn) {
 
 func sendTest(t *testing.T, w net.Conn, c protocol.Control) {
 	t.Helper()
+	if c.DirectContent != "" || c.ServerContent != "" {
+		c = seal(t, w, c) // test content is sent encrypted
+	}
 	b, err := json.Marshal(c)
 	if err != nil {
 		t.Fatal(err)
@@ -186,8 +212,8 @@ func TestIntegrationTwoClients(t *testing.T) {
 	udpAddr := ludp.LocalAddr().String()
 
 	// A registers the real user; B logs into the same account.
-	a := dialControl(t, ltcp.Addr().String(), 0x1111, 0, username, email, password, true)
-	b := dialControl(t, ltcp.Addr().String(), 0x2222, 0, username, email, password, false)
+	a, helloA := dialControlHello(t, ltcp.Addr().String(), 0x1111, 0, username, email, password, true)
+	b, helloB := dialControlHello(t, ltcp.Addr().String(), 0x2222, 0, username, email, password, false)
 	defer a.Close()
 	defer b.Close()
 	sendTest(t, a, protocol.Control{Type: "CREATE_SERVER", ServerName: "v" + username})
@@ -218,36 +244,31 @@ func TestIntegrationTwoClients(t *testing.T) {
 	// A and B bind their UDP sockets by sending a PING, so the server learns
 	// their addr and both clear the audio gate (§5: no AUDIO before the first
 	// PING echo). The sockets stay open: the server forwards to these addrs.
-	audp, _ := net.Dial("udp", udpAddr)
-	defer audp.Close()
-	audp.Write(append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindPing, SSRC: 0x1111}), make([]byte, 8)...))
-
-	budp, _ := net.Dial("udp", udpAddr)
-	defer budp.Close()
-	budp.Write(append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindPing, SSRC: 0x2222}), make([]byte, 8)...))
-
-	for _, u := range []net.Conn{audp, budp} {
-		u.SetReadDeadline(time.Now().Add(time.Second))
-		echo := make([]byte, 1024)
-		u.Read(echo) // drain each PING echo that opened that NAT mapping
+	mediaA := dialMedia(t, udpAddr, 0x1111, helloA)
+	mediaB := dialMedia(t, udpAddr, 0x2222, helloB)
+	for _, m := range []*mediaClient{mediaA, mediaB} {
+		m.send(t, protocol.KindPing, make([]byte, 8))
+		h, challenge := m.read(t) // the address must be validated first
+		if h.Kind != protocol.KindPath {
+			t.Fatalf("want a PATH challenge, got %+v", h)
+		}
+		m.send(t, protocol.KindPath, challenge)
+		m.send(t, protocol.KindPing, make([]byte, 8))
+		if h, _ := m.read(t); h.Kind != protocol.KindPing {
+			t.Fatalf("want the PING echo, got %+v", h)
+		}
 	}
 
-	// A sends an AUDIO frame; server forwards verbatim to B.
-	audp.Write(append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindAudio, SSRC: 0x1111}), []byte("opusframe")...))
+	// A sends an AUDIO frame; the server seals it again for B.
+	mediaA.send(t, protocol.KindAudio, []byte("opusframe"))
 
-	budp.SetReadDeadline(time.Now().Add(time.Second))
-	buf := make([]byte, 1024)
-	n, err := budp.Read(buf)
-	if err != nil {
-		t.Fatal("B did not receive forwarded audio:", err)
-	}
-	h, _ := protocol.DecodeHeader(buf[:n])
-	t.Logf("B received %d bytes: %+v", n, h)
+	h, payload := mediaB.read(t)
+	t.Logf("B received %+v", h)
 	if h.SSRC != 0x1111 || h.Kind != protocol.KindAudio {
 		t.Fatalf("B got header %+v, want SSRC 0x1111 audio", h)
 	}
-	if string(buf[n-len("opusframe"):n]) != "opusframe" {
-		t.Fatalf("payload not forwarded verbatim: %q", buf[:n])
+	if string(payload) != "opusframe" {
+		t.Fatalf("payload = %q", payload)
 	}
 
 	// B leaves the room; A's next audio must not reach it. Before the fix LEAVE
@@ -258,11 +279,65 @@ func TestIntegrationTwoClients(t *testing.T) {
 	awaitControl(t, a, "MEMBER_LEFT", func(m protocol.Control) bool {
 		return m.Type == "MEMBER_LEFT" && m.SSRC == 0x2222
 	})
-	audp.Write(append(protocol.EncodeHeader(protocol.Header{Kind: protocol.KindAudio, SSRC: 0x1111}), []byte("afterleave")...))
-	budp.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
-	if n, err := budp.Read(buf); err == nil {
+	mediaA.send(t, protocol.KindAudio, []byte("afterleave"))
+	mediaB.conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	if n, err := mediaB.conn.Read(make([]byte, 1024)); err == nil {
 		t.Fatalf("B received %d bytes after leaving the room", n)
 	}
+}
+
+// mediaClient is the UDP side of one test client.
+type mediaClient struct {
+	conn     net.Conn
+	ssrc     uint32
+	up, down cipher.AEAD
+	counter  uint64
+}
+
+func dialMedia(t *testing.T, addr string, ssrc uint32, hello protocol.Control) *mediaClient {
+	t.Helper()
+	aead := func(encoded string) cipher.AEAD {
+		key, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, err := protocol.NewMediaAEAD(key)
+		if err != nil {
+			t.Fatalf("media key: %v", err)
+		}
+		return a
+	}
+	conn, err := net.Dial("udp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return &mediaClient{conn: conn, ssrc: ssrc, up: aead(hello.MediaKeyUp), down: aead(hello.MediaKeyDown)}
+}
+
+func (m *mediaClient) send(t *testing.T, kind uint8, payload []byte) {
+	t.Helper()
+	b := protocol.SealMedia(m.up, protocol.Header{Kind: kind, SSRC: m.ssrc}, m.counter, payload)
+	m.counter++
+	if _, err := m.conn.Write(b); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (m *mediaClient) read(t *testing.T) (protocol.Header, []byte) {
+	t.Helper()
+	m.conn.SetReadDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 2048)
+	n, err := m.conn.Read(buf)
+	if err != nil {
+		t.Fatal("no media datagram:", err)
+	}
+	_, payload, ok := protocol.OpenMedia(m.down, buf[:n])
+	if !ok {
+		t.Fatal("downlink datagram does not open")
+	}
+	h, _ := protocol.DecodeHeader(buf[:n])
+	return h, payload
 }
 
 // TestIntegrationCreateServer covers CREATE_SERVER end to end. Before the fix a
@@ -288,10 +363,10 @@ func TestIntegrationCreateServer(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := store.Register(ctx, username, email, password); err != nil {
+	if err := testRegister(ctx, store, username, email, password); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	user, err := store.Authenticate(ctx, username, password)
+	user, err := store.Authenticate(ctx, username, testSecret(password))
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
@@ -321,12 +396,11 @@ func TestIntegrationCreateServer(t *testing.T) {
 	serveTest(t, ltcp, ludp, store, serverStore, friends.NewStore(db), messages.NewStore(db))
 
 	// CREATE_SERVER before LOGIN must be refused.
-	anon, err := net.Dial("tcp", ltcp.Addr().String())
+	anon, err := dialTLS(ltcp.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer anon.Close()
-	sendTest(t, anon, protocol.Control{Type: "HELLO", SSRC: 0x3333, Name: "anon"})
 	sendTest(t, anon, protocol.Control{Type: "CREATE_SERVER", ServerName: "refused"})
 	if e := awaitControl(t, anon, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != "authentication required" {
 		t.Fatalf("anonymous CREATE_SERVER error = %q, want %q", e.Error, "authentication required")
@@ -373,17 +447,17 @@ func TestIntegrationListServers(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := store.Register(ctx, owner, owner+"@example.test", password); err != nil {
+	if err := testRegister(ctx, store, owner, owner+"@example.test", password); err != nil {
 		t.Fatalf("Register owner: %v", err)
 	}
-	if err := store.Register(ctx, other, other+"@example.test", password); err != nil {
+	if err := testRegister(ctx, store, other, other+"@example.test", password); err != nil {
 		t.Fatalf("Register other: %v", err)
 	}
-	ownerUser, err := store.Authenticate(ctx, owner, password)
+	ownerUser, err := store.Authenticate(ctx, owner, testSecret(password))
 	if err != nil {
 		t.Fatalf("Authenticate owner: %v", err)
 	}
-	otherUser, err := store.Authenticate(ctx, other, password)
+	otherUser, err := store.Authenticate(ctx, other, testSecret(password))
 	if err != nil {
 		t.Fatalf("Authenticate other: %v", err)
 	}
@@ -406,7 +480,7 @@ func TestIntegrationListServers(t *testing.T) {
 	serveTest(t, ltcp, ludp, store, serverStore, friends.NewStore(db), messages.NewStore(db))
 
 	// LIST_SERVERS before LOGIN must be refused.
-	anon, err := net.Dial("tcp", ltcp.Addr().String())
+	anon, err := dialTLS(ltcp.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,17 +535,17 @@ func TestIntegrationKickAndBan(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := store.Register(ctx, owner, owner+"@example.test", password); err != nil {
+	if err := testRegister(ctx, store, owner, owner+"@example.test", password); err != nil {
 		t.Fatalf("Register owner: %v", err)
 	}
-	if err := store.Register(ctx, member, member+"@example.test", password); err != nil {
+	if err := testRegister(ctx, store, member, member+"@example.test", password); err != nil {
 		t.Fatalf("Register member: %v", err)
 	}
-	ownerUser, err := store.Authenticate(ctx, owner, password)
+	ownerUser, err := store.Authenticate(ctx, owner, testSecret(password))
 	if err != nil {
 		t.Fatalf("Authenticate owner: %v", err)
 	}
-	memberUser, err := store.Authenticate(ctx, member, password)
+	memberUser, err := store.Authenticate(ctx, member, testSecret(password))
 	if err != nil {
 		t.Fatalf("Authenticate member: %v", err)
 	}
@@ -569,17 +643,17 @@ func TestIntegrationMakeAdmin(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := store.Register(ctx, owner, owner+"@example.test", password); err != nil {
+	if err := testRegister(ctx, store, owner, owner+"@example.test", password); err != nil {
 		t.Fatalf("Register owner: %v", err)
 	}
-	if err := store.Register(ctx, member, member+"@example.test", password); err != nil {
+	if err := testRegister(ctx, store, member, member+"@example.test", password); err != nil {
 		t.Fatalf("Register member: %v", err)
 	}
-	ownerUser, err := store.Authenticate(ctx, owner, password)
+	ownerUser, err := store.Authenticate(ctx, owner, testSecret(password))
 	if err != nil {
 		t.Fatalf("Authenticate owner: %v", err)
 	}
-	memberUser, err := store.Authenticate(ctx, member, password)
+	memberUser, err := store.Authenticate(ctx, member, testSecret(password))
 	if err != nil {
 		t.Fatalf("Authenticate member: %v", err)
 	}
@@ -755,10 +829,10 @@ func TestIntegrationFriendRequest(t *testing.T) {
 	defer cancel()
 	ids := make(map[string]int, 2)
 	for _, n := range []string{requester, addressee} {
-		if err := store.Register(ctx, n, n+"@example.test", password); err != nil {
+		if err := testRegister(ctx, store, n, n+"@example.test", password); err != nil {
 			t.Fatalf("Register %s: %v", n, err)
 		}
-		u, err := store.Authenticate(ctx, n, password)
+		u, err := store.Authenticate(ctx, n, testSecret(password))
 		if err != nil {
 			t.Fatalf("Authenticate %s: %v", n, err)
 		}
@@ -862,10 +936,10 @@ func TestIntegrationAdminModeration(t *testing.T) {
 	defer cancel()
 	ids := make([]int, len(names))
 	for i, n := range names {
-		if err := store.Register(ctx, n, n+"@example.test", password); err != nil {
+		if err := testRegister(ctx, store, n, n+"@example.test", password); err != nil {
 			t.Fatalf("Register %s: %v", n, err)
 		}
-		u, err := store.Authenticate(ctx, n, password)
+		u, err := store.Authenticate(ctx, n, testSecret(password))
 		if err != nil {
 			t.Fatalf("Authenticate %s: %v", n, err)
 		}
@@ -966,10 +1040,10 @@ func TestIntegrationDirectMessages(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for i, n := range names {
-		if err := store.Register(ctx, n, n+"@example.test", password); err != nil {
+		if err := testRegister(ctx, store, n, n+"@example.test", password); err != nil {
 			t.Fatalf("Register %s: %v", n, err)
 		}
-		u, err := store.Authenticate(ctx, n, password)
+		u, err := store.Authenticate(ctx, n, testSecret(password))
 		if err != nil {
 			t.Fatalf("Authenticate %s: %v", n, err)
 		}
@@ -983,6 +1057,12 @@ func TestIntegrationDirectMessages(t *testing.T) {
 	serveTest(t, ltcp, ludp, store, servers.NewStore(db), friends.NewStore(db), messages.NewStore(db))
 	addr := ltcp.Addr().String()
 
+	// DM keys need a shared server, a friendship or an earlier message.
+	if _, err := db.ExecContext(ctx, `INSERT INTO friendships (requester_id, addressee_id, status)
+		VALUES ($1, $2, 'ACCEPTED')`, ids[0], ids[1]); err != nil {
+		t.Fatal(err)
+	}
+
 	a := dialControl(t, addr, 0x1101, 0, names[0], names[0]+"@example.test", password, false)
 	b := dialControl(t, addr, 0x2202, 0, names[1], names[1]+"@example.test", password, false)
 	outsider := dialControl(t, addr, 0x3303, 0, names[2], names[2]+"@example.test", password, false)
@@ -990,12 +1070,12 @@ func TestIntegrationDirectMessages(t *testing.T) {
 	defer b.Close()
 	defer outsider.Close()
 
-	anon, err := net.Dial("tcp", addr)
+	anon, err := dialTLS(addr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer anon.Close()
-	sendTest(t, anon, protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[1]), DirectContent: "hi"})
+	sendTest(t, anon, seal(t, anon, protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[1]), DirectContent: "hi"}))
 	if e := awaitControl(t, anon, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != "authentication required" {
 		t.Fatalf("anonymous DM error = %q, want authentication required", e.Error)
 	}
@@ -1006,7 +1086,7 @@ func TestIntegrationDirectMessages(t *testing.T) {
 		wantErr string
 	}{
 		{"bad peer", protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: "nope", DirectContent: "hi"}, "direct recipient id required"},
-		{"empty content", protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[1]), DirectContent: "   "}, "direct message content required"},
+		{"empty content", protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[1])}, "encrypted message required"},
 		{"self", protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[0]), DirectContent: "hi"}, messages.ErrSelfRequest.Error()},
 	} {
 		sendTest(t, a, tc.msg)
@@ -1016,17 +1096,17 @@ func TestIntegrationDirectMessages(t *testing.T) {
 	}
 
 	// A sends to B: both the ACK and the unsolicited push carry the same ID.
-	sendTest(t, a, protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[1]), DirectContent: "hello b"})
+	sendTest(t, a, seal(t, a, protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[1]), DirectContent: "hello b"}))
 	sentA := awaitControl(t, a, "DM ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.DirectInfo != nil })
 	pushedB := awaitControl(t, b, "DIRECT_MESSAGE", func(m protocol.Control) bool { return m.Type == "DIRECT_MESSAGE" && m.DirectInfo != nil })
 	if sentA.DirectInfo.ID == 0 || sentA.DirectInfo.ID != pushedB.DirectInfo.ID {
 		t.Fatalf("send ACK %+v and push %+v disagree on message ID", sentA.DirectInfo, pushedB.DirectInfo)
 	}
-	if pushedB.DirectInfo.AuthorID != ids[0] || pushedB.DirectInfo.Content != "hello b" {
+	if pushedB.DirectInfo.AuthorID != ids[0] || textOf(pushedB.DirectInfo.Content, pushedB.DirectInfo.E2EE) != "hello b" {
 		t.Fatalf("pushed DM = %+v, want author %d and 'hello b'", pushedB.DirectInfo, ids[0])
 	}
 
-	sendTest(t, b, protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[0]), DirectContent: "hi a"})
+	sendTest(t, b, seal(t, b, protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[0]), DirectContent: "hi a"}))
 	sentB := awaitControl(t, b, "reply ACK", func(m protocol.Control) bool { return m.Type == "ACK" && m.DirectInfo != nil })
 	pushedA := awaitControl(t, a, "reply DIRECT_MESSAGE", func(m protocol.Control) bool { return m.Type == "DIRECT_MESSAGE" && m.DirectInfo != nil })
 	if pushedA.DirectInfo.ID != sentB.DirectInfo.ID || pushedA.DirectInfo.AuthorID != ids[1] {
@@ -1080,10 +1160,10 @@ func TestIntegrationDMMutations(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for i, n := range names {
-		if err := store.Register(ctx, n, n+"@example.test", password); err != nil {
+		if err := testRegister(ctx, store, n, n+"@example.test", password); err != nil {
 			t.Fatalf("Register %s: %v", n, err)
 		}
-		u, err := store.Authenticate(ctx, n, password)
+		u, err := store.Authenticate(ctx, n, testSecret(password))
 		if err != nil {
 			t.Fatalf("Authenticate %s: %v", n, err)
 		}
@@ -1097,6 +1177,12 @@ func TestIntegrationDMMutations(t *testing.T) {
 	serveTest(t, ltcp, ludp, store, servers.NewStore(db), friends.NewStore(db), messages.NewStore(db))
 	addr := ltcp.Addr().String()
 
+	// DM keys need a shared server, a friendship or an earlier message.
+	if _, err := db.ExecContext(ctx, `INSERT INTO friendships (requester_id, addressee_id, status)
+		VALUES ($1, $2, 'ACCEPTED')`, ids[0], ids[1]); err != nil {
+		t.Fatal(err)
+	}
+
 	a := dialControl(t, addr, 0x1404, 0, names[0], names[0]+"@example.test", password, false)
 	b := dialControl(t, addr, 0x2505, 0, names[1], names[1]+"@example.test", password, false)
 	defer a.Close()
@@ -1108,10 +1194,10 @@ func TestIntegrationDMMutations(t *testing.T) {
 		if err != nil {
 			peer = 0
 		}
-		sendTest(t, from, protocol.Control{
+		sendTest(t, from, seal(t, from, protocol.Control{
 			Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(toID),
 			DirectContent: content, DirectReplyTo: peer,
-		})
+		}))
 		ack := awaitControl(t, from, "DM ACK", func(m protocol.Control) bool {
 			return m.Type == "ACK" && m.DirectInfo != nil
 		})
@@ -1175,15 +1261,15 @@ func TestIntegrationDMMutations(t *testing.T) {
 	}
 
 	// Non-authors cannot edit or delete; the author can, and the peer is told.
-	sendTest(t, b, protocol.Control{Type: "UPDATE_DIRECT_MESSAGE", DirectMessageID: second.ID, DirectContent: "hijack"})
+	sendTest(t, b, seal(t, b, protocol.Control{Type: "UPDATE_DIRECT_MESSAGE", DirectMessageID: second.ID, DirectContent: "hijack"}))
 	if e := awaitControl(t, b, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != messages.ErrMessageNotFound.Error() {
 		t.Fatalf("non-author edit error = %q", e.Error)
 	}
-	sendTest(t, a, protocol.Control{Type: "UPDATE_DIRECT_MESSAGE", DirectMessageID: second.ID, DirectContent: "two edited"})
+	sendTest(t, a, seal(t, a, protocol.Control{Type: "UPDATE_DIRECT_MESSAGE", DirectMessageID: second.ID, DirectContent: "two edited"}))
 	edited := awaitControl(t, a, "edit ACK", func(m protocol.Control) bool {
 		return m.Type == "ACK" && m.DirectInfo != nil
 	})
-	if edited.DirectInfo.Content != "two edited" || edited.DirectInfo.EditedAt == nil {
+	if textOf(edited.DirectInfo.Content, edited.DirectInfo.E2EE) != "two edited" || edited.DirectInfo.EditedAt == nil {
 		t.Fatalf("edit ACK = %+v, want edited content and timestamp", edited.DirectInfo)
 	}
 	editedPush := awaitControl(t, b, "DIRECT_MESSAGE_EDITED", func(m protocol.Control) bool {
@@ -1235,7 +1321,7 @@ func TestIntegrationDMMutations(t *testing.T) {
 	// Blocking closes the conversation in both directions.
 	sendTest(t, a, protocol.Control{Type: "BLOCK_FRIENDSHIP", UserID: ids[1]})
 	awaitControl(t, a, "block ACK", func(m protocol.Control) bool { return m.Type == "ACK" })
-	sendTest(t, a, protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[1]), DirectContent: "blocked"})
+	sendTest(t, a, seal(t, a, protocol.Control{Type: "SEND_DIRECT_MESSAGE", DirectRecipientID: strconv.Itoa(ids[1]), DirectContent: "blocked"}))
 	if e := awaitControl(t, a, "ERROR", func(m protocol.Control) bool { return m.Type == "ERROR" }); e.Error != friends.ErrBlocked.Error() {
 		t.Fatalf("blocked send error = %q, want %q", e.Error, friends.ErrBlocked.Error())
 	}

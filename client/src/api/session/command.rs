@@ -1,8 +1,21 @@
 //! Commands the UI sends, and the cloneable handle to their queue.
 
 use crate::capture::Source;
+use serde_json::Value;
 
 pub(super) enum Command {
+    /// From the reader: a push that needs the keys or a server call.
+    Push(Value),
+    /// Time to refresh the keys the rate limit held back.
+    RetryKeys,
+    SafetyNumber {
+        peer: i64,
+    },
+    /// The user accepted a changed identity key.
+    AcceptKey {
+        user_id: i64,
+        identity: [u8; 32],
+    },
     Join {
         channel_id: i64,
         muted: bool,
@@ -54,7 +67,9 @@ pub(super) enum Command {
     DeleteServer {
         server_id: i64,
     },
-    DeleteUser,
+    DeleteUser {
+        password: String,
+    },
     UpdateUsername {
         username: String,
     },
@@ -164,6 +179,16 @@ pub struct Control {
 }
 
 impl Control {
+    pub fn safety_number(&self, peer: i64) -> bool {
+        self.tx.try_send(Command::SafetyNumber { peer }).is_ok()
+    }
+
+    pub fn accept_key(&self, user_id: i64, identity: [u8; 32]) -> bool {
+        self.tx
+            .try_send(Command::AcceptKey { user_id, identity })
+            .is_ok()
+    }
+
     pub fn join_server(&self, code: String) -> bool {
         self.tx.try_send(Command::JoinServer { code }).is_ok()
     }
@@ -180,8 +205,9 @@ impl Control {
             .is_ok()
     }
 
-    pub fn delete_user(&self) -> bool {
-        self.tx.try_send(Command::DeleteUser).is_ok()
+    pub fn delete_user(&self, password: &str) -> bool {
+        let password = password.to_string();
+        self.tx.try_send(Command::DeleteUser { password }).is_ok()
     }
     pub fn update_username(&self, username: &str) -> bool {
         self.tx

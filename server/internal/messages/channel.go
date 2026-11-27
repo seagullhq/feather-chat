@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/seagullhq/feather-chat/server/internal/e2ee"
 )
 
 // ChannelID is server_channels.id: the only channel ID that crosses the wire.
@@ -30,6 +32,7 @@ type MessageSummary struct {
 	CreatedAt time.Time
 	EditedAt  *time.Time
 	DeletedAt *time.Time
+	E2EE      *e2ee.Message
 }
 
 // DeletedMessage is the identity a soft-delete ACK and push need. Keeping the
@@ -78,8 +81,9 @@ type messageScanner interface {
 func scanMessageSummary(row messageScanner) (MessageSummary, error) {
 	var m MessageSummary
 	var editedAt, deletedAt sql.NullTime
-	err := row.Scan(&m.ID, &m.ChannelID, &m.ServerID, &m.AuthorID, &m.Content,
-		&m.ReplyTo, &m.CreatedAt, &editedAt, &deletedAt)
+	var enc e2eeRow
+	err := row.Scan(append([]any{&m.ID, &m.ChannelID, &m.ServerID, &m.AuthorID, &m.Content,
+		&m.ReplyTo, &m.CreatedAt, &editedAt, &deletedAt}, enc.dest()...)...)
 	if err != nil {
 		return m, err
 	}
@@ -89,6 +93,7 @@ func scanMessageSummary(row messageScanner) (MessageSummary, error) {
 	if deletedAt.Valid {
 		m.DeletedAt = &deletedAt.Time
 	}
+	m.E2EE = enc.message()
 	return m, nil
 }
 
@@ -146,62 +151,32 @@ func resolveServerConversation(ctx context.Context, q queryer, userID, serverID 
 	return convID, err
 }
 
-// SendChannelMessage stores a message, creating the conversation lazily.
-// READ COMMITTED is intentional: after INSERT ... DO NOTHING waits for a
-// concurrent creator, the fallback SELECT sees the committed row.
-func (s *ServerStore) SendChannelMessage(ctx context.Context, userID, serverID int, ch ChannelID, content string, replyTo int) (*MessageSummary, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+// SendChannelMessage checks and stores an encrypted message, creating the
+// conversation lazily. Access is checked on every send: the sender may have
+// been kicked since, and serverId/channelId both come from the client.
+func (s *ServerStore) SendChannelMessage(ctx context.Context, userID, serverID int, ch ChannelID, enc *e2ee.Message, replyTo int) (*MessageSummary, error) {
+	m := MessageSummary{ChannelID: ch, ServerID: serverID, AuthorID: userID, E2EE: enc}
+	err := s.withConversation(ctx, userID, Address{ServerID: serverID, Channel: ch}, func(tx *sql.Tx, conv int64) error {
+		if err := checkNew(ctx, tx, conv, userID, enc); err != nil {
+			return err
+		}
+		err := tx.QueryRowContext(ctx, `
+			INSERT INTO conversation_messages (conversation_id, author_id, content, reply_to,
+				e2ee_epoch, e2ee_msg_id, e2ee_revision, e2ee_sender_key, e2ee_box, e2ee_sig, e2ee_sender)
+			SELECT $1::bigint, $2::bigint, '', NULLIF($3::bigint, 0), $4::int, $5::bytea, $6::bigint,
+			       $7::bigint, $8::bytea, $9::bytea, $2::bigint
+			WHERE $3::bigint = 0 OR EXISTS (
+				SELECT 1 FROM conversation_messages p
+				WHERE p.id = $3::bigint AND p.conversation_id = $1::bigint AND p.deleted_at IS NULL)
+			RETURNING id, COALESCE(reply_to, 0), created_at`,
+			conv, userID, replyTo, int64(enc.Epoch), enc.MsgID, int64(enc.Revision), enc.SenderKeyID,
+			enc.Box, enc.MsgSig).Scan(&m.ID, &m.ReplyTo, &m.CreatedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrServerMessageNotFound // reply outside the channel or deleted
+		}
+		return mapPgError(err)
+	})
 	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
-	convID, err := resolveServerConversation(ctx, tx, userID, serverID, ch)
-	if err != nil {
-		return nil, err
-	}
-
-	// Check access on every send, not just on creation: the sender may have
-	// been kicked since, and serverId/channelId both come from the client.
-	var wireChannel ChannelID
-	var wireServer int
-	err = tx.QueryRowContext(ctx, `
-		SELECT v.server_channel_id, v.server_id
-		FROM server_chat_channels v
-		JOIN readable_server_channels($3) r ON r.server_channel_id = v.server_channel_id
-		WHERE v.conversation_id = $1 AND r.server_id = $2`,
-		int64(convID), serverID, userID).Scan(&wireChannel, &wireServer)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrServerChannelNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	var m MessageSummary
-	var reply int
-	err = tx.QueryRowContext(ctx, `
-		INSERT INTO conversation_messages (conversation_id, author_id, content, reply_to)
-		SELECT $1, $2, $3, NULLIF($4, 0)
-		WHERE $4 = 0 OR EXISTS (
-			SELECT 1 FROM conversation_messages p
-			WHERE p.id = $4 AND p.conversation_id = $1 AND p.deleted_at IS NULL)
-		RETURNING id, COALESCE(reply_to, 0), created_at`,
-		int64(convID), userID, content, replyTo).
-		Scan(&m.ID, &reply, &m.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrServerMessageNotFound // reply outside the channel or deleted
-	}
-	if err != nil {
-		return nil, err
-	}
-	m.ChannelID = wireChannel
-	m.ServerID = wireServer
-	m.AuthorID = userID
-	m.Content = content
-	m.ReplyTo = reply
-
-	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return &m, nil
@@ -237,8 +212,9 @@ func (s *ServerStore) ListChannelMessages(ctx context.Context, userID int, ch Ch
 
 	// One extra row is the has-more sentinel; the handler slices to limit.
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT m.id, $2::bigint, $3::bigint, COALESCE(m.author_id, 0),
-		       m.content, COALESCE(m.reply_to, 0), m.created_at, m.edited_at, m.deleted_at
+		SELECT m.id, $2::bigint, $3::bigint, COALESCE(m.author_id, m.e2ee_sender, 0),
+		       m.content, COALESCE(m.reply_to, 0), m.created_at, m.edited_at, m.deleted_at,
+		       `+e2eeColumns+`
 		FROM conversation_messages m
 		WHERE m.conversation_id = $1
 		  AND m.deleted_at IS NULL
@@ -261,22 +237,54 @@ func (s *ServerStore) ListChannelMessages(ctx context.Context, userID int, ch Ch
 	return out, rows.Err()
 }
 
-// EditChannelMessage changes an authored, non-deleted message. The author
-// predicate is in the UPDATE itself, so authorization survives refactors.
-func (s *ServerStore) EditChannelMessage(ctx context.Context, userID int, messageID int, content string) (*MessageSummary, error) {
-	m, err := scanMessageSummary(s.db.QueryRowContext(ctx, `
-		UPDATE conversation_messages m
-		SET content = $3, edited_at = now()
-		FROM server_chat_channels v
-		WHERE m.id = $1
-		  AND m.conversation_id = v.conversation_id
-		  AND m.author_id = $2
-		  AND m.deleted_at IS NULL
-		  AND can_read_server_channel($2, v.server_channel_id)
-		RETURNING m.id, v.server_channel_id, v.server_id, COALESCE(m.author_id, 0),
-		          m.content, COALESCE(m.reply_to, 0), m.created_at, m.edited_at, m.deleted_at`,
-		messageID, userID, content))
+// EditChannelMessage replaces the ciphertext of an authored, non-deleted
+// message. The author predicate is in the queries themselves, so authorization
+// survives refactors.
+func (s *ServerStore) EditChannelMessage(ctx context.Context, userID int, messageID int, enc *e2ee.Message) (*MessageSummary, error) {
+	var a Address
+	err := s.db.QueryRowContext(ctx, `
+		SELECT v.server_id, v.server_channel_id
+		FROM conversation_messages m
+		JOIN server_chat_channels v ON v.conversation_id = m.conversation_id
+		WHERE m.id = $1 AND m.author_id = $2 AND m.deleted_at IS NULL
+		  AND can_read_server_channel($2, v.server_channel_id)`, messageID, userID).Scan(&a.ServerID, &a.Channel)
 	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrServerMessageNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var m MessageSummary
+	err = s.withConversation(ctx, userID, a, func(tx *sql.Tx, conv int64) error {
+		var old e2eeRow
+		err := tx.QueryRowContext(ctx, `
+			SELECT `+e2eeColumns+` FROM conversation_messages m
+			WHERE m.id = $1 AND m.conversation_id = $2 AND m.author_id = $3 AND m.deleted_at IS NULL`,
+			messageID, conv, userID).Scan(old.dest()...)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrServerMessageNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err := checkMessage(ctx, tx, conv, userID, enc); err != nil {
+			return err
+		}
+		if err := checkEdit(old, enc); err != nil {
+			return err
+		}
+		m, err = scanMessageSummary(tx.QueryRowContext(ctx, `
+			UPDATE conversation_messages m SET edited_at = now(), e2ee_epoch = $2, e2ee_revision = $3,
+				e2ee_sender_key = $4, e2ee_box = $5, e2ee_sig = $6
+			WHERE m.id = $1
+			RETURNING m.id, $7::bigint, $8::bigint, m.author_id, m.content, COALESCE(m.reply_to, 0),
+			          m.created_at, m.edited_at, m.deleted_at, `+e2eeColumns,
+			messageID, int64(enc.Epoch), int64(enc.Revision), enc.SenderKeyID, enc.Box, enc.MsgSig,
+			int64(a.Channel), a.ServerID))
+		return err
+	})
+	if errors.Is(err, ErrServerChannelNotFound) {
 		return nil, ErrServerMessageNotFound
 	}
 	if err != nil {
@@ -292,7 +300,7 @@ func (s *ServerStore) DeleteChannelMessage(ctx context.Context, userID int, mess
 	var m DeletedMessage
 	err := s.db.QueryRowContext(ctx, `
 		UPDATE conversation_messages m
-		SET content = '', deleted_at = now()
+		SET content = '', deleted_at = now(), e2ee_box = NULL, e2ee_sig = NULL
 		FROM server_chat_channels v
 		WHERE m.id = $1
 		  AND m.conversation_id = v.conversation_id

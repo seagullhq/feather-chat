@@ -7,6 +7,7 @@ mod api;
 mod app;
 mod assets;
 mod capture;
+mod e2ee;
 mod input;
 mod media;
 mod model;

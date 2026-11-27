@@ -19,12 +19,18 @@ func WriteFrame(w io.Writer, payload []byte) error {
 
 // ReadFrame reads one §7 control frame, returning its JSON payload.
 func ReadFrame(r io.Reader) ([]byte, error) {
+	return ReadFrameLimit(r, maxControl-1)
+}
+
+// ReadFrameLimit is ReadFrame with a smaller payload cap, checked before
+// anything is allocated.
+func ReadFrameLimit(r io.Reader, limit int) ([]byte, error) {
 	var hdr [4]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
 		return nil, err
 	}
 	n := binary.BigEndian.Uint32(hdr[:])
-	if n == 0 || n >= maxControl {
+	if n == 0 || n >= maxControl || int(n) > limit {
 		return nil, io.ErrUnexpectedEOF
 	}
 	payload := make([]byte, n)
