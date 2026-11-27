@@ -1,12 +1,18 @@
 name: build
 
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
-  # Called by release.yml on version tags.
+  # Called by release.yml on every push to main. release is true only for the
+  # run that publishes a new version; version is the Cargo version it builds.
   workflow_call:
+    inputs:
+      release:
+        type: boolean
+        default: false
+      version:
+        type: string
+        default: ""
 
 # Least privilege: read-only by default. Callers (release.yml) can only grant
 # the same or fewer permissions, so they must grant what the jobs below request.
@@ -315,7 +321,7 @@ jobs:
     needs: test-server
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    # Only tag pushes publish; other events build the image to validate it.
+    # Only release builds publish; other runs build the image to validate it.
     permissions:
       contents: read
       packages: write
@@ -332,7 +338,7 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: inputs.release
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
@@ -345,17 +351,20 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}-server
           flavor: |
-            latest=auto
+            latest=false
+          # The version comes from the caller, not from a tag ref: the release
+          # run is a push to main, so type=semver alone would emit nothing.
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=v${{ inputs.version }},enable=${{ inputs.release }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ inputs.version }},enable=${{ inputs.release }}
+            type=raw,value=latest,enable=${{ inputs.release }}
 
       - name: Build and push image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: server
           platforms: linux/amd64,linux/arm64
-          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          push: ${{ inputs.release }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
