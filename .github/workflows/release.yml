@@ -1,22 +1,85 @@
 name: release
 
-# Runs only on version tags. The build, tests and image come from build.yml,
-# called in this same run so the release job can download its artifacts.
+# Every push to main. release-plz tags a new version when a release PR was
+# merged (the push then carries the bumped Cargo.toml), and opens or updates the
+# release PR when there are releasable commits. The build and tests come from
+# build.yml, called in this same run. Nothing here relies on a tag push starting
+# another workflow: the default GITHUB_TOKEN cannot do that.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
 
 # Least privilege: read-only by default, jobs opt into write.
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-main
   cancel-in-progress: false
 
 jobs:
+  release:
+    name: tag new version
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      released: ${{ steps.tag.outputs.released }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # release-plz needs the full history and tags to find the last release.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+
+      - name: Version before release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --tags --force
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' client/Cargo.toml | head -n 1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "tagged=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tagged=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Creates the tag v<version> only if it does not exist yet, i.e. only on the
+      # push that merged a release PR. Other pushes are a no-op.
+      - uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
+        with:
+          command: release
+          manifest_path: client/Cargo.toml
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Did this run create the tag?
+        id: tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          WAS_TAGGED: ${{ steps.version.outputs.tagged }}
+        run: |
+          git fetch --tags --force
+          if [ "$WAS_TAGGED" = "false" ] && git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: release
     uses: ./.github/workflows/build.yml
+    with:
+      release: ${{ needs.release.outputs.released == 'true' }}
+      version: ${{ needs.release.outputs.version }}
     # Signing secrets for the Windows build. The called workflow cannot raise
     # permissions, so everything it requests is granted here.
     secrets: inherit
@@ -26,10 +89,11 @@ jobs:
       id-token: write
       attestations: write
 
-  release:
+  publish:
     name: publish release
-    # Waits for the whole build workflow, tests and image included.
-    needs: build
+    # Only after a new version was tagged and its build succeeded.
+    needs: [release, build]
+    if: needs.release.outputs.released == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -54,9 +118,37 @@ jobs:
           subject-path: dist/feather-chat-*
 
       # No checkout in this job, so no git repo: gh works through the API with GH_REPO.
-      # The tag exists already, since this run was started by pushing it.
+      # The tag was pushed by the release job of this same run.
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes dist/feather-chat-* dist/SHA256SUMS
+          TAG: v${{ needs.release.outputs.version }}
+        run: gh release create "$TAG" --generate-notes dist/feather-chat-* dist/SHA256SUMS
+
+  release-pr:
+    name: open release PR
+    # After the tag step, so the PR is computed from the newest tag.
+    needs: release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+
+      # Opens or updates a PR with the next version and changelog. Nothing is pushed
+      # to main: the PR needs one approval, then merging it starts a release.
+      - uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
+        with:
+          command: release-pr
+          manifest_path: client/Cargo.toml
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

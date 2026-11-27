@@ -10,5 +10,7 @@ Design docs for the project. Read in this order if you are new here.
 | [`audio-pipeline.md`](audio-pipeline.md) | Explanation               | Client media path (Qt side)                                   |
 | [`server-design.md`](server-design.md)   | Explanation               | Go server structure and integrity rules                       |
 | [`security-model.md`](security-model.md) | Explanation               | Threat model, pending E2EE, gate for public deployment        |
+| [`security-model.md`](security-model.md) | Explanation               | Threat model, crypto plan, gate for public deployment         |
+| [`release-codenames.md`](release-codenames.md) | Reference           | Seagull codename per release                                  |
 
 Classification follows Diátaxis: reference states facts, explanation discusses why. Mixing the two is how documentation dies.
