@@ -355,9 +355,9 @@ jobs:
           # The version comes from the caller, not from a tag ref: the release
           # run is a push to main, so type=semver alone would emit nothing.
           tags: |
-            type=semver,pattern={{version}},value=v${{ inputs.version }},enable=${{ inputs.release }}
-            type=semver,pattern={{major}}.{{minor}},value=v${{ inputs.version }},enable=${{ inputs.release }}
-            type=raw,value=latest,enable=${{ inputs.release }}
+            type=semver,pattern={{version}},value=v${{ inputs.version }},enable=${{ inputs.release || false }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ inputs.version }},enable=${{ inputs.release || false }}
+            type=raw,value=latest,enable=${{ inputs.release || false }}
 
       - name: Build and push image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
